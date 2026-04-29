@@ -14,6 +14,7 @@ Given a standardized time-series dataframe X and a target y_t,
 return causes, trigger candidates, accepted triggers, cause-trigger pairs, and diagnostics.
 """ 
 
+import warnings
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
@@ -78,6 +79,14 @@ def make_causal_backend(config: CauseTriggerConfig):
         )
 
     if config.causal_backend == "pcmci":
+        if not config.beta_is_ones:
+            warnings.warn(
+                "PCMCI backend does not return HMML-style regression beta coefficients. "
+                "Its beta matrix stores PCMCI test-statistic strengths. "
+                "For paper-compatible HMML-vs-PCMCI comparison, use beta_is_ones=True.",
+                UserWarning,
+            )
+
         return PCMCIBackend(
             tau_max=config.lags,
             pc_alpha=config.pcmci_pc_alpha,
@@ -157,6 +166,16 @@ def test_moderation(y_response, V, x_s_values, alpha=0.05):
     rss_reduced = residual_sum_of_squares(y_response, V, reduced_model)
     rss_full = residual_sum_of_squares(y_response, features_full, full_model)
 
+    rss_reduction = rss_reduced - rss_full
+
+    if rss_reduced != 0:
+        rss_reduction_ratio = rss_reduction / rss_reduced
+    else:
+        rss_reduction_ratio = np.nan
+
+    gamma_1 = float(full_model.coef_[0])
+    gamma_2 = float(full_model.coef_[1])
+
     r = V.shape[0]
     f_stat = f_statistic(rss_reduced, rss_full, r)
     critical_f = f.ppf(1 - alpha, dfn=1, dfd=(r - 2))
@@ -175,16 +194,16 @@ def test_moderation(y_response, V, x_s_values, alpha=0.05):
     gamma_2 = full_model.coef_[1]
 
     return {
-        "accepted": f_stat > critical_f,
-        "f_stat": f_stat,
-        "critical_f": critical_f,
-        "rss_reduced": rss_reduced,
-        "rss_full": rss_full,
-        "rss_reduction": rss_reduction,
-        "rss_reduction_ratio": rss_reduction_ratio,
+        "accepted": bool(f_stat > critical_f),
+        "f_stat": float(f_stat),
+        "critical_f": float(critical_f),
+        "rss_reduced": float(rss_reduced),
+        "rss_full": float(rss_full),
+        "rss_reduction": float(rss_reduction),
+        "rss_reduction_ratio": float(rss_reduction_ratio),
         "gamma_1": gamma_1,
         "gamma_2": gamma_2,
-        "r": r,
+        "r": int(r),
     }
 
 
@@ -199,7 +218,16 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         "B_2": [],
         "T_candidates": [],
         "split_index": None,
+        "split_timestamp": None,
+        "I1_length": None,
+        "I2_length": None,
+        "target_abs_mean_I1": None,
+        "target_abs_mean_I2": None,
+        "target_abs_mean_difference": None,
+        "backend": config.causal_backend,
         "diagnostics": [],
+        "causal_lags": {},
+        "causal_scores": {},
     }
 
     backend = make_causal_backend(config)
@@ -210,6 +238,9 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     )
 
     result["split_index"] = split_index
+
+    if split_index is not None:
+        result["split_timestamp"] = X.index[split_index]
 
     if split_index is None:
         discovery = backend.discover(X, y_t=config.y_t)
@@ -226,6 +257,16 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
 
     I_1 = X.iloc[:split_index]
     I_2 = X.iloc[split_index:]
+
+    result["I1_length"] = len(I_1)
+    result["I2_length"] = len(I_2)
+
+    target_abs_mean_I1 = abs(I_1[config.y_t].mean())
+    target_abs_mean_I2 = abs(I_2[config.y_t].mean())
+
+    result["target_abs_mean_I1"] = target_abs_mean_I1
+    result["target_abs_mean_I2"] = target_abs_mean_I2
+    result["target_abs_mean_difference"] = target_abs_mean_I2 - target_abs_mean_I1
 
     # cause selection:
     # x_u := arg max_k |E(x_k)_I1 - E(x_k)_I2|
@@ -261,6 +302,15 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     for x_s in T_candidates:
         B_2_without_trigger = [v for v in B_2 if v != x_s]
 
+        if len(B_2_without_trigger) == 0:
+            result["diagnostics"].append({
+                "trigger": x_s,
+                "cause": x_u,
+                "accepted": False,
+                "reason": "No B2 variables left after removing candidate trigger.",
+            })
+            continue
+
         X_without_trigger = I_2[B_2_without_trigger]
         beta_without_trigger = beta_2[B_2_without_trigger]
 
@@ -293,3 +343,15 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
             result["pairs"].append((x_u, x_s))
 
     return result
+
+def diagnostics_to_dataframe(result: dict) -> pd.DataFrame:
+    """
+    Convert result['diagnostics'] into a dataframe for inspection,
+    sorting, plotting, and thesis tables.
+    """
+    diagnostics = result.get("diagnostics", [])
+
+    if len(diagnostics) == 0:
+        return pd.DataFrame()
+
+    return pd.DataFrame(diagnostics)
