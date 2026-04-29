@@ -318,6 +318,11 @@ def run_teleseismic_checks(
 def plot_final_dataset_with_event(csv_path, station, event_time, title=None):
     df = pd.read_csv(csv_path, parse_dates=["time"]).set_index("time")
 
+    if isinstance(event_time, UTCDateTime):
+        event_time = pd.Timestamp(event_time.datetime, tz="UTC")
+    else:
+        event_time = pd.to_datetime(event_time, utc=True)
+
     if "station" in df.columns:
         df = df.drop(columns=["station"])
 
