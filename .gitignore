@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+venv/
+env/
+conda-env/
+*.egg-info/
+
+# Data files - keep large/private data out of GitHub
+#*.pkl
+*.nc
+*.h5
+*.hdf5
+*.zip
+*.tar
+*.gz
+
+# Local outputs
+outputs/
+figures/tmp/
+results/tmp/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/

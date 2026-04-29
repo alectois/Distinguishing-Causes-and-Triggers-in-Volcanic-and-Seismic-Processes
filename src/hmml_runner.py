@@ -1,0 +1,66 @@
+"""
+This file is adapted from the Cause–Trigger algorithm code accompanying:
+Hlaváčková-Schindler, K., Wöß, R., Pecorino, V., & Schindler, P. (2025).
+"Cause or Trigger? From Philosophy to Causal Modeling."
+Zenodo. DOI: 10.5281/zenodo.15109084
+"""
+
+import hmml
+from hmml import HmmlGa
+import numpy as np
+import pandas as pd
+"""
+This class handles all computations and data transformations necessary for the HMML algorithm.
+"""
+
+class HMMLRunner():
+    def __init__(self,lags:int=None,distribution:str=None, mode:str="exhaustive"):
+        #setup parameters needed to run HMML (X-> matrix, lag, distributions)
+        
+        self.lags = lags
+        self.distribution = distribution
+        algorithms = {
+            "exhaustive" : hmml.HmmlExh, 
+            "genetic" : hmml.HmmlGa
+        }
+        self.HMML = algorithms[mode]
+        
+    def run_hmml(self, X:pd.DataFrame, y_t: str = "ws"):
+
+        target_indices = [X.columns.get_loc(y_t)]
+        hmmlga = self.HMML(np.transpose(X.to_numpy()), self.lags, [self.distribution], target_indices)
+        return hmmlga.fit()
+
+    def transform_beta_matrix(self,result_dict,X_columns):
+        beta = np.zeros([len(X_columns), self.lags])
+
+        if "beta_i" in result_dict.keys():
+            beta_i = result_dict["beta_i"]
+            sequence = result_dict["adjacency"]
+
+            if beta_i is not None:
+                beta[sequence.astype(bool), :] = beta_i.reshape(np.count_nonzero(sequence), self.lags)
+
+        columns = [f"Lag_{lag}" for lag in range(1,self.lags+1)]
+        return pd.DataFrame(beta,index=X_columns, columns=columns)
+
+    def get_betas_and_adjacency(self, X: pd.DataFrame, y_t: str):
+        results = self.run_hmml(X, y_t=y_t)
+
+        used_distribution = self.distribution
+
+        if len(results) == 0:
+            used_distribution = "gaussian"
+            self.distribution = "gaussian"
+            results = self.run_hmml(X, y_t=y_t)
+
+        if len(results) == 0:
+            raise RuntimeError(
+                f"HMML returned no results for target={y_t}, "
+                f"lags={self.lags}, distribution={used_distribution}"
+            )
+
+        adjacency = results[0]["adjacency"]
+        betas = self.transform_beta_matrix(results[0], X.columns).T
+
+        return betas, adjacency
