@@ -100,6 +100,7 @@ def create_etna_final_dataset(
     plume_df: pd.DataFrame | None = None,
     plume_buffer_hours: int = 12,
     plume_tolerance_hours: int = 6,
+    local_eq_df: pd.DataFrame | None = None,
     save_pickle: bool = True,
 ):
     # ---- load station waveform features ----
@@ -184,6 +185,48 @@ def create_etna_final_dataset(
 
         if "CO2_SO2" in base.columns:
             base["CO2_SO2_scaled"] = robust_scale_series(base["CO2_SO2"])
+
+    # ---- Local earthquake catalogue feature ----
+    if local_eq_df is not None:
+        eq = local_eq_df.copy()
+
+        if not isinstance(eq.index, pd.DatetimeIndex):
+            if "time" in eq.columns:
+                eq["time"] = pd.to_datetime(eq["time"], utc=True, errors="coerce")
+                eq = eq.set_index("time")
+            elif "timestamp" in eq.columns:
+                eq["timestamp"] = pd.to_datetime(eq["timestamp"], utc=True, errors="coerce")
+                eq = eq.set_index("timestamp")
+            else:
+                raise KeyError(
+                    "local_eq_df must have a DatetimeIndex or a 'time'/'timestamp' column."
+                )
+
+        eq.index = pd.to_datetime(eq.index, utc=True)
+        eq = eq.sort_index()
+
+        if "local_eq_count_24h" not in eq.columns:
+            raise KeyError("local_eq_df must contain 'local_eq_count_24h'.")
+
+        eq_reset = (
+            eq[["local_eq_count_24h"]]
+            .reset_index()
+            .rename(columns={eq.index.name or "index": "time"})
+        )
+
+        base = merge_data(
+            base=base,
+            ext=eq_reset,
+            base_time="time",
+            ext_time="time",
+            value_cols=["local_eq_count_24h"],
+            tolerance_hours=1,
+        )
+
+        base["local_eq_count_24h"] = base["local_eq_count_24h"].fillna(0)
+        base["local_eq_count_24h_scaled"] = robust_scale_series(
+            base["local_eq_count_24h"]
+        )
 
     # final sorted dataframe
     final = base.sort_values("time").reset_index(drop=True)

@@ -12,6 +12,7 @@ def build_master_dataframe(
     start,
     end,
     master_freq="1h",
+    local_eq=None,
 ):
     master_index = pd.date_range(
         start=start,
@@ -30,10 +31,15 @@ def build_master_dataframe(
     so2_1h = so2_1h.reindex(master_index)
     gnss_1h = gnss_1h.reindex(master_index)
 
-    master_df = pd.concat(
-        [wave_1h, weather_1h, so2_1h, gnss_1h],
-        axis=1,
-    )
+    frames = [wave_1h, weather_1h, so2_1h, gnss_1h]
+
+    if local_eq is not None:
+        local_eq_1h = local_eq.resample(master_freq).mean()
+        local_eq_1h = local_eq_1h.reindex(master_index)
+        local_eq_1h = local_eq_1h.fillna(0)
+        frames.append(local_eq_1h)
+
+    master_df = pd.concat(frames, axis=1)
 
     master_df.index.name = "timestamp"
 
@@ -61,11 +67,15 @@ def prepare_analysis_dataframe(master_df):
     if "effect_tremor_rms_5_15" in analysis_df.columns:
         analysis_df["effect_tremor_rms_5_15"] = analysis_df["effect_tremor_rms_5_15"].interpolate()
 
+    if "local_eq_count_24h" in analysis_df.columns:
+        analysis_df["local_eq_count_24h"] = analysis_df["local_eq_count_24h"].fillna(0)
+
     required_waveform_cols = [
         "hydro_rms_2_5",
         "ratio_4p5_8_over_8_16",
         "hf_event_rate_2_5",
         "effect_tremor_rms_5_15",
+        "local_eq_count_24h",
     ]
 
     required_existing = [
@@ -88,6 +98,7 @@ def scale_analysis_dataframe(
             "hf_event_rate_2_5",
             "API",
             "effect_tremor_rms_5_15",
+            "local_eq_count_24h",
         ]
 
     analysis_prepped = analysis_df.copy()

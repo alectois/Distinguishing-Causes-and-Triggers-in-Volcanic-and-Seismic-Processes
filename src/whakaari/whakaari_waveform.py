@@ -79,7 +79,6 @@ def effect_tremor_rms_5_15(trace, win_sec=600):
     s.name = "effect_tremor_rms_5_15"
     return s
 
-
 # HF event rate in 2–5 Hz only
 def hf_event_rate_2_5(trace,
                       sta_sec=1.0,

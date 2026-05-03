@@ -21,3 +21,7 @@ WHAKAARI_WAVEFORM_CONFIG = {
 }
 
 MASTER_FREQ = "1h"
+
+# Local earthquake catalogue settings
+WHAKAARI_EQ_RADIUS_KM = 30.0
+WHAKAARI_EQ_MIN_MAGNITUDE = None
