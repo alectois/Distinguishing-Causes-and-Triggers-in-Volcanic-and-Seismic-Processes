@@ -36,6 +36,10 @@ def plot_whakaari_waveforms(df):
         return
 
     fig, axes = plt.subplots(len(cols), 1, figsize=(14, 8), sharex=True)
+
+    if len(cols) == 1:
+        axes = [axes]
+
     for ax, col in zip(axes, cols):
         ax.plot(df.index, df[col], linewidth=0.8)
         ax.set_title(col)
@@ -47,8 +51,17 @@ def plot_whakaari_waveforms(df):
 
 def plot_whakaari_external(df):
     cols = ["SO2_flux", "GNSS_deformation", "API", "pressure_drop"]
+    cols = [c for c in cols if c in df.columns]
 
-    fig, axes = plt.subplots(len(cols), 1, figsize=(14, 10), sharex=True)
+    if len(cols) == 0:
+        print("No external columns found.")
+        return
+
+    fig, axes = plt.subplots(len(cols), 1, figsize=(14, 2.8 * len(cols)), sharex=True)
+
+    if len(cols) == 1:
+        axes = [axes]
+
     for ax, col in zip(axes, cols):
         ax.plot(df.index, df[col], linewidth=0.8)
         ax.set_title(col)
@@ -75,7 +88,15 @@ def plot_whakaari_scaled(df):
 
 
 def plot_with_eruption_time(df, cols, eruption_time):
+    eruption_time = pd.to_datetime(eruption_time, utc=True)
+    cols = [c for c in cols if c in df.columns]
+
+    if len(cols) == 0:
+        print("No requested columns found.")
+        return
+
     fig, axes = plt.subplots(len(cols), 1, figsize=(14, 2.8 * len(cols)), sharex=True)
+
     if len(cols) == 1:
         axes = [axes]
 

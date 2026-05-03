@@ -47,6 +47,9 @@ def band_rms_series(trace, fmin, fmax, win_sec=600):
         times.append(tr.stats.starttime + i / sr)
         vals.append(rms)
 
+    if len(vals) == 0:
+        return pd.Series(dtype=float)
+
     return pd.Series(
         vals,
         index=pd.to_datetime([t.datetime for t in times], utc=True),
