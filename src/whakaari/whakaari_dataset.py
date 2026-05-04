@@ -39,36 +39,36 @@ def build_master_dataframe(
         local_eq_1h = local_eq_1h.fillna(0)
         frames.append(local_eq_1h)
 
-    master_df = pd.concat(frames, axis=1)
+    whakaari_raw = pd.concat(frames, axis=1)
 
-    master_df.index.name = "timestamp"
+    whakaari_raw.index.name = "timestamp"
 
-    return master_df
+    return whakaari_raw
 
 
-def prepare_analysis_dataframe(master_df):
-    analysis_df = master_df.copy()
+def prepare_analysis_dataframe(whakaari_raw):
+    whakaari_dataset = whakaari_raw.copy()
 
-    if "SO2_flux" in analysis_df.columns:
-        analysis_df["SO2_flux"] = analysis_df["SO2_flux"].interpolate(limit=3)
+    if "SO2_flux" in whakaari_dataset.columns:
+        whakaari_dataset["SO2_flux"] = whakaari_dataset["SO2_flux"].interpolate(limit=3)
 
-    if "API" in analysis_df.columns:
-        analysis_df["API"] = analysis_df["API"].interpolate()
+    if "API" in whakaari_dataset.columns:
+        whakaari_dataset["API"] = whakaari_dataset["API"].interpolate()
 
-    if "pressure_drop" in analysis_df.columns:
-        analysis_df["pressure_drop"] = analysis_df["pressure_drop"].fillna(0)
+    if "pressure_drop" in whakaari_dataset.columns:
+        whakaari_dataset["pressure_drop"] = whakaari_dataset["pressure_drop"].fillna(0)
 
-    if "hf_event_rate_2_5" in analysis_df.columns:
-        analysis_df["hf_event_rate_2_5"] = analysis_df["hf_event_rate_2_5"].fillna(0)
+    if "hf_event_rate_2_5" in whakaari_dataset.columns:
+        whakaari_dataset["hf_event_rate_2_5"] = whakaari_dataset["hf_event_rate_2_5"].fillna(0)
 
-    if "GNSS_deformation" in analysis_df.columns:
-        analysis_df["GNSS_deformation"] = analysis_df["GNSS_deformation"].ffill()
+    if "GNSS_deformation" in whakaari_dataset.columns:
+        whakaari_dataset["GNSS_deformation"] = whakaari_dataset["GNSS_deformation"].ffill()
 
-    if "effect_tremor_rms_5_15" in analysis_df.columns:
-        analysis_df["effect_tremor_rms_5_15"] = analysis_df["effect_tremor_rms_5_15"].interpolate()
+    if "effect_tremor_rms_5_15" in whakaari_dataset.columns:
+        whakaari_dataset["effect_tremor_rms_5_15"] = whakaari_dataset["effect_tremor_rms_5_15"].interpolate()
 
-    if "local_eq_count_24h" in analysis_df.columns:
-        analysis_df["local_eq_count_24h"] = analysis_df["local_eq_count_24h"].fillna(0)
+    if "local_eq_count_24h" in whakaari_dataset.columns:
+        whakaari_dataset["local_eq_count_24h"] = whakaari_dataset["local_eq_count_24h"].fillna(0)
 
     required_waveform_cols = [
         "hydro_rms_2_5",
@@ -80,15 +80,15 @@ def prepare_analysis_dataframe(master_df):
 
     required_existing = [
         c for c in required_waveform_cols
-        if c in analysis_df.columns
+        if c in whakaari_dataset.columns
     ]
 
-    analysis_df = analysis_df.dropna(subset=required_existing)
+    whakaari_dataset = whakaari_dataset.dropna(subset=required_existing)
 
-    return analysis_df
+    return whakaari_dataset
 
 def scale_analysis_dataframe(
-    analysis_df,
+    whakaari_dataset,
     log_transform_cols=None,
 ):
     if log_transform_cols is None:
@@ -101,7 +101,7 @@ def scale_analysis_dataframe(
             "local_eq_count_24h",
         ]
 
-    analysis_prepped = analysis_df.copy()
+    analysis_prepped = whakaari_dataset.copy()
 
     for col in log_transform_cols:
         if col in analysis_prepped.columns:
@@ -112,22 +112,22 @@ def scale_analysis_dataframe(
     feature_cols = analysis_prepped.columns.tolist()
 
     scaler = StandardScaler()
-    analysis_scaled = analysis_prepped.copy()
-    analysis_scaled[feature_cols] = scaler.fit_transform(
+    whakaari_dataset_scaled = analysis_prepped.copy()
+    whakaari_dataset_scaled[feature_cols] = scaler.fit_transform(
         analysis_prepped[feature_cols]
     )
 
-    return analysis_scaled, analysis_prepped, scaler
+    return whakaari_dataset_scaled, analysis_prepped, scaler
 
 def save_whakaari_datasets(
-    master_df,
-    analysis_df,
-    analysis_scaled,
+    whakaari_raw,
+    whakaari_dataset,
+    whakaari_dataset_scaled,
     output_dir,
 ):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    master_df.to_csv(output_dir / "whakaari_raw.csv")
-    analysis_df.to_csv(output_dir / "whakaari_dataset.csv")
-    analysis_scaled.to_csv(output_dir / "whakaari_dataset_scaled.csv")
+    whakaari_raw.to_csv(output_dir / "whakaari_raw.csv")
+    whakaari_dataset.to_csv(output_dir / "whakaari_dataset.csv")
+    whakaari_dataset_scaled.to_csv(output_dir / "whakaari_dataset_scaled.csv")
