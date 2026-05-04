@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-
+from pathlib import Path
 from obspy import UTCDateTime
 from obspy.signal.trigger import classic_sta_lta, trigger_onset
 
@@ -143,7 +143,27 @@ def extract_features_for_day(client, day_start, cfg):
     return df
 
 
-def build_waveform_dataset(client, start, end, cfg):
+def build_waveform_dataset(
+    client,
+    start,
+    end,
+    cfg,
+    save_path=None,
+    overwrite=False,
+):
+    if save_path is not None:
+        save_path = Path(save_path)
+
+        if save_path.exists() and not overwrite:
+            cached = pd.read_pickle(save_path)
+            print(f"loaded cached waveform dataset: {save_path}")
+
+            if isinstance(cached, dict):
+                return cached["waveform_df"], cached.get("failures", [])
+
+            # Backward-compatible fallback if only the dataframe was saved.
+            return cached, []
+
     days = pd.date_range(start, end, freq="D")
 
     all_days = []
@@ -168,5 +188,21 @@ def build_waveform_dataset(client, start, end, cfg):
     waveform_df = waveform_df.sort_index()
 
     waveform_df["hf_event_rate_2_5"] = waveform_df["hf_event_rate_2_5"].fillna(0)
+
+    if save_path is not None:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+
+        pd.to_pickle(
+            {
+                "waveform_df": waveform_df,
+                "failures": failures,
+                "start": start,
+                "end": end,
+                "cfg": cfg,
+            },
+            save_path,
+        )
+
+        print(f"saved waveform dataset: {save_path}")
 
     return waveform_df, failures

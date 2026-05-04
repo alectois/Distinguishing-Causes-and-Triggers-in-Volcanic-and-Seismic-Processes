@@ -128,10 +128,6 @@ def save_whakaari_datasets(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    master_df.to_pickle(output_dir / "whakaari_raw.pkl")
-    analysis_df.to_pickle(output_dir / "whakaari_dataset.pkl")
-    analysis_scaled.to_pickle(output_dir / "whakaari_dataset_scaled.pkl")
-
     master_df.to_csv(output_dir / "whakaari_raw.csv")
     analysis_df.to_csv(output_dir / "whakaari_dataset.csv")
     analysis_scaled.to_csv(output_dir / "whakaari_dataset_scaled.csv")
