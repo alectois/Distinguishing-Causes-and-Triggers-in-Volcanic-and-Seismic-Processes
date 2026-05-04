@@ -38,14 +38,3 @@ ETNA_WAVEFORM_CONFIG = {
 
 ETNA_GAS_METEO_COLS = ["CO2_3", "AirTemp_3", "Patm_3", "WindSpeed"]
 ETNA_EVENT_TIME = UTCDateTime("2008-05-12T06:28:00")
-
-# Local earthquake catalogue settings
-ETNA_SUMMIT_LAT = 37.7
-ETNA_SUMMIT_LON = 14.9
-
-ETNA_EQ_RADIUS_KM = 30.0
-ETNA_EQ_MIN_MAGNITUDE = None
-ETNA_EQ_MAX_DEPTH_KM = 30.0
-
-# INGV-OE FDSN event service
-ETNA_INGV_EVENT_BASE_URL = "https://sismoweb.ct.ingv.it/fdsnws/event/1/query"
