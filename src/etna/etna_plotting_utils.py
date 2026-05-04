@@ -4,6 +4,90 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from obspy import UTCDateTime
 
+
+# ---------------------------------------------------------------------
+# Thesis plotting style
+# ---------------------------------------------------------------------
+
+THESIS_COLORS = {
+    "series": "#0072B2",      
+    "event": "#D55E00",       
+    "secondary": "#009E73",   
+    "grid": "0.85",
+}
+
+ETNA_AXIS_LABELS = {
+    "T_log": ("Teleseismic-band energy, 0.05–0.5 Hz", "RMS"),
+    "S_log": ("Background seismic energy, 0.5–4 Hz", "RMS"),
+    "Y_log": ("High-frequency seismic response, 4–12 Hz", "RMS"),
+    "CO2_3": ("Soil CO₂ concentration", "%"),
+    "AirTemp_3": ("Air temperature", "°C"),
+    "Patm_3": ("Atmospheric pressure", "hPa"),
+    "WindSpeed": ("Wind speed", "m s⁻¹"),
+    "CO2_SO2": ("Plume CO₂/SO₂ ratio", "Molar ratio"),
+
+    "T_log_scaled": ("Teleseismic-band energy, 0.05–0.5 Hz", "RMS, Robust-scaled"),
+    "S_log_scaled": ("Background seismic energy, 0.5–4 Hz", "RMS, Robust-scaled"),
+    "Y_log_scaled": ("High-frequency seismic response, 4–12 Hz", "RMS, Robust-scaled"),
+    "CO2_3_scaled": ("Soil CO₂ concentration", "%, Robust-scaled"),
+    "AirTemp_3_scaled": ("Air temperature", "°C, Robust-scaled"),
+    "Patm_3_scaled": ("Atmospheric pressure", "hPa, Robust-scaled"),
+    "WindSpeed_scaled": ("Wind speed", "m s⁻¹, Robust-scaled"),
+    "CO2_SO2_scaled": ("Plume CO₂/SO₂ ratio", "Molar ratio, Robust-scaled"),
+}
+
+ETNA_RAW_ORDER = [
+    "T_log",
+    "S_log",
+    "Y_log",
+    "CO2_3",
+    "AirTemp_3",
+    "Patm_3",
+    "WindSpeed",
+    "CO2_SO2",
+]
+
+ETNA_SCALED_ORDER = [
+    "T_log_scaled",
+    "S_log_scaled",
+    "Y_log_scaled",
+    "CO2_3_scaled",
+    "AirTemp_3_scaled",
+    "Patm_3_scaled",
+    "WindSpeed_scaled",
+    "CO2_SO2_scaled",
+]
+
+ETNA_THESIS_ORDER = [
+    "T_log_scaled",
+    "S_log_scaled",
+    "Y_log_scaled",
+    "CO2_3_scaled",
+    "AirTemp_3_scaled",
+    "Patm_3_scaled",
+    "WindSpeed_scaled",
+    "CO2_SO2_scaled",
+]
+
+
+def set_thesis_style():
+    plt.rcParams.update({
+        "figure.dpi": 130,
+        "savefig.dpi": 300,
+        "font.size": 10,
+        "axes.titlesize": 11,
+        "axes.labelsize": 10,
+        "xtick.labelsize": 9,
+        "ytick.labelsize": 9,
+        "legend.fontsize": 9,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.grid": True,
+        "grid.alpha": 0.35,
+        "grid.linewidth": 0.6,
+    })
+
+
 def dataset_health_report(df, name):
     print(f"\n{name}")
     print("shape:", df.shape)
@@ -33,15 +117,6 @@ def plot_scaled_dataset(df, station_name):
     plt.tight_layout()
     plt.show()
 
-def compare_station_variable(df1, df2, var, name1="ME01", name2="ME02"):
-    plt.figure(figsize=(14,4))
-    plt.plot(df1["time"], df1[var], label=name1, linewidth=0.8)
-    plt.plot(df2["time"], df2[var], label=name2, linewidth=0.8)
-    plt.title(var)
-    plt.legend()
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
 
 def plot_variable_pdfs(df, name, cols=None, bins=40):
     """
@@ -93,53 +168,10 @@ def plot_variable_pdfs(df, name, cols=None, bins=40):
     for ax in axes[len(cols):]:
         ax.axis("off")
 
-    fig.suptitle(f"Empirical probability density functions — {name}", y=1.02)
+    fig.suptitle(f"Probability density functions — {name}", y=1.02)
     plt.tight_layout()
     plt.show()
 
-def plot_raw_vs_scaled_pdfs(raw_df, scaled_df, name, variable_pairs):
-    if len(variable_pairs) == 0:
-        print(f"No variable pairs to plot for {name}.")
-        return
-    n = len(variable_pairs)
-
-    fig, axes = plt.subplots(
-        n,
-        2,
-        figsize=(12, 3.2 * n),
-        squeeze=False,
-    )
-
-    for i, (raw_col, scaled_col) in enumerate(variable_pairs):
-        raw = pd.to_numeric(raw_df[raw_col], errors="coerce").dropna()
-        scaled = pd.to_numeric(scaled_df[scaled_col], errors="coerce").dropna()
-
-        axes[i, 0].hist(
-            raw,
-            bins=40,
-            density=True,
-            alpha=0.75,
-            edgecolor="black",
-            linewidth=0.4,
-        )
-        axes[i, 0].set_title(f"{raw_col} raw/log")
-
-        axes[i, 1].hist(
-            scaled,
-            bins=40,
-            density=True,
-            alpha=0.75,
-            edgecolor="black",
-            linewidth=0.4,
-        )
-        axes[i, 1].axvline(scaled.mean(), linestyle="--", linewidth=1.5, label="mean")
-        axes[i, 1].axvline(scaled.median(), linestyle=":", linewidth=1.5, label="median")
-        axes[i, 1].set_title(f"{scaled_col} scaled")
-        axes[i, 1].legend(fontsize=8)
-
-    fig.suptitle(f"Raw/log vs scaled distributions — {name}", y=1.01)
-    plt.tight_layout()
-    plt.show()
 
 def distribution_summary(df, name=None):
     cols = [
@@ -173,7 +205,17 @@ def run_teleseismic_checks(
     event_time=UTCDateTime("2008-05-12T06:28:00"),
     pre_sec=3600,
     post_sec=3600,
+    save_dir=None,
+    spectrogram_cmap="cividis",
 ):
+    """
+    Produces three figures:
+    1. instrument-response-corrected waveform,
+    2. 1-min RMS and hourly maximum RMS comparison,
+    3. spectrogram with the frequency bands used in the Etna analysis.
+    """
+    set_thesis_style()
+
     if not isinstance(event_time, UTCDateTime):
         event_time = UTCDateTime(event_time)
 
@@ -196,20 +238,105 @@ def run_teleseismic_checks(
     )
     tr = st[0]
 
+    response_output = cfg.get("response_output", "VEL").upper()
+
+    motion_quantity = {
+        "VEL": "ground velocity",
+        "DISP": "ground displacement",
+        "ACC": "ground acceleration",
+    }.get(response_output, "ground-motion amplitude")
+
+    motion_units = {
+        "VEL": "m s⁻¹",
+        "DISP": "m",
+        "ACC": "m s⁻²",
+    }.get(response_output, "")
+
+    amplitude_label = (
+        f"Response-corrected {motion_quantity} ({motion_units})"
+        if motion_units
+        else f"Response-corrected {motion_quantity}"
+    )
+
+    rms_label = (
+        f"60 s RMS {motion_quantity} ({motion_units})"
+        if motion_units
+        else f"60 s RMS {motion_quantity}"
+    )
+
+    event_dt = event_time.datetime
+    event_mpl = mdates.date2num(event_dt)
+    t1_mpl = mdates.date2num(t1.datetime)
+    t2_mpl = mdates.date2num(t2.datetime)
+    event_label = event_time.strftime("%Y-%m-%d %H:%M UTC")
+
+    def _format_timestamp_axis(ax, xlabel=True):
+        """Apply compact UTC timestamp formatting to a Matplotlib date axis."""
+        ax.axvline(
+            event_mpl,
+            color=THESIS_COLORS["event"],
+            linestyle="--",
+            linewidth=1.15,
+            alpha=0.95,
+            label="Wenchuan earthquake",
+            zorder=5,
+        )
+        ax.set_xlim(t1_mpl, t2_mpl)
+        locator = mdates.AutoDateLocator(minticks=5, maxticks=8)
+        formatter = mdates.ConciseDateFormatter(locator)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(formatter)
+        if xlabel:
+            ax.set_xlabel("Time (UTC)")
+        ax.grid(True, alpha=0.22, linewidth=0.6)
+
+    def _maybe_save(fig, stem):
+        if save_dir is not None:
+            from pathlib import Path
+            out_dir = Path(save_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            fig.savefig(out_dir / f"{station}_{stem}.png", bbox_inches="tight", dpi=300)
+
     # -----------------------------
-    # Raw waveform
+    # Corrected waveform
     # -----------------------------
-    plt.figure(figsize=(12, 4))
-    plt.plot(tr.times("matplotlib"), tr.data)
-    plt.title(f"Raw waveform around teleseismic arrival — {station}")
+    fig, ax = plt.subplots(figsize=(12.0, 3.6))
+    ax.plot(
+        tr.times("matplotlib"),
+        tr.data,
+        color=THESIS_COLORS["series"],
+        linewidth=0.65,
+        rasterized=True,
+    )
+    _format_timestamp_axis(ax)
+    ax.grid(False)
+    ax.set_ylabel(amplitude_label)
+    ax.set_title(
+        f"{station}: response-corrected waveform around Wenchuan earthquake",
+        loc="left",
+        pad=6,
+    )
+    ax.text(
+        0.99,
+        0.96,
+        event_label,
+        ha="right",
+        va="top",
+        transform=ax.transAxes,
+        fontsize=9,
+        color="0.25",
+    )
+    ax.legend(loc="upper left", frameon=False)
+    fig.tight_layout()
+    _maybe_save(fig, "waveform_teleseismic")
     plt.show()
 
     # -----------------------------
-    # 1-min RMS
+    # 1-min RMS and hourly aggregation
     # -----------------------------
     df = pd.DataFrame({
         "time": pd.to_datetime(tr.times("timestamp"), unit="s", utc=True),
-        "amp": tr.data
+        "amp": tr.data,
     }).set_index("time")
 
     rms_1min = (
@@ -222,17 +349,36 @@ def run_teleseismic_checks(
         .mean()
     )
 
-    # -----------------------------
-    # Hourly RMS comparison
-    # -----------------------------
-    # Use max to preserve the transient teleseismic arrival within the hour.
     rms_hourly = rms_1min.resample("1h").max()
 
-    plt.figure(figsize=(12, 4))
-    plt.plot(rms_1min.index, rms_1min, alpha=0.5, label="1-min RMS")
-    plt.plot(rms_hourly.index, rms_hourly, marker="o", label="Hourly max RMS")
-    plt.legend()
-    plt.title(f"Effect of hourly max aggregation — {station}")
+    fig, ax = plt.subplots(figsize=(12.0, 3.8))
+    ax.plot(
+        rms_1min.index,
+        rms_1min,
+        color=THESIS_COLORS["series"],
+        linewidth=0.9,
+        alpha=0.72,
+        label="1-min RMS",
+    )
+    ax.plot(
+        rms_hourly.index,
+        rms_hourly,
+        color=THESIS_COLORS["secondary"],
+        marker="o",
+        markersize=4.2,
+        linewidth=1.25,
+        label="Hourly maximum of 1-min RMS",
+    )
+    _format_timestamp_axis(ax)
+    ax.set_ylabel(rms_label)
+    ax.set_title(
+        f"{station}: hourly aggregation of response-corrected ground motion",
+        loc="left",
+        pad=6,
+    )
+    ax.legend(loc="upper left", frameon=False, ncols=3)
+    fig.tight_layout()
+    _maybe_save(fig, "rms_hourly_aggregation")
     plt.show()
 
     t_peak_1m = rms_1min.idxmax()
@@ -246,63 +392,116 @@ def run_teleseismic_checks(
     # -----------------------------
     # Spectrogram
     # -----------------------------
-    fig, ax = plt.subplots(figsize=(13, 6))
-
     tr_spec = tr.copy()
+    fs = tr_spec.stats.sampling_rate
 
-    Pxx, freqs, bins, _ = ax.specgram(
+    from matplotlib import mlab
+    Pxx, freqs, bins = mlab.specgram(
         tr_spec.data,
         NFFT=2048,
-        Fs=tr_spec.stats.sampling_rate,
-        noverlap=1536
+        Fs=fs,
+        noverlap=1536,
     )
 
-    ax.clear()
-
     start = tr_spec.stats.starttime.datetime
-    bin_times = np.array([start + pd.Timedelta(seconds=b) for b in bins])
-    bin_times = mdates.date2num(bin_times)
+    bin_datetimes = np.array([start + pd.Timedelta(seconds=b) for b in bins])
+    bin_times = mdates.date2num(bin_datetimes)
 
-    # Convert power to dB and clip color range for clearer contrast
-    Pxx_db = 10 * np.log10(Pxx + 1e-20)
+    Pxx_db = 10 * np.log10(Pxx + np.finfo(float).eps)
 
-    vmin, vmax = np.nanpercentile(Pxx_db, [5, 99.5])
+    vmin, vmax = np.nanpercentile(Pxx_db, [2, 98])
 
+    fig, ax = plt.subplots(figsize=(12.0, 5.1))
     mesh = ax.pcolormesh(
         bin_times,
         freqs,
         Pxx_db,
         shading="auto",
-        cmap="magma",
+        cmap=spectrogram_cmap,
         vmin=vmin,
         vmax=vmax,
     )
 
-    cbar = fig.colorbar(mesh, ax=ax, pad=0.02)
+    cbar = fig.colorbar(mesh, ax=ax, pad=0.018)
     cbar.set_label("Power spectral density (dB)")
 
-    ax.xaxis_date()
-    ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-    fig.autofmt_xdate()
+    _format_timestamp_axis(ax)
 
-    ax.axvline(
-        mdates.date2num(event_time.datetime),
-        color="cyan",
-        linestyle="--",
-        linewidth=2.5,
-        label="EQ origin"
-    )
+    band_guides = [
+        (0.5, "0.5 Hz"),
+        (4.0, "4 Hz"),
+        (12.0, "12 Hz"),
+    ]
 
-    ax.axhline(0.2, color="cyan", linestyle=":", linewidth=2.2, label="T band upper")
-    ax.axhline(4, color="yellow", linestyle=":", linewidth=2.2, label="S band upper")
-    ax.axhline(12, color="red", linestyle=":", linewidth=2.2, label="Y band upper")
+    for freq, label in band_guides:
+        ax.axhline(
+            freq,
+            color="white",
+            linestyle="-",
+            linewidth=2.8,
+            alpha=0.95,
+            zorder=8,
+        )
+        ax.axhline(
+            freq,
+            color="black",
+            linestyle="--",
+            linewidth=1.15,
+            alpha=0.95,
+            zorder=9,
+        )
+
+        ax.text(
+            0.985,
+            freq,
+            label,
+            transform=ax.get_yaxis_transform(),
+            ha="right",
+            va="bottom",
+            fontsize=8,
+            color="black",
+            bbox={
+                "facecolor": "white",
+                "edgecolor": "none",
+                "alpha": 0.75,
+                "pad": 1.8,
+            },
+            zorder=10,
+        )
+
     ax.set_ylim(0, 15)
     ax.set_ylabel("Frequency (Hz)")
-    ax.set_xlabel("Time (UTC)")
-    ax.set_title(f"Spectrogram around teleseismic arrival — Etna 2008-05-12 {station}")
-    ax.legend(loc="upper right")
+    ax.set_title(
+        f"{station}: spectrogram around the Wenchuan earthquake",
+        loc="left",
+        pad=6,
+    )
+    legend_handles = [
+        plt.Line2D(
+            [0], [0],
+            color=THESIS_COLORS["event"],
+            linestyle="--",
+            linewidth=1.15,
+            label="Wenchuan earthquake",
+        ),
+        plt.Line2D(
+            [0], [0],
+            color="black",
+            linestyle="--",
+            linewidth=1.15,
+            label="Frequency-band boundaries",
+        ),
+    ]
 
-    plt.tight_layout()
+    ax.legend(
+        handles=legend_handles,
+        loc="upper right",
+        frameon=True,
+        framealpha=0.90,
+        fontsize=8,
+    )
+    fig.tight_layout()
+    _maybe_save(fig, "spectrogram_teleseismic")
     plt.show()
 
     return {
@@ -315,7 +514,21 @@ def run_teleseismic_checks(
         "peak_diff": t_peak_1m - t_peak_hourly,
     }
 
-def plot_final_dataset_with_event(csv_path, station, event_time, title=None):
+def plot_etna_data_with_event(
+    csv_path,
+    station,
+    event_time,
+    cols=None,
+    title=None,
+    tick_interval_days=4,
+    figsize=None,
+):
+    """
+    Clean academic Etna time-series plot.
+    Raw data only by default: no smoothing, no resampling, no clipping.
+    """
+    set_thesis_style()
+
     df = pd.read_csv(csv_path, parse_dates=["time"]).set_index("time")
 
     if isinstance(event_time, UTCDateTime):
@@ -326,25 +539,78 @@ def plot_final_dataset_with_event(csv_path, station, event_time, title=None):
     if "station" in df.columns:
         df = df.drop(columns=["station"])
 
-    variables = df.columns
+    if cols is None:
+        cols = [c for c in ETNA_RAW_ORDER if c in df.columns]
+    else:
+        cols = [c for c in cols if c in df.columns]
+
+    if len(cols) == 0:
+        raise ValueError("No requested columns are present in the dataframe.")
+
+    if figsize is None:
+        figsize = (14, 2.05 * len(cols))
 
     fig, axes = plt.subplots(
-        len(variables),
+        len(cols),
         1,
-        figsize=(12, 2.5 * len(variables)),
+        figsize=figsize,
         sharex=True,
     )
 
-    if len(variables) == 1:
+    if len(cols) == 1:
         axes = [axes]
 
-    for ax, var in zip(axes, variables):
-        ax.plot(df.index, df[var])
-        ax.axvline(event_time, color="red", linestyle="--")
-        ax.set_ylabel(var)
+    for ax, col in zip(axes, cols):
+        ax.plot(
+            df.index,
+            df[col],
+            color=THESIS_COLORS["series"],
+            linewidth=0.75,
+        )
 
-    axes[-1].set_xlabel("Time (UTC)")
-    fig.suptitle(title or f"Etna final dataset variables — {station}")
+        ax.axvline(
+            event_time,
+            color=THESIS_COLORS["event"],
+            linestyle="--",
+            linewidth=1.1,
+            alpha=0.9,
+        )
+
+        panel_title, ylabel = ETNA_AXIS_LABELS.get(col, (col, "Value"))
+
+        ax.set_title(panel_title, loc="left", fontsize=10, pad=3)
+        ax.set_ylabel(ylabel, fontsize=9)
+
+        ax.grid(True, alpha=0.22, linewidth=0.6)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.tick_params(axis="both", labelsize=9)
+
+    axes[0].legend(
+        handles=[
+            plt.Line2D(
+                [0], [0],
+                color=THESIS_COLORS["event"],
+                linestyle="--",
+                linewidth=1.1,
+                label="Wenchuan earthquake",
+            )
+        ],
+        loc="upper left",
+        frameon=False,
+        fontsize=9,
+    )
+
+    locator = mdates.DayLocator(interval=tick_interval_days)
+    formatter = mdates.DateFormatter("%b %d")
+    axes[-1].xaxis.set_major_locator(locator)
+    axes[-1].xaxis.set_major_formatter(formatter)
+
+    axes[-1].set_xlabel("Time (UTC)", fontsize=10)
+
+    if title is not None:
+        fig.suptitle(title, fontsize=12, fontweight="bold", y=0.995)
 
     plt.tight_layout()
+
     plt.show()

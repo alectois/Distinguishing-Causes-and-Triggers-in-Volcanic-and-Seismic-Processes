@@ -10,7 +10,8 @@ def extract_plume_co2so2_xls(xls_path, sheet_index=2, time_col=1, ratio_col=10):
     first_data_row = None
     for r in range(sh.nrows):
         v = sh.cell_value(r, time_col)
-        if isinstance(v, (int, float)) and v > 1000:
+        # Check type BEFORE comparison
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 1000:
             first_data_row = r
             break
     if first_data_row is None:
@@ -24,7 +25,14 @@ def extract_plume_co2so2_xls(xls_path, sheet_index=2, time_col=1, ratio_col=10):
         t_val = sh.cell_value(r, time_col)
         y_val = sh.cell_value(r, ratio_col)
 
-        if not isinstance(t_val, (int, float)) or t_val <= 0:
+        # Type guard with explicit conversion
+        if not isinstance(t_val, (int, float)) or isinstance(t_val, bool):
+            continue
+        
+        # Explicitly cast to float to satisfy type checker
+        t_val = float(t_val)
+        
+        if t_val <= 0:
             continue
 
         try:
@@ -100,7 +108,6 @@ def create_etna_final_dataset(
     plume_df: pd.DataFrame | None = None,
     plume_buffer_hours: int = 12,
     plume_tolerance_hours: int = 6,
-    save_pickle: bool = True,
 ):
     # ---- load station waveform features ----
     df = wave_df.copy().reset_index()
@@ -196,30 +203,18 @@ def create_etna_final_dataset(
     stem = out_csv[:-4] if out_csv.endswith(".csv") else out_csv
     Path(stem).parent.mkdir(parents=True, exist_ok=True)
 
-    # optional full checkpoint
-    if save_pickle:
-        final.to_pickle(f"{stem}_full.pkl")
-
     # save RAW dataset
     raw_cols = [c for c in final.columns if not c.endswith("_scaled")]
     final_raw = final[raw_cols].copy()
     final_raw.to_csv(f"{stem}_raw.csv", index=False)
-    if save_pickle:
-        final_raw.to_pickle(f"{stem}_raw.pkl")
 
     # save SCALED dataset
     scaled_cols = ["time", "station"] + [c for c in final.columns if c.endswith("_scaled")]
     final_scaled = final[scaled_cols].copy()
     final_scaled.to_csv(f"{stem}_scaled.csv", index=False)
-    if save_pickle:
-        final_scaled.to_pickle(f"{stem}_scaled.pkl")
 
     print("Saved:", f"{stem}_raw.csv")
     print("Saved:", f"{stem}_scaled.csv")
-    if save_pickle:
-        print("Saved:", f"{stem}_full.pkl")
-        print("Saved:", f"{stem}_raw.pkl")
-        print("Saved:", f"{stem}_scaled.pkl")
 
     return final_raw, final_scaled
 
