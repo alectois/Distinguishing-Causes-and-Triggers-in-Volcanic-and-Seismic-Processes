@@ -31,7 +31,6 @@ class CauseTriggerConfig:
     alpha: float = 0.05
     min_interval_length: int = 30
     beta_is_ones: bool = True
-    exclude_target_from_triggers: bool = False
 
     # Step-8 causal discovery backend
     causal_backend: str = "hmml"  # "hmml" or "pcmci"
@@ -83,7 +82,7 @@ def make_causal_backend(config: CauseTriggerConfig):
             warnings.warn(
                 "PCMCI backend does not return HMML-style regression beta coefficients. "
                 "Its beta matrix stores PCMCI test-statistic strengths. "
-                "For paper-compatible HMML-vs-PCMCI comparison, use beta_is_ones=True.",
+                "For HMML-vs-PCMCI comparison, use beta_is_ones=True.",
                 UserWarning,
             )
 
@@ -246,9 +245,6 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         discovery = backend.discover(X, y_t=config.y_t)
         causes = list(discovery.parents)
 
-        if config.exclude_target_from_triggers:
-            causes = [c for c in causes if c != config.y_t]
-
         result["C"] = causes
         result["backend"] = config.causal_backend
         result["causal_lags"] = discovery.lags
@@ -283,10 +279,6 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     result["backend"] = config.causal_backend
     result["causal_lags"] = discovery_2.lags
     result["causal_scores"] = discovery_2.scores
-
-    if config.exclude_target_from_triggers:
-        B_2 = [v for v in B_2 if v != config.y_t]
-
     result["B_2"] = B_2
 
     T_candidates = []
