@@ -14,14 +14,16 @@ This class handles all computations and data transformations necessary for the H
 """
 
 class HMMLRunner():
-    def __init__(self,lags:int=None,distribution:str=None, mode:str="exhaustive"):
-        #setup parameters needed to run HMML (X-> matrix, lag, distributions)
-        
+    def __init__(self, lags: int = None, distribution: str = None, mode: str = "exhaustive"):
         self.lags = lags
         self.distribution = distribution
+        self.requested_distribution = distribution
+        self.used_distribution = distribution
+        self.used_fallback = False
+
         algorithms = {
-            "exhaustive" : hmml.HmmlExh, 
-            "genetic" : hmml.HmmlGa
+            "exhaustive": hmml.HmmlExh,
+            "genetic": hmml.HmmlGa,
         }
         self.HMML = algorithms[mode]
         
@@ -47,17 +49,20 @@ class HMMLRunner():
     def get_betas_and_adjacency(self, X: pd.DataFrame, y_t: str):
         results = self.run_hmml(X, y_t=y_t)
 
-        used_distribution = self.distribution
+        self.used_distribution = self.distribution
+        self.used_fallback = False
 
         if len(results) == 0:
-            used_distribution = "gaussian"
+            self.used_fallback = True
+            self.used_distribution = "gaussian"
             self.distribution = "gaussian"
             results = self.run_hmml(X, y_t=y_t)
 
         if len(results) == 0:
             raise RuntimeError(
                 f"HMML returned no results for target={y_t}, "
-                f"lags={self.lags}, distribution={used_distribution}"
+                f"lags={self.lags}, requested_distribution={self.requested_distribution}, "
+                f"used_distribution={self.used_distribution}"
             )
 
         adjacency = results[0]["adjacency"]

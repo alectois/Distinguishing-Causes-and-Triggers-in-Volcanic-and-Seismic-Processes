@@ -29,8 +29,16 @@ class CauseTriggerConfig:
     lags: int
     distribution: str = "gaussian"
     alpha: float = 0.05
-    min_interval_length: int = 30
+
+    # Original experiments constrained I2; thesis adaptation also constrains I1.
+    min_I1_length: int = 12
+    min_I2_length: int = 24
+
     beta_is_ones: bool = True
+    # added:
+    parameter_source: str = "manual"
+    selected_distribution: str = None
+    selected_lag: int = None
 
     # Step-8 causal discovery backend
     causal_backend: str = "hmml"  # "hmml" or "pcmci"
@@ -58,6 +66,13 @@ class HMMLBackend:
 
     def discover(self, X: pd.DataFrame, y_t: str) -> BackendResult:
         beta, adjacency = self.runner.get_betas_and_adjacency(X, y_t=y_t)
+        scores = {
+            "_hmml_metadata": {
+                "requested_distribution": self.runner.requested_distribution,
+                "used_distribution": self.runner.used_distribution,
+                "used_fallback": self.runner.used_fallback,
+            }
+        }
         parents = X.columns[np.where(adjacency == 1)[0]].to_list()
 
         return BackendResult(
@@ -65,7 +80,7 @@ class HMMLBackend:
             adjacency=adjacency,
             beta=beta,
             lags={},
-            scores={},
+            scores=scores,
             raw_results=None,
         )
 
@@ -100,7 +115,11 @@ def make_causal_backend(config: CauseTriggerConfig):
         "Use 'hmml' or 'pcmci'."
     )
 
-def find_increase_split(y: pd.Series, min_interval_length: int = 30):
+def find_increase_split(
+    y: pd.Series,
+    min_I1_length: int = 12,
+    min_I2_length: int = 30,
+):
     # find I1, I2 such that |E(y_t)|_I2 > |E(y_t)|_I1
     best_split = None
     max_abs_mean_difference = float("-inf")
@@ -109,7 +128,9 @@ def find_increase_split(y: pd.Series, min_interval_length: int = 30):
         interval_1 = y.iloc[:i]
         interval_2 = y.iloc[i:]
 
-        if len(interval_2) <= min_interval_length:
+        if len(interval_1) < min_I1_length:
+            continue
+        if len(interval_2) < min_I2_length:
             continue
 
         abs_mean_difference = abs(interval_2.mean()) - abs(interval_1.mean())
@@ -178,6 +199,7 @@ def test_moderation(y_response, V, x_s_values, alpha=0.05):
     r = V.shape[0]
     f_stat = f_statistic(rss_reduced, rss_full, r)
     critical_f = f.ppf(1 - alpha, dfn=1, dfd=(r - 2))
+    p_value = 1 - f.cdf(f_stat, dfn=1, dfd=(r - 2))
 
     rss_reduction = rss_reduced - rss_full
 
@@ -196,12 +218,13 @@ def test_moderation(y_response, V, x_s_values, alpha=0.05):
         "accepted": bool(f_stat > critical_f),
         "f_stat": float(f_stat),
         "critical_f": float(critical_f),
+        "p_value": float(p_value),
         "rss_reduced": float(rss_reduced),
         "rss_full": float(rss_full),
         "rss_reduction": float(rss_reduction),
         "rss_reduction_ratio": float(rss_reduction_ratio),
-        "gamma_1": gamma_1,
-        "gamma_2": gamma_2,
+        "gamma_1": float(gamma_1),
+        "gamma_2": float(gamma_2),
         "r": int(r),
     }
 
@@ -224,16 +247,22 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         "target_abs_mean_I2": None,
         "target_abs_mean_difference": None,
         "backend": config.causal_backend,
+        "configured_lags": config.lags,
+        "configured_distribution": config.distribution,
+        "parameter_source": getattr(config, "parameter_source", "manual"),
         "diagnostics": [],
         "causal_lags": {},
         "causal_scores": {},
+        "selected_cause_shift_scores": {},
+        "autoregressive_parent_in_B2": False,
     }
 
     backend = make_causal_backend(config)
 
     split_index = find_increase_split(
         X[config.y_t],
-        min_interval_length=config.min_interval_length,
+        min_I1_length=config.min_I1_length,
+        min_I2_length=config.min_I2_length,
     )
 
     result["split_index"] = split_index
@@ -269,20 +298,28 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     mu_before = I_1.mean()
     mu_after = I_2.mean()
     delta_mu = (mu_after - mu_before).abs()
+    delta_mu = delta_mu.drop(labels=[config.y_t], errors="ignore") # Exclude target variable from cause selection
+    if delta_mu.empty:
+        return result
     x_u = delta_mu.idxmax()
+    result["selected_cause_shift_scores"] = delta_mu.to_dict()
 
     discovery_2 = backend.discover(I_2, y_t=config.y_t)
 
     beta_2 = discovery_2.beta
     B_2 = list(discovery_2.parents)
 
+    result["autoregressive_parent_in_B2"] = config.y_t in B_2
     result["backend"] = config.causal_backend
     result["causal_lags"] = discovery_2.lags
     result["causal_scores"] = discovery_2.scores
     result["B_2"] = B_2
 
+    # Trigger candidates
     T_candidates = []
     for col in B_2:
+        if col == config.y_t: # Exclude target variable from trigger candidates
+            continue
         if abs(I_2[col].mean()) > abs(I_1[col].mean()): # Alg. line 10: |E(x_s^t)|_I2 > |E(x_s^t)|_I1
             T_candidates.append(col)
 
@@ -292,8 +329,22 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         return result
 
     for x_s in T_candidates:
+        # After lagging, we lose 'lags' observations. 
+        # We need at least 10 effective observations to run the moderation test.
+        effective_n = len(I_2) - config.lags
+        if effective_n < 10:
+            result["diagnostics"].append({
+                "trigger": x_s,
+                "cause": x_u,
+                "accepted": False,
+                "reason": "Too few observations after lagging for moderation test.",
+                "I2_length": len(I_2),
+                "lags": config.lags,
+                "effective_n": effective_n,
+            })
+            continue
+        
         B_2_without_trigger = [v for v in B_2 if v != x_s]
-
         if len(B_2_without_trigger) == 0:
             result["diagnostics"].append({
                 "trigger": x_s,
@@ -330,16 +381,22 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         result["diagnostics"].append(moderation)
 
         if moderation["accepted"]:
-            result["T"].append(x_s)
-            result["C"].append(x_u)
-            result["pairs"].append((x_u, x_s))
+            if x_s not in result["T"]:
+                result["T"].append(x_s)
+
+            if x_u not in result["C"]:
+                result["C"].append(x_u)
+
+            pair = (x_u, x_s)
+            if pair not in result["pairs"]:
+                result["pairs"].append(pair)
 
     return result
 
 def diagnostics_to_dataframe(result: dict) -> pd.DataFrame:
     """
     Convert result['diagnostics'] into a dataframe for inspection,
-    sorting, plotting, and thesis tables.
+    sorting, plotting, and tables.
     """
     diagnostics = result.get("diagnostics", [])
 
