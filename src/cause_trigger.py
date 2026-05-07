@@ -255,6 +255,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         "causal_scores": {},
         "selected_cause_shift_scores": {},
         "autoregressive_parent_in_B2": False,
+        "autoregressive_parent_full_interval": False,
     }
 
     backend = make_causal_backend(config)
@@ -272,7 +273,9 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
 
     if split_index is None:
         discovery = backend.discover(X, y_t=config.y_t)
-        causes = list(discovery.parents)
+        causes = [p for p in discovery.parents if p != config.y_t] # Exclude target variable from causes
+
+        result["autoregressive_parent_full_interval"] = config.y_t in discovery.parents
 
         result["C"] = causes
         result["backend"] = config.causal_backend
