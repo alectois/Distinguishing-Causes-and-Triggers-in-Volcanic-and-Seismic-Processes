@@ -142,23 +142,6 @@ def find_increase_split(
     return best_split
 
 
-def build_lagged_design_matrix(X_values, beta_values, lags, beta_is_ones=True):
-    design_cols = []
-
-    for i in range(X_values.shape[1]):
-        for j in range(lags, 0, -1):
-            col = X_values[j - 1 : X_values.shape[0] - lags + j - 1, i]
-            design_cols.append(col.reshape(-1, 1))
-
-    design_matrix = np.hstack(design_cols)
-
-    beta_col = beta_values.reshape(-1, 1)
-    if beta_is_ones:
-        beta_col = np.ones_like(beta_col)
-
-    return design_matrix, beta_col
-
-
 def residual_sum_of_squares(y_true, X_features, model):
     y_hat = model.predict(X_features)
     return np.sum((y_true - y_hat) ** 2)
