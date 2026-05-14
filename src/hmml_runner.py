@@ -6,7 +6,6 @@ Zenodo. DOI: 10.5281/zenodo.15109084
 """
 
 import hmml
-from hmml import HmmlGa
 import numpy as np
 import pandas as pd
 """
@@ -27,7 +26,7 @@ class HMMLRunner():
         }
         self.HMML = algorithms[mode]
         
-    def run_hmml(self, X:pd.DataFrame, y_t: str = "ws"):
+    def run_hmml(self, X: pd.DataFrame, y_t: str):
 
         target_indices = [X.columns.get_loc(y_t)]
         hmmlga = self.HMML(np.transpose(X.to_numpy()), self.lags, [self.distribution], target_indices)
@@ -47,16 +46,31 @@ class HMMLRunner():
         return pd.DataFrame(beta,index=X_columns, columns=columns)
 
     def get_betas_and_adjacency(self, X: pd.DataFrame, y_t: str):
-        results = self.run_hmml(X, y_t=y_t)
+        if y_t not in X.columns:
+            raise ValueError(f"Target variable {y_t!r} is not in X.columns")
 
-        self.used_distribution = self.distribution
+        if X.isna().any().any():
+            raise ValueError("HMMLRunner received NaNs. Drop or impute missing values first.")
+
+        if not all(np.issubdtype(dtype, np.number) for dtype in X.dtypes):
+            raise ValueError("HMMLRunner expects all columns to be numeric.")
+
+        original_distribution = self.distribution
+
+        self.used_distribution = original_distribution
         self.used_fallback = False
+
+        results = self.run_hmml(X, y_t=y_t)
 
         if len(results) == 0:
             self.used_fallback = True
             self.used_distribution = "gaussian"
+
             self.distribution = "gaussian"
             results = self.run_hmml(X, y_t=y_t)
+
+            # Restore requested distribution after fallback attempt.
+            self.distribution = original_distribution
 
         if len(results) == 0:
             raise RuntimeError(

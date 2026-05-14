@@ -58,11 +58,17 @@ def convert_name(name: str):
 def find_distribution(series, fallback_distribution="gaussian"):
     """
     Fit distribution for the target series and convert to HMML-compatible name.
+
+    For standardized data with negative values, return gaussian because
+    gamma and inverse Gaussian require positive support.
     """
     clean_series = pd.Series(series).dropna()
 
     if len(clean_series) < 10:
         return fallback_distribution
+
+    if (clean_series <= 0).any():
+        return "gaussian"
 
     try:
         dist = distfit(
