@@ -40,7 +40,7 @@ class CauseTriggerConfig:
     selected_distribution: str = None
     selected_lag: int = None
 
-    # Step-8 causal discovery backend
+    # causal discovery backend
     causal_backend: str = "hmml"  # "hmml" or "pcmci"
 
     # PCMCI settings
@@ -163,56 +163,169 @@ def residual_sum_of_squares(y_true, X_features, model):
     y_hat = model.predict(X_features)
     return np.sum((y_true - y_hat) ** 2)
 
-
-def f_statistic(rss_reduced, rss_full, r):
+def build_lag_matrix_1d(values, lags):
     """
-    Paper Eq. (10), pages 19-20:
+    Build lag columns [x(t-1), ..., x(t-d)] aligned with y[d:].
 
-        S = ((RSS1 - RSS2) * (r - 2)) / RSS2
-
-    Interpreted consistently as:
-        RSS1 = RSS_reduced from Eq. (4)
-        RSS2 = RSS_full from Eq. (3)
+    Returns shape (n - d, d), where n = len(values).
     """
-    return ((rss_reduced - rss_full) * (r - 2)) / rss_full
+    values = np.asarray(values).reshape(-1)
+    n = len(values)
+
+    if n <= lags:
+        raise ValueError(f"Need len(values) > lags, got len={n}, lags={lags}")
+
+    cols = []
+    for k in range(1, lags + 1):
+        cols.append(values[lags - k : n - k].reshape(-1, 1))
+
+    return np.hstack(cols)
+
+def build_lagwise_V(X_values, beta_values, lags, beta_is_ones=True):
+    """
+    May 8 paper-compatible V construction.
+
+    Eq. (3)-(4) use V^(t-k), k=1,...,d. Therefore V must be
+    represented as a lag-wise matrix, not as a single collapsed column.
+
+    X_values: shape (n, p), variables from B2 without candidate trigger.
+    beta_values: shape (d, p), rows Lag_1...Lag_d, same columns as X_values.
+    Returns: V_lags with shape (n - d, d), columns [V(t-1), ..., V(t-d)].
+
+    If beta_is_ones=True, V(t-k) is 1 plus the sum of all non-trigger B2 variables,
+    because the May paper's X_without-trigger matrix includes an intercept column,
+    at lag k, matching Algorithm 1's V := X_without-trigger * 1.
+    If beta_is_ones=False, V(t-k) is the beta-weighted sum at lag k.
+    """
+    X_values = np.asarray(X_values)
+    beta_values = np.asarray(beta_values)
+
+    if X_values.ndim != 2:
+        raise ValueError("X_values must be a 2D array")
+
+    n, p = X_values.shape
+    if n <= lags:
+        raise ValueError(f"Need len(I2) > lags, got len={n}, lags={lags}")
+
+    if p == 0:
+        raise ValueError("Cannot build V_lags with zero variables")
+
+    if not beta_is_ones and beta_values.shape != (lags, p):
+        raise ValueError(
+            f"beta_values must have shape (lags, variables)=({lags}, {p}), "
+            f"got {beta_values.shape}"
+        )
+
+    V_cols = []
+    for k in range(1, lags + 1):
+        X_lag_k = X_values[lags - k : n - k, :]
+
+        if beta_is_ones:
+            weights = np.ones(p)
+        else:
+            weights = beta_values[k - 1, :]
+
+        if beta_is_ones:
+            # May paper Algorithm 1:
+            # X_without-trigger includes a leading intercept column,
+            # and V := X_without-trigger @ 1.
+            # Therefore V(t-k) = 1 + sum of non-trigger B2 variables at lag k.
+            V_k = 1.0 + X_lag_k.sum(axis=1, keepdims=True)
+        else:
+            # Non-paper variant: beta-weighted V.
+            # Keep the intercept contribution because the paper's X matrix includes it.
+            weights = beta_values[k - 1, :]
+            V_k = 1.0 + (X_lag_k @ weights.reshape(-1, 1))
+
+        V_cols.append(V_k)
+
+    return np.hstack(V_cols)
+
+def f_statistic(rss_full, rss_reduced, n, d):
+    """
+    May 8 paper F-statistic for Eq. (3) vs Eq. (4).
+
+    Eq. (3), full model:
+        y_t = gamma_0 + sum_k gamma_1k V^(t-k)
+                      + sum_k gamma_2k V^(t-k) x_s^(t-k) + eps_t
+
+    Eq. (4), reduced model:
+        y_t = gamma_0 + sum_k gamma_1k V^(t-k) + eps_t
+
+    May paper notation:
+        RSS1 = RSS_full from Eq. (3)
+        RSS2 = RSS_reduced from Eq. (4)
+
+        S = ((RSS2 - RSS1) / d) / (RSS1 / (n - 3d - 1))
+
+    Critical value uses F_{d, n - 3d - 1}(1 - alpha).
+    """
+    denominator_df = n - 3 * d - 1
+    if denominator_df <= 0:
+        raise ValueError(
+            f"Invalid May-paper F-test degrees of freedom: n - 3d - 1 = {denominator_df}. "
+            f"Need len(I2) > 3*lags + 1; got n={n}, d={d}."
+        )
+
+    return ((rss_reduced - rss_full) / d) / (rss_full / denominator_df)
 
 
-def test_moderation(y_response, V, x_s_values, alpha=0.05):
-    reduced_model = LinearRegression().fit(V, y_response)
+def test_moderation(y_response, V_lags, x_s_lags, n_I2, d, alpha=0.05):
+    """
+    May 8 paper-compatible moderation test.
 
-    features_full = np.hstack([V, V * x_s_values])
-    full_model = LinearRegression().fit(features_full, y_response)
+    Reduced Eq. (4): y ~ V(t-1) + ... + V(t-d)
+    Full Eq. (3):    y ~ V(t-1) + ... + V(t-d)
+                         + V(t-1)x_s(t-1) + ... + V(t-d)x_s(t-d)
+    """
+    V_lags = np.asarray(V_lags)
+    x_s_lags = np.asarray(x_s_lags)
+    y_response = np.asarray(y_response).reshape(-1)
 
-    rss_reduced = residual_sum_of_squares(y_response, V, reduced_model)
-    rss_full = residual_sum_of_squares(y_response, features_full, full_model)
+    if V_lags.ndim != 2 or V_lags.shape[1] != d:
+        raise ValueError(f"V_lags must have shape (n-d, d); got {V_lags.shape}, d={d}")
+
+    if x_s_lags.ndim != 2 or x_s_lags.shape[1] != d:
+        raise ValueError(f"x_s_lags must have shape (n-d, d); got {x_s_lags.shape}, d={d}")
+
+    if len(y_response) != V_lags.shape[0] or len(y_response) != x_s_lags.shape[0]:
+        raise ValueError(
+            "Mismatched response and lagged feature lengths: "
+            f"len(y)={len(y_response)}, V_rows={V_lags.shape[0]}, x_rows={x_s_lags.shape[0]}"
+        )
+
+    denominator_df = n_I2 - 3 * d - 1
+    if denominator_df <= 0:
+        raise ValueError(
+            f"Invalid May-paper F-test degrees of freedom: n - 3d - 1 = {denominator_df}. "
+            f"Need len(I2) > 3*lags + 1; got n={n_I2}, d={d}."
+        )
+
+    reduced_features = V_lags
+    interaction_features = V_lags * x_s_lags
+    full_features = np.hstack([V_lags, interaction_features])
+
+    reduced_model = LinearRegression().fit(reduced_features, y_response)
+    full_model = LinearRegression().fit(full_features, y_response)
+
+    rss_reduced = residual_sum_of_squares(y_response, reduced_features, reduced_model)
+    rss_full = residual_sum_of_squares(y_response, full_features, full_model)
 
     rss_reduction = rss_reduced - rss_full
+    rss_reduction_ratio = rss_reduction / rss_reduced if rss_reduced != 0 else np.nan
 
-    if rss_reduced != 0:
-        rss_reduction_ratio = rss_reduction / rss_reduced
-    else:
-        rss_reduction_ratio = np.nan
+    f_stat = f_statistic(
+        rss_full=rss_full,
+        rss_reduced=rss_reduced,
+        n=n_I2,
+        d=d,
+    )
 
-    gamma_1 = float(full_model.coef_[0])
-    gamma_2 = float(full_model.coef_[1])
+    critical_f = f.ppf(1 - alpha, dfn=d, dfd=denominator_df)
+    p_value = 1 - f.cdf(f_stat, dfn=d, dfd=denominator_df)
 
-    r = V.shape[0]
-    f_stat = f_statistic(rss_reduced, rss_full, r)
-    critical_f = f.ppf(1 - alpha, dfn=1, dfd=(r - 2))
-    p_value = 1 - f.cdf(f_stat, dfn=1, dfd=(r - 2))
-
-    rss_reduction = rss_reduced - rss_full
-
-    if rss_reduced != 0:
-        rss_reduction_ratio = rss_reduction / rss_reduced
-    else:
-        rss_reduction_ratio = np.nan
-
-    # Eq. (3): y_t = gamma_0 + gamma_1 V_t + gamma_2 V_t x_s^t + epsilon
-    # sklearn full_model.coef_[0] corresponds to gamma_1,
-    # full_model.coef_[1] corresponds to gamma_2.
-    gamma_1 = full_model.coef_[0]
-    gamma_2 = full_model.coef_[1]
+    gamma_1 = full_model.coef_[:d]
+    gamma_2 = full_model.coef_[d:]
 
     return {
         "accepted": bool(f_stat > critical_f),
@@ -223,9 +336,13 @@ def test_moderation(y_response, V, x_s_values, alpha=0.05):
         "rss_full": float(rss_full),
         "rss_reduction": float(rss_reduction),
         "rss_reduction_ratio": float(rss_reduction_ratio),
-        "gamma_1": float(gamma_1),
-        "gamma_2": float(gamma_2),
-        "r": int(r),
+        "gamma_1": gamma_1.tolist(),
+        "gamma_2": gamma_2.tolist(),
+        "n_I2": int(n_I2),
+        "d": int(d),
+        "dfn": int(d),
+        "dfd": int(denominator_df),
+        "n_regression_rows": int(len(y_response)),
     }
 
 
@@ -296,17 +413,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     result["target_abs_mean_I2"] = target_abs_mean_I2
     result["target_abs_mean_difference"] = target_abs_mean_I2 - target_abs_mean_I1
 
-    # cause selection:
-    # x_u := arg max_k |E(x_k)_I1 - E(x_k)_I2|
-    mu_before = I_1.mean()
-    mu_after = I_2.mean()
-    delta_mu = (mu_after - mu_before).abs()
-    delta_mu = delta_mu.drop(labels=[config.y_t], errors="ignore") # Exclude target variable from cause selection
-    if delta_mu.empty:
-        return result
-    x_u = delta_mu.idxmax()
-    result["selected_cause_shift_scores"] = delta_mu.to_dict()
-
+    discovery_1 = backend.discover(I_1, y_t=config.y_t)
     discovery_2 = backend.discover(I_2, y_t=config.y_t)
 
     beta_2 = discovery_2.beta
@@ -316,6 +423,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     result["backend"] = config.causal_backend
     result["causal_lags"] = discovery_2.lags
     result["causal_scores"] = discovery_2.scores
+    result["B_1"] = list(discovery_1.parents)
     result["B_2"] = B_2
 
     # Trigger candidates
@@ -330,52 +438,75 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
 
     if len(B_2) < 2:
         return result
+        
 
     for x_s in T_candidates:
-        # After lagging, we lose 'lags' observations. 
-        # We need at least 10 effective observations to run the moderation test.
-        effective_n = len(I_2) - config.lags
-        if effective_n < 10:
-            result["diagnostics"].append({
-                "trigger": x_s,
-                "cause": x_u,
-                "accepted": False,
-                "reason": "Too few observations after lagging for moderation test.",
-                "I2_length": len(I_2),
-                "lags": config.lags,
-                "effective_n": effective_n,
-            })
-            continue
-        
-        B_2_without_trigger = [v for v in B_2 if v != x_s]
+        B_2_without_trigger = [
+            v for v in B_2
+            if v != x_s and v != config.y_t
+        ]
+
         if len(B_2_without_trigger) == 0:
             result["diagnostics"].append({
                 "trigger": x_s,
+                "cause": None,
+                "accepted": False,
+                "reason": "No B2 variables left after removing candidate trigger and target.",
+            })
+            continue
+
+        # cause selection: (line 14 in Alg.)
+        # x_u := arg max_k |E(x_k)_I1 - E(x_k)_I2|
+        # where x_k is selected from the B2-based variable set.
+        mu_before = I_1[B_2_without_trigger].mean()
+        mu_after = I_2[B_2_without_trigger].mean()
+        delta_mu = (mu_after - mu_before).abs()
+        x_u = delta_mu.idxmax()
+
+        result["selected_cause_shift_scores"][x_s] = delta_mu.to_dict()
+
+        n_I2 = len(I_2)
+        d = config.lags
+        regression_rows = n_I2 - d
+        denominator_df = n_I2 - 3 * d - 1
+
+        if regression_rows <= 0 or denominator_df <= 0:
+            result["diagnostics"].append({
+                "trigger": x_s,
                 "cause": x_u,
                 "accepted": False,
-                "reason": "No B2 variables left after removing candidate trigger.",
+                "reason": "Too few observations for May-paper lagged moderation F-test.",
+                "I2_length": n_I2,
+                "lags": d,
+                "n_regression_rows": regression_rows,
+                "dfd": denominator_df,
+                "required_min_I2_length": 3 * d + 2,
             })
             continue
 
         X_without_trigger = I_2[B_2_without_trigger]
         beta_without_trigger = beta_2[B_2_without_trigger]
 
-        design_matrix, beta_col = build_lagged_design_matrix(
+        V_lags = build_lagwise_V(
             X_without_trigger.to_numpy(),
             beta_without_trigger.to_numpy(),
-            config.lags,
+            lags=d,
             beta_is_ones=config.beta_is_ones,
         )
 
-        V = design_matrix @ beta_col
+        x_s_lags = build_lag_matrix_1d(
+            I_2[x_s].to_numpy(),
+            lags=d,
+        )
 
-        y_response = I_2[config.y_t].iloc[config.lags:].to_numpy()
-        x_s_values = I_2[x_s].iloc[config.lags:].to_numpy().reshape(-1, 1)
+        y_response = I_2[config.y_t].iloc[d:].to_numpy()
 
         moderation = test_moderation(
             y_response=y_response,
-            V=V,
-            x_s_values=x_s_values,
+            V_lags=V_lags,
+            x_s_lags=x_s_lags,
+            n_I2=n_I2,
+            d=d,
             alpha=config.alpha,
         )
 
