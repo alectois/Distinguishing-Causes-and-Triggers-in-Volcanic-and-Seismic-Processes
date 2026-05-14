@@ -5,7 +5,6 @@ Hlaváčková-Schindler, K., Wöß, R., Pecorino, V., & Schindler, P. (2025).
 Zenodo. DOI: 10.5281/zenodo.15109084
 """
 
-import hmml
 import numpy as np
 import pandas as pd
 """
@@ -14,6 +13,17 @@ This class handles all computations and data transformations necessary for the H
 
 class HMMLRunner():
     def __init__(self, lags: int = None, distribution: str = None, mode: str = "exhaustive"):
+        if lags is None or lags < 1:
+            raise ValueError(f"HMMLRunner requires lags >= 1, got {lags}")
+
+        try:
+            import hmml
+        except ImportError as exc:
+            raise ImportError(
+                "The 'hmml' package is required for causal_backend='hmml'. "
+                "Install hmml or use causal_backend='pcmci' / 'pcmci_plus'."
+            ) from exc
+
         self.lags = lags
         self.distribution = distribution
         self.requested_distribution = distribution
@@ -24,6 +34,12 @@ class HMMLRunner():
             "exhaustive": hmml.HmmlExh,
             "genetic": hmml.HmmlGa,
         }
+
+        if mode not in algorithms:
+            raise ValueError(
+                f"Unknown HMML mode={mode!r}. Use 'exhaustive' or 'genetic'."
+            )
+
         self.HMML = algorithms[mode]
         
     def run_hmml(self, X: pd.DataFrame, y_t: str):
@@ -66,11 +82,11 @@ class HMMLRunner():
             self.used_fallback = True
             self.used_distribution = "gaussian"
 
-            self.distribution = "gaussian"
-            results = self.run_hmml(X, y_t=y_t)
-
-            # Restore requested distribution after fallback attempt.
-            self.distribution = original_distribution
+            try:
+                self.distribution = "gaussian"
+                results = self.run_hmml(X, y_t=y_t)
+            finally:
+                self.distribution = original_distribution
 
         if len(results) == 0:
             raise RuntimeError(

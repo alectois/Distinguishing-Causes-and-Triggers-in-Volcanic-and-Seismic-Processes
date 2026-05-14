@@ -90,7 +90,7 @@ class PCMCIBackend:
                 pc_alpha=self.pc_alpha,
                 contemp_collider_rule=self.contemp_collider_rule,
                 conflict_resolution=self.conflict_resolution,
-                fdr_method=self.fdr_method,
+                fdr_method=self.fdr_method if self.fdr_method is not None else "none",
             )
 
         raise ValueError(f"Unsupported method={self.method!r}")
@@ -102,6 +102,15 @@ class PCMCIBackend:
         if X.isna().any().any():
             raise ValueError(
                 "PCMCIBackend received NaNs. Drop or impute missing values before running PCMCI."
+            )
+        
+        if not all(np.issubdtype(dtype, np.number) for dtype in X.dtypes):
+            non_numeric = X.columns[
+                [not np.issubdtype(dtype, np.number) for dtype in X.dtypes]
+            ].to_list()
+            raise ValueError(
+                f"PCMCIBackend expects all columns to be numeric. "
+                f"Non-numeric columns: {non_numeric}"
             )
 
         from tigramite import data_processing as pp

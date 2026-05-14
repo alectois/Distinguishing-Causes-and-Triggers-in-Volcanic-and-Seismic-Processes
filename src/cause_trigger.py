@@ -263,6 +263,11 @@ def f_statistic(rss_full, rss_reduced, n, d):
             f"Invalid May-paper F-test degrees of freedom: n - 3d - 1 = {denominator_df}. "
             f"Need len(I2) > 3*lags + 1; got n={n}, d={d}."
         )
+    
+    if rss_full <= 0:
+        raise ValueError(
+            f"Full-model RSS must be positive for the F-statistic, got rss_full={rss_full}."
+        )
 
     return ((rss_reduced - rss_full) / d) / (rss_full / denominator_df)
 
@@ -346,6 +351,39 @@ def test_moderation(y_response, V_lags, x_s_lags, n_I2, d, alpha=0.05):
 def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     if config.y_t not in X.columns:
         raise ValueError(f"Target variable {config.y_t!r} is not in X.columns")
+    
+    if X.isna().any().any():
+        raise ValueError(
+            "run_cause_trigger received NaNs. Drop or impute missing values before running."
+        )
+
+    if not all(np.issubdtype(dtype, np.number) for dtype in X.dtypes):
+        non_numeric = X.columns[
+            [not np.issubdtype(dtype, np.number) for dtype in X.dtypes]
+        ].to_list()
+        raise ValueError(
+            f"run_cause_trigger expects all columns to be numeric. "
+            f"Non-numeric columns: {non_numeric}"
+        )
+
+    if config.lags < 1:
+        raise ValueError(f"config.lags must be >= 1, got {config.lags}")
+
+    if not config.beta_is_ones:
+        warnings.warn(
+            "beta_is_ones=False is a non-paper variant. "
+            "The May paper baseline uses V := X_without-trigger @ 1.",
+            UserWarning,
+        )
+
+    min_required_I2 = 3 * config.lags + 2
+    if config.min_I2_length < min_required_I2:
+        warnings.warn(
+            f"config.min_I2_length={config.min_I2_length} is smaller than "
+            f"the May-paper F-test minimum {min_required_I2} for lags={config.lags}. "
+            "Candidates with too-short I2 will be skipped.",
+            UserWarning,
+        )
 
     result = {
         "C": [],

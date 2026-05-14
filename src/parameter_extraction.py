@@ -13,7 +13,6 @@ Zenodo. DOI: 10.5281/zenodo.15109084
 
 import numpy as np
 import pandas as pd
-from distfit import distfit
 from statsmodels.tsa.api import VAR
 
 
@@ -69,8 +68,10 @@ def find_distribution(series, fallback_distribution="gaussian"):
 
     if (clean_series <= 0).any():
         return "gaussian"
-
+    
     try:
+        from distfit import distfit
+
         dist = distfit(
             distr=["gamma", "invgauss", "norm"],
             random_state=0,
