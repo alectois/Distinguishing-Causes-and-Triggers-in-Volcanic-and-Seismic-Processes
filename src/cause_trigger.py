@@ -41,14 +41,23 @@ class CauseTriggerConfig:
     selected_lag: int = None
 
     # causal discovery backend
-    causal_backend: str = "hmml"  # "hmml" or "pcmci"
+    # "hmml"        = paper-compatible HMML baseline
+    # "pcmci"       = lagged PCMCI backend
+    # "pcmci_plus"  = PCMCI+ backend; tau=0 links are stored as diagnostics,
+    #                 but only tau>=1 links are used for B2 in the Cause–Trigger test.
+    causal_backend: str = "hmml"
 
-    # PCMCI settings
+    # PCMCI / PCMCI+ settings
     pcmci_pc_alpha: float = 0.05
     pcmci_alpha_level: float = 0.05
     pcmci_fdr_method: str = "fdr_bh"
     pcmci_cond_ind_test: str = "parcorr"
     pcmci_verbosity: int = 0
+
+    # PCMCI+ settings
+    pcmci_contemp_collider_rule: str = "majority"
+    pcmci_conflict_resolution: bool = True
+    pcmci_keep_raw_results: bool = False
 
 @dataclass
 class BackendResult:
@@ -92,12 +101,13 @@ def make_causal_backend(config: CauseTriggerConfig):
             distribution=config.distribution,
         )
 
-    if config.causal_backend == "pcmci":
+    if config.causal_backend in {"pcmci", "pcmci_plus"}:
         if not config.beta_is_ones:
             warnings.warn(
-                "PCMCI backend does not return HMML-style regression beta coefficients. "
-                "Its beta matrix stores PCMCI test-statistic strengths. "
-                "For HMML-vs-PCMCI comparison, use beta_is_ones=True.",
+                "PCMCI/PCMCI+ backends do not return HMML-style regression beta coefficients. "
+                "Their beta matrix stores causal-discovery test-statistic strengths. "
+                "For HMML-vs-PCMCI/PCMCI+ comparison and May-paper compatibility, "
+                "use beta_is_ones=True.",
                 UserWarning,
             )
 
@@ -108,11 +118,15 @@ def make_causal_backend(config: CauseTriggerConfig):
             fdr_method=config.pcmci_fdr_method,
             cond_ind_test=config.pcmci_cond_ind_test,
             verbosity=config.pcmci_verbosity,
+            keep_raw_results=config.pcmci_keep_raw_results,
+            method=config.causal_backend,
+            contemp_collider_rule=config.pcmci_contemp_collider_rule,
+            conflict_resolution=config.pcmci_conflict_resolution,
         )
 
     raise ValueError(
         f"Unknown causal_backend={config.causal_backend!r}. "
-        "Use 'hmml' or 'pcmci'."
+        "Use 'hmml', 'pcmci', or 'pcmci_plus'."
     )
 
 def find_increase_split(
@@ -353,6 +367,8 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         "diagnostics": [],
         "causal_lags": {},
         "causal_scores": {},
+        "contemporaneous_links": {},
+        "full_interval_contemporaneous_links": {},
         "selected_cause_shift_scores": {},
         "autoregressive_parent_in_B2": False,
         "autoregressive_parent_full_interval": False,
@@ -381,6 +397,9 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         result["backend"] = config.causal_backend
         result["causal_lags"] = discovery.lags
         result["causal_scores"] = discovery.scores
+        result["full_interval_contemporaneous_links"] = discovery.scores.get(
+            "_contemporaneous_links", {}
+        )
         return result
 
     I_1 = X.iloc[:split_index]
@@ -406,6 +425,9 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     result["backend"] = config.causal_backend
     result["causal_lags"] = discovery_2.lags
     result["causal_scores"] = discovery_2.scores
+    result["contemporaneous_links"] = discovery_2.scores.get(
+        "_contemporaneous_links", {}
+    )
     result["B_1"] = list(discovery_1.parents)
     result["B_2"] = B_2
 
