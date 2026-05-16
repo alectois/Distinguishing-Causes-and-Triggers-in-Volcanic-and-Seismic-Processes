@@ -147,6 +147,7 @@ def find_increase_split(
         if len(interval_2) < min_I2_length:
             continue
 
+        #|E(y_t)|_I2 > |E(y_t)|_I1
         abs_mean_difference = abs(interval_2.mean()) - abs(interval_1.mean())
 
         if abs_mean_difference > max_abs_mean_difference and abs_mean_difference > 0:
@@ -182,17 +183,30 @@ def build_lagwise_V(X_values, beta_values, lags, beta_is_ones=True):
     """
     May 8 paper-compatible V construction.
 
-    Eq. (3)-(4) use V^(t-k), k=1,...,d. Therefore V must be
-    represented as a lag-wise matrix, not as a single collapsed column.
+    Eq. (3)-(4) use V^(t-k), k=1,...,d. Therefore V is represented
+    as a lag-wise matrix with columns [V(t-1), ..., V(t-d)].
 
-    X_values: shape (n, p), variables from B2 without candidate trigger.
-    beta_values: shape (d, p), rows Lag_1...Lag_d, same columns as X_values.
-    Returns: V_lags with shape (n - d, d), columns [V(t-1), ..., V(t-d)].
+    X_values:
+        shape (n, p), variables from B2 without candidate trigger and without y_t.
 
-    If beta_is_ones=True, V(t-k) is 1 plus the sum of all non-trigger B2 variables,
-    because the May paper's X_without-trigger matrix includes an intercept column,
-    at lag k, matching Algorithm 1's V := X_without-trigger * 1.
-    If beta_is_ones=False, V(t-k) is the beta-weighted sum at lag k.
+    beta_values:
+        shape (d, p), rows Lag_1...Lag_d, same columns/order as X_values.
+
+    Returns:
+        V_lags with shape (n - d, d).
+
+    Paper baseline:
+        Algorithm 1 line 12 uses a vector of ones of dimension
+        ((m - 1) * d) x 1. The intercept is handled by the regression
+        model's gamma_0, not added into V itself.
+
+        Therefore, for beta_is_ones=True:
+
+            V(t-k) = sum_j x_j(t-k)
+
+        not:
+
+            V(t-k) = 1 + sum_j x_j(t-k)
     """
     X_values = np.asarray(X_values)
     beta_values = np.asarray(beta_values)
@@ -201,6 +215,7 @@ def build_lagwise_V(X_values, beta_values, lags, beta_is_ones=True):
         raise ValueError("X_values must be a 2D array")
 
     n, p = X_values.shape
+
     if n <= lags:
         raise ValueError(f"Need len(I2) > lags, got len={n}, lags={lags}")
 
@@ -214,25 +229,19 @@ def build_lagwise_V(X_values, beta_values, lags, beta_is_ones=True):
         )
 
     V_cols = []
+
     for k in range(1, lags + 1):
+        # aligned with y[d:], this column is x(t-k)
         X_lag_k = X_values[lags - k : n - k, :]
 
         if beta_is_ones:
-            weights = np.ones(p)
-        else:
-            weights = beta_values[k - 1, :]
-
-        if beta_is_ones:
-            # May paper Algorithm 1:
-            # X_without-trigger includes a leading intercept column,
-            # and V := X_without-trigger @ 1.
-            # Therefore V(t-k) = 1 + sum of non-trigger B2 variables at lag k.
-            V_k = 1.0 + X_lag_k.sum(axis=1, keepdims=True)
+            # Paper baseline: vector of ones over variables at this lag.
+            # No +1 intercept here; LinearRegression fits gamma_0.
+            V_k = X_lag_k.sum(axis=1, keepdims=True)
         else:
             # Non-paper variant: beta-weighted V.
-            # Keep the intercept contribution because the paper's X matrix includes it.
             weights = beta_values[k - 1, :]
-            V_k = 1.0 + (X_lag_k @ weights.reshape(-1, 1))
+            V_k = X_lag_k @ weights.reshape(-1, 1)
 
         V_cols.append(V_k)
 
@@ -268,7 +277,8 @@ def f_statistic(rss_full, rss_reduced, n, d):
         raise ValueError(
             f"Full-model RSS must be positive for the F-statistic, got rss_full={rss_full}."
         )
-
+    
+    #S = ((RSS2 - RSS1) / d) / (RSS1 / (n - 3d - 1))
     return ((rss_reduced - rss_full) / d) / (rss_full / denominator_df)
 
 
@@ -302,7 +312,9 @@ def test_moderation(y_response, V_lags, x_s_lags, n_I2, d, alpha=0.05):
             f"Invalid May-paper F-test degrees of freedom: n - 3d - 1 = {denominator_df}. "
             f"Need len(I2) > 3*lags + 1; got n={n_I2}, d={d}."
         )
-
+    
+    #Reduced: y_t = γ0 + Σ γ1k V^{t-k} + ε
+    #Full:y_t = γ0 + Σ γ1k V^{t-k} + Σ γ2k V^{t-k} x_s^{t-k} + ε
     reduced_features = V_lags
     interaction_features = V_lags * x_s_lags
     full_features = np.hstack([V_lags, interaction_features])
@@ -323,7 +335,7 @@ def test_moderation(y_response, V_lags, x_s_lags, n_I2, d, alpha=0.05):
         d=d,
     )
 
-    critical_f = f.ppf(1 - alpha, dfn=d, dfd=denominator_df)
+    critical_f = f.ppf(1 - alpha, dfn=d, dfd=denominator_df) # F_{d, n - 3d - 1}(1 - α)
     p_value = 1 - f.cdf(f_stat, dfn=d, dfd=denominator_df)
 
     gamma_1 = full_model.coef_[:d]
@@ -452,7 +464,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     result["target_abs_mean_I1"] = target_abs_mean_I1
     result["target_abs_mean_I2"] = target_abs_mean_I2
     result["target_abs_mean_difference"] = target_abs_mean_I2 - target_abs_mean_I1
-
+    #Find B1, B2 for y_t on I1 and I2.
     discovery_1 = backend.discover(I_1, y_t=config.y_t)
     discovery_2 = backend.discover(I_2, y_t=config.y_t)
 
@@ -471,6 +483,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
 
     # Trigger candidates
     T_candidates = []
+    # x_s ∈ B2, x_s ≠ y_t, and |E(x_s)|_I2 > |E(x_s)|_I1
     for col in B_2:
         if col == config.y_t: # Exclude target variable from trigger candidates
             continue
