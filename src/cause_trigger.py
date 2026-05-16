@@ -34,7 +34,7 @@ class CauseTriggerConfig:
     min_I1_length: int = 12
     min_I2_length: int = 24
 
-    beta_is_ones: bool = True
+    beta_is_ones: bool = False
     # added:
     parameter_source: str = "manual"
     selected_distribution: str = None
@@ -105,9 +105,10 @@ def make_causal_backend(config: CauseTriggerConfig):
         if not config.beta_is_ones:
             warnings.warn(
                 "PCMCI/PCMCI+ backends do not return HMML-style regression beta coefficients. "
-                "Their beta matrix stores causal-discovery test-statistic strengths. "
-                "For HMML-vs-PCMCI/PCMCI+ comparison and May-paper compatibility, "
-                "use beta_is_ones=True.",
+                "Their beta matrix stores causal-discovery test-statistic strengths, not β*. "
+                "For paper-compatible May-16 runs, use causal_backend='hmml'. "
+                "PCMCI/PCMCI+ with beta_is_ones=False is not paper-equivalent unless "
+                "a separate regression refit is used to estimate β*.",
                 UserWarning,
             )
 
@@ -161,55 +162,29 @@ def residual_sum_of_squares(y_true, X_features, model):
     y_hat = model.predict(X_features)
     return np.sum((y_true - y_hat) ** 2)
 
-def build_lag_matrix_1d(values, lags):
+def build_lagged_design_matrix_for_V(X_values, beta_values, lags, beta_is_ones=False):
     """
-    Build lag columns [x(t-1), ..., x(t-d)] aligned with y[d:].
+    May 16 paper-compatible construction of V.
 
-    Returns shape (n - d, d), where n = len(values).
+    X_without-trigger has dimension:
+        (n - d) x ((m - 1) * d)
+
+    beta_star has dimension:
+        ((m - 1) * d) x 1
+
+    V = X_without-trigger @ beta_star
+      has dimension:
+        (n - d) x 1
+
+    Column order used here is lag-major:
+        [all variables at lag 1, all variables at lag 2, ..., all variables at lag d]
+
+    Therefore beta_values must be shaped (d, p), with rows Lag_1...Lag_d
+    and columns in the same order as X_values columns. The row-major flattening
+    beta_values.reshape(-1, 1) then matches the design matrix exactly.
     """
-    values = np.asarray(values).reshape(-1)
-    n = len(values)
-
-    if n <= lags:
-        raise ValueError(f"Need len(values) > lags, got len={n}, lags={lags}")
-
-    cols = []
-    for k in range(1, lags + 1):
-        cols.append(values[lags - k : n - k].reshape(-1, 1))
-
-    return np.hstack(cols)
-
-def build_lagwise_V(X_values, beta_values, lags, beta_is_ones=True):
-    """
-    May 8 paper-compatible V construction.
-
-    Eq. (3)-(4) use V^(t-k), k=1,...,d. Therefore V is represented
-    as a lag-wise matrix with columns [V(t-1), ..., V(t-d)].
-
-    X_values:
-        shape (n, p), variables from B2 without candidate trigger and without y_t.
-
-    beta_values:
-        shape (d, p), rows Lag_1...Lag_d, same columns/order as X_values.
-
-    Returns:
-        V_lags with shape (n - d, d).
-
-    Paper baseline:
-        Algorithm 1 line 12 uses a vector of ones of dimension
-        ((m - 1) * d) x 1. The intercept is handled by the regression
-        model's gamma_0, not added into V itself.
-
-        Therefore, for beta_is_ones=True:
-
-            V(t-k) = sum_j x_j(t-k)
-
-        not:
-
-            V(t-k) = 1 + sum_j x_j(t-k)
-    """
-    X_values = np.asarray(X_values)
-    beta_values = np.asarray(beta_values)
+    X_values = np.asarray(X_values, dtype=float)
+    beta_values = np.asarray(beta_values, dtype=float)
 
     if X_values.ndim != 2:
         raise ValueError("X_values must be a 2D array")
@@ -220,104 +195,107 @@ def build_lagwise_V(X_values, beta_values, lags, beta_is_ones=True):
         raise ValueError(f"Need len(I2) > lags, got len={n}, lags={lags}")
 
     if p == 0:
-        raise ValueError("Cannot build V_lags with zero variables")
+        raise ValueError("Cannot build V with zero non-trigger variables")
 
-    if not beta_is_ones and beta_values.shape != (lags, p):
+    if beta_values.shape != (lags, p):
         raise ValueError(
             f"beta_values must have shape (lags, variables)=({lags}, {p}), "
             f"got {beta_values.shape}"
         )
 
-    V_cols = []
-
+    lagged_blocks = []
     for k in range(1, lags + 1):
-        # aligned with y[d:], this column is x(t-k)
+        # aligned with y[d:], this block is X(t-k)
         X_lag_k = X_values[lags - k : n - k, :]
+        lagged_blocks.append(X_lag_k)
 
-        if beta_is_ones:
-            # Paper baseline: vector of ones over variables at this lag.
-            # No +1 intercept here; LinearRegression fits gamma_0.
-            V_k = X_lag_k.sum(axis=1, keepdims=True)
-        else:
-            # Non-paper variant: beta-weighted V.
-            weights = beta_values[k - 1, :]
-            V_k = X_lag_k @ weights.reshape(-1, 1)
+    X_without_trigger_lagged = np.hstack(lagged_blocks)
 
-        V_cols.append(V_k)
+    if beta_is_ones:
+        beta_star = np.ones((X_without_trigger_lagged.shape[1], 1))
+    else:
+        beta_star = beta_values.reshape(-1, 1)
 
-    return np.hstack(V_cols)
+    V = X_without_trigger_lagged @ beta_star
 
-def f_statistic(rss_full, rss_reduced, n, d):
+    return V, X_without_trigger_lagged, beta_star
+
+def f_statistic(rss_reduced, rss_full, n, d):
     """
-    May 8 paper F-statistic for Eq. (3) vs Eq. (4).
+    May 16 paper F-statistic for reduced Eq. (3) vs full Eq. (4).
 
-    Eq. (3), full model:
-        y_t = gamma_0 + sum_k gamma_1k V^(t-k)
-                      + sum_k gamma_2k V^(t-k) x_s^(t-k) + eps_t
+    Eq. (3), reduced model:
+        y_t = gamma_0 + gamma_1 V^t + eps_t
 
-    Eq. (4), reduced model:
-        y_t = gamma_0 + sum_k gamma_1k V^(t-k) + eps_t
+    Eq. (4), full model:
+        y_t = gamma_0 + gamma_1 V^t + gamma_2 V^t x_s^t + eps_t
 
-    May paper notation:
-        RSS1 = RSS_full from Eq. (3)
-        RSS2 = RSS_reduced from Eq. (4)
+    May-16 notation:
+        RSS1 = RSS_reduced from Eq. (3)
+        RSS2 = RSS_full from Eq. (4)
 
-        S = ((RSS2 - RSS1) / d) / (RSS1 / (n - 3d - 1))
+        S = (RSS1 - RSS2) * (n - d - 3) / RSS2
 
-    Critical value uses F_{d, n - 3d - 1}(1 - alpha).
+    Critical value uses F_{1, n - d - 3}(1 - alpha).
     """
-    denominator_df = n - 3 * d - 1
+    denominator_df = n - d - 3
+
     if denominator_df <= 0:
         raise ValueError(
-            f"Invalid May-paper F-test degrees of freedom: n - 3d - 1 = {denominator_df}. "
-            f"Need len(I2) > 3*lags + 1; got n={n}, d={d}."
+            f"Invalid May-16 F-test degrees of freedom: n - d - 3 = {denominator_df}. "
+            f"Need len(I2) > lags + 3; got n={n}, d={d}."
         )
-    
+
     if rss_full <= 0:
         raise ValueError(
             f"Full-model RSS must be positive for the F-statistic, got rss_full={rss_full}."
         )
-    
-    #S = ((RSS2 - RSS1) / d) / (RSS1 / (n - 3d - 1))
-    return ((rss_reduced - rss_full) / d) / (rss_full / denominator_df)
+
+    return ((rss_reduced - rss_full) * denominator_df) / rss_full
 
 
-def test_moderation(y_response, V_lags, x_s_lags, n_I2, d, alpha=0.05):
+def test_moderation(y_response, V, x_s_values, n_I2, d, alpha=0.05):
     """
-    May 8 paper-compatible moderation test.
+    May 16 paper-compatible moderation test.
 
-    Reduced Eq. (4): y ~ V(t-1) + ... + V(t-d)
-    Full Eq. (3):    y ~ V(t-1) + ... + V(t-d)
-                         + V(t-1)x_s(t-1) + ... + V(t-d)x_s(t-d)
+    Reduced Eq. (3):
+        y ~ V
+
+    Full Eq. (4):
+        y ~ V + V * x_s
+
+    Here V = X_without-trigger @ beta_star has shape (n-d, 1), and
+    x_s_values is contemporaneous x_s aligned with y[d:].
     """
-    V_lags = np.asarray(V_lags)
-    x_s_lags = np.asarray(x_s_lags)
-    y_response = np.asarray(y_response).reshape(-1)
+    V = np.asarray(V, dtype=float)
+    x_s_values = np.asarray(x_s_values, dtype=float)
+    y_response = np.asarray(y_response, dtype=float).reshape(-1)
 
-    if V_lags.ndim != 2 or V_lags.shape[1] != d:
-        raise ValueError(f"V_lags must have shape (n-d, d); got {V_lags.shape}, d={d}")
+    if V.ndim != 2 or V.shape[1] != 1:
+        raise ValueError(f"V must have shape (n-d, 1); got {V.shape}")
 
-    if x_s_lags.ndim != 2 or x_s_lags.shape[1] != d:
-        raise ValueError(f"x_s_lags must have shape (n-d, d); got {x_s_lags.shape}, d={d}")
+    if x_s_values.ndim != 2 or x_s_values.shape[1] != 1:
+        raise ValueError(f"x_s_values must have shape (n-d, 1); got {x_s_values.shape}")
 
-    if len(y_response) != V_lags.shape[0] or len(y_response) != x_s_lags.shape[0]:
+    if len(y_response) != V.shape[0] or len(y_response) != x_s_values.shape[0]:
         raise ValueError(
-            "Mismatched response and lagged feature lengths: "
-            f"len(y)={len(y_response)}, V_rows={V_lags.shape[0]}, x_rows={x_s_lags.shape[0]}"
+            "Mismatched response and feature lengths: "
+            f"len(y)={len(y_response)}, V_rows={V.shape[0]}, x_rows={x_s_values.shape[0]}"
         )
 
-    denominator_df = n_I2 - 3 * d - 1
+    denominator_df = n_I2 - d - 3
     if denominator_df <= 0:
         raise ValueError(
-            f"Invalid May-paper F-test degrees of freedom: n - 3d - 1 = {denominator_df}. "
-            f"Need len(I2) > 3*lags + 1; got n={n_I2}, d={d}."
+            f"Invalid May-16 F-test degrees of freedom: n - d - 3 = {denominator_df}. "
+            f"Need len(I2) > lags + 3; got n={n_I2}, d={d}."
         )
-    
-    #Reduced: y_t = γ0 + Σ γ1k V^{t-k} + ε
-    #Full:y_t = γ0 + Σ γ1k V^{t-k} + Σ γ2k V^{t-k} x_s^{t-k} + ε
-    reduced_features = V_lags
-    interaction_features = V_lags * x_s_lags
-    full_features = np.hstack([V_lags, interaction_features])
+
+    if np.nanstd(V) == 0:
+        raise ValueError("V is constant; moderation regression is not meaningful.")
+
+    reduced_features = V
+    interaction_feature = V * x_s_values
+    full_features = np.hstack([V, interaction_feature])
 
     reduced_model = LinearRegression().fit(reduced_features, y_response)
     full_model = LinearRegression().fit(full_features, y_response)
@@ -329,17 +307,17 @@ def test_moderation(y_response, V_lags, x_s_lags, n_I2, d, alpha=0.05):
     rss_reduction_ratio = rss_reduction / rss_reduced if rss_reduced != 0 else np.nan
 
     f_stat = f_statistic(
-        rss_full=rss_full,
         rss_reduced=rss_reduced,
+        rss_full=rss_full,
         n=n_I2,
         d=d,
     )
 
-    critical_f = f.ppf(1 - alpha, dfn=d, dfd=denominator_df) # F_{d, n - 3d - 1}(1 - α)
-    p_value = 1 - f.cdf(f_stat, dfn=d, dfd=denominator_df)
+    critical_f = f.ppf(1 - alpha, dfn=1, dfd=denominator_df)
+    p_value = 1 - f.cdf(f_stat, dfn=1, dfd=denominator_df)
 
-    gamma_1 = full_model.coef_[:d]
-    gamma_2 = full_model.coef_[d:]
+    gamma_1 = full_model.coef_[0]
+    gamma_2 = full_model.coef_[1]
 
     return {
         "accepted": bool(f_stat > critical_f),
@@ -350,15 +328,14 @@ def test_moderation(y_response, V_lags, x_s_lags, n_I2, d, alpha=0.05):
         "rss_full": float(rss_full),
         "rss_reduction": float(rss_reduction),
         "rss_reduction_ratio": float(rss_reduction_ratio),
-        "gamma_1": gamma_1.tolist(),
-        "gamma_2": gamma_2.tolist(),
+        "gamma_1": float(gamma_1),
+        "gamma_2": float(gamma_2),
         "n_I2": int(n_I2),
         "d": int(d),
-        "dfn": int(d),
+        "dfn": 1,
         "dfd": int(denominator_df),
         "n_regression_rows": int(len(y_response)),
     }
-
 
 def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     if config.y_t not in X.columns:
@@ -381,18 +358,18 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     if config.lags < 1:
         raise ValueError(f"config.lags must be >= 1, got {config.lags}")
 
-    if not config.beta_is_ones:
+    if config.beta_is_ones:
         warnings.warn(
-            "beta_is_ones=False is a non-paper variant. "
-            "The May paper baseline uses V := X_without-trigger @ 1.",
+            "beta_is_ones=True is a non-paper variant for the May-16 version. "
+            "The May-16 paper baseline uses V := X_without-trigger @ beta_star.",
             UserWarning,
         )
 
-    min_required_I2 = 3 * config.lags + 2
+    min_required_I2 = config.lags + 4
     if config.min_I2_length < min_required_I2:
         warnings.warn(
             f"config.min_I2_length={config.min_I2_length} is smaller than "
-            f"the May-paper F-test minimum {min_required_I2} for lags={config.lags}. "
+            f"the May-16 F-test minimum {min_required_I2} for lags={config.lags}. "
             "Candidates with too-short I2 will be skipped.",
             UserWarning,
         )
@@ -524,47 +501,63 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         n_I2 = len(I_2)
         d = config.lags
         regression_rows = n_I2 - d
-        denominator_df = n_I2 - 3 * d - 1
+        denominator_df = n_I2 - d - 3
 
         if regression_rows <= 0 or denominator_df <= 0:
             result["diagnostics"].append({
                 "trigger": x_s,
                 "cause": x_u,
                 "accepted": False,
-                "reason": "Too few observations for May-paper lagged moderation F-test.",
+                "reason": "Too few observations for May-16 moderation F-test.",
                 "I2_length": n_I2,
                 "lags": d,
                 "n_regression_rows": regression_rows,
                 "dfd": denominator_df,
-                "required_min_I2_length": 3 * d + 2,
+                "required_min_I2_length": d + 4,
             })
             continue
 
         X_without_trigger = I_2[B_2_without_trigger]
         beta_without_trigger = beta_2[B_2_without_trigger]
 
-        V_lags = build_lagwise_V(
+        V, X_without_trigger_lagged, beta_star = build_lagged_design_matrix_for_V(
             X_without_trigger.to_numpy(),
             beta_without_trigger.to_numpy(),
             lags=d,
             beta_is_ones=config.beta_is_ones,
         )
 
-        x_s_lags = build_lag_matrix_1d(
-            I_2[x_s].to_numpy(),
-            lags=d,
-        )
-
+        x_s_values = I_2[x_s].iloc[d:].to_numpy().reshape(-1, 1)
         y_response = I_2[config.y_t].iloc[d:].to_numpy()
+
+        if np.nanstd(V) == 0:
+            result["diagnostics"].append({
+                "trigger": x_s,
+                "cause": x_u,
+                "accepted": False,
+                "reason": "V is constant after X_without-trigger @ beta_star.",
+                "I2_length": n_I2,
+                "lags": d,
+                "n_regression_rows": regression_rows,
+                "V_std": float(np.nanstd(V)),
+            })
+            continue
 
         moderation = test_moderation(
             y_response=y_response,
-            V_lags=V_lags,
-            x_s_lags=x_s_lags,
+            V=V,
+            x_s_values=x_s_values,
             n_I2=n_I2,
             d=d,
             alpha=config.alpha,
         )
+
+        moderation["V_mean"] = float(np.nanmean(V))
+        moderation["V_std"] = float(np.nanstd(V))
+        moderation["V_min"] = float(np.nanmin(V))
+        moderation["V_max"] = float(np.nanmax(V))
+        moderation["nonzero_beta_count"] = int(np.count_nonzero(beta_star))
+        moderation["X_without_trigger_lagged_shape"] = tuple(X_without_trigger_lagged.shape)
 
         moderation["trigger"] = x_s
         moderation["cause"] = x_u
