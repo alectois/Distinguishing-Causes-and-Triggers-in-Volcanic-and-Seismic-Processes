@@ -222,23 +222,27 @@ def load_etnagas_csv(path, value_cols):
     df = pd.read_csv(path).replace("NULL", np.nan)
     df["timestamp"] = pd.to_datetime(df["Time"], utc=True, errors="coerce")
 
+    source_cols = [c for c in value_cols if c in df.columns]
+    if "pressure_drop" in value_cols and "Patm_3" in df.columns:
+        source_cols = list(dict.fromkeys(source_cols + ["Patm_3"]))
+
     df = (
-        df[["timestamp"] + value_cols]
+        df[["timestamp"] + source_cols]
         .dropna(subset=["timestamp"])
         .sort_values("timestamp")
         .drop_duplicates(subset=["timestamp"], keep="first")
         .reset_index(drop=True)
     )
 
-    for col in value_cols:
+    for col in source_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # pressure tendency and pressure drop from ETNAGAS atmospheric pressure
-    if "Patm_3" in df.columns:
+    if "pressure_drop" in value_cols:
+        if "Patm_3" not in df.columns:
+            raise KeyError("Cannot compute pressure_drop because 'Patm_3' is missing.")
         df["pressure_change"] = df["Patm_3"].diff()
         df["pressure_drop"] = -df["pressure_change"]
-
-        # first value has no previous pressure value
         df["pressure_drop"] = df["pressure_drop"].fillna(0)
 
-    return df
+    final_cols = ["timestamp"] + [c for c in value_cols if c in df.columns]
+    return df[final_cols]

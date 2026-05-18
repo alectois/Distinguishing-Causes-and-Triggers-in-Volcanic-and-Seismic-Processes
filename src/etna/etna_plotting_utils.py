@@ -19,19 +19,19 @@ THESIS_COLORS = {
 ETNA_AXIS_LABELS = {
     "T_log": ("Teleseismic-band energy, 0.05–0.5 Hz", "RMS"),
     "S_log": ("Background seismic energy, 0.5–4 Hz", "RMS"),
-    "Y_log": ("High-frequency seismic response, 4–12 Hz", "RMS"),
+    "Y_log": ("High-frequency seismic response (Effect), 4–12 Hz", "RMS"),
     "CO2_3": ("Soil CO₂ concentration", "%"),
     "AirTemp_3": ("Air temperature", "°C"),
-    "Patm_3": ("Atmospheric pressure", "hPa"),
+    "pressure_drop": ("Atmospheric pressure drop", "hPa"),
     "WindSpeed": ("Wind speed", "m s⁻¹"),
     "CO2_SO2": ("Plume CO₂/SO₂ ratio", "Molar ratio"),
 
     "T_log_scaled": ("Teleseismic-band energy, 0.05–0.5 Hz", "RMS, Robust-scaled"),
     "S_log_scaled": ("Background seismic energy, 0.5–4 Hz", "RMS, Robust-scaled"),
-    "Y_log_scaled": ("High-frequency seismic response, 4–12 Hz", "RMS, Robust-scaled"),
+    "Y_log_scaled": ("High-frequency seismic response (Effect), 4–12 Hz", "RMS, Robust-scaled"),
     "CO2_3_scaled": ("Soil CO₂ concentration", "%, Robust-scaled"),
     "AirTemp_3_scaled": ("Air temperature", "°C, Robust-scaled"),
-    "Patm_3_scaled": ("Atmospheric pressure", "hPa, Robust-scaled"),
+    "pressure_drop_scaled": ("Atmospheric pressure drop", "hPa, Robust-scaled"),
     "WindSpeed_scaled": ("Wind speed", "m s⁻¹, Robust-scaled"),
     "CO2_SO2_scaled": ("Plume CO₂/SO₂ ratio", "Molar ratio, Robust-scaled"),
 }
@@ -42,7 +42,7 @@ ETNA_RAW_ORDER = [
     "Y_log",
     "CO2_3",
     "AirTemp_3",
-    "Patm_3",
+    "pressure_drop",
     "WindSpeed",
     "CO2_SO2",
 ]
@@ -53,7 +53,7 @@ ETNA_SCALED_ORDER = [
     "Y_log_scaled",
     "CO2_3_scaled",
     "AirTemp_3_scaled",
-    "Patm_3_scaled",
+    "pressure_drop_scaled",
     "WindSpeed_scaled",
     "CO2_SO2_scaled",
 ]
@@ -64,7 +64,7 @@ ETNA_THESIS_ORDER = [
     "Y_log_scaled",
     "CO2_3_scaled",
     "AirTemp_3_scaled",
-    "Patm_3_scaled",
+    "pressure_drop_scaled",
     "WindSpeed_scaled",
     "CO2_SO2_scaled",
 ]

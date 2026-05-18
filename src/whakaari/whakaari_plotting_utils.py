@@ -52,7 +52,7 @@ def plot_with_eruption_time(
         "hydro_rms_2_5": ("Hydrothermal tremor RMS, 2–5 Hz", "RMS"),
         "ratio_4p5_8_over_8_16": ("Spectral ratio, 4.5–8 / 8–16 Hz", "Ratio"),
         "hf_event_rate_2_5": ("High-frequency event rate, 2–5 Hz", "Events per hour"),
-        "effect_tremor_rms_5_15": ("Tremor response RMS, 5–15 Hz", "RMS"),
+        "effect_tremor_rms_5_15": ("Tremor response RMS (Effect), 5–15 Hz", "RMS"),
         "API": ("Antecedent precipitation index", "mm"),
         "pressure_drop": ("Atmospheric pressure drop", "hPa"),
         "GNSS_deformation": ("GNSS deformation", "m"),

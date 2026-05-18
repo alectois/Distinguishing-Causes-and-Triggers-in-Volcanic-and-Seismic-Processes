@@ -39,7 +39,6 @@ ETNA_WAVEFORM_CONFIG = {
 ETNA_GAS_METEO_COLS = [
     "CO2_3",
     "AirTemp_3",
-    "Patm_3",
     "pressure_drop",
     "WindSpeed",
 ]
