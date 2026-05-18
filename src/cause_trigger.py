@@ -19,7 +19,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 from scipy.stats import f
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, Ridge, RidgeCV, Lasso, LassoCV
+from sklearn.model_selection import TimeSeriesSplit
 from hmml_runner import HMMLRunner
 from pcmci_runner import PCMCIBackend
 
@@ -35,7 +36,20 @@ class CauseTriggerConfig:
     min_I2_length: int = 24
 
     beta_is_ones: bool = False
-    # added:
+    # How to construct beta_star for V = X_without-trigger @ beta_star
+    # "backend" = use beta from backend; paper baseline for HMML
+    # "refit"   = refit beta after parent selection; recommended for PCMCI/PCMCI+
+    # "ones"    = equal-weight sensitivity variant
+    v_weighting: str = "backend"
+
+    # Used only when v_weighting="refit"
+    # "ridge" for main PCMCI/PCMCI+ extension;
+    # "lasso" for sparsity sensitivity; "ols" for transparent baseline.
+    refit_method: str = "ridge"
+    refit_alpha: float = 1.0
+    refit_cv: bool = True
+    refit_cv_folds: int = 5
+    refit_lasso_max_iter: int = 20000
     parameter_source: str = "manual"
     selected_distribution: str = None
     selected_lag: int = None
@@ -102,13 +116,13 @@ def make_causal_backend(config: CauseTriggerConfig):
         )
 
     if config.causal_backend in {"pcmci", "pcmci_plus"}:
-        if not config.beta_is_ones:
+        if config.v_weighting == "backend":
             warnings.warn(
-                "PCMCI/PCMCI+ backends do not return HMML-style regression beta coefficients. "
-                "Their beta matrix stores causal-discovery test-statistic strengths, not β*. "
-                "For paper-compatible May-16 runs, use causal_backend='hmml'. "
-                "PCMCI/PCMCI+ with beta_is_ones=False is not paper-equivalent unless "
-                "a separate regression refit is used to estimate β*.",
+                "PCMCI/PCMCI+ do not return HMML-style structural beta coefficients. "
+                "Their beta-like matrix stores conditional-dependence/test-statistic strengths, "
+                "not β* for V = X_without-trigger @ β*. "
+                "For PCMCI/PCMCI+ thesis extensions, use v_weighting='refit' "
+                "or v_weighting='ones'.",
                 UserWarning,
             )
 
@@ -219,6 +233,163 @@ def build_lagged_design_matrix_for_V(X_values, beta_values, lags, beta_is_ones=F
     V = X_without_trigger_lagged @ beta_star
 
     return V, X_without_trigger_lagged, beta_star
+
+def build_lagged_matrix_for_refit(X_values, lags):
+    """
+    Build lagged matrix with the same column order used by
+    build_lagged_design_matrix_for_V:
+
+        [all variables at lag 1, all variables at lag 2, ..., all variables at lag d]
+
+    Returns shape:
+        (n - d) x (p * d)
+    """
+    X_values = np.asarray(X_values, dtype=float)
+
+    if X_values.ndim != 2:
+        raise ValueError("X_values must be a 2D array")
+
+    n, p = X_values.shape
+
+    if n <= lags:
+        raise ValueError(f"Need len(X) > lags, got len={n}, lags={lags}")
+
+    lagged_blocks = []
+    for k in range(1, lags + 1):
+        X_lag_k = X_values[lags - k : n - k, :]
+        lagged_blocks.append(X_lag_k)
+
+    return np.hstack(lagged_blocks)
+
+
+def refit_beta_for_selected_parents(
+    X: pd.DataFrame,
+    y_t: str,
+    selected_parents: list,
+    lags: int,
+    method: str = "ridge",
+    alpha: float = 1.0,
+    cv: bool = True,
+    cv_folds: int = 5,
+    lasso_max_iter: int = 20000,
+):
+    """
+    Estimate beta_star for selected lagged parents after causal discovery.
+
+    This is intended for PCMCI/PCMCI+ extensions:
+        PCMCI/PCMCI+ selects B2.
+        This function estimates β* by regression on selected lagged parents.
+
+    Returns
+    -------
+    beta_df : pd.DataFrame
+        Shape (lags, len(selected_parents)).
+        Rows: Lag_1 ... Lag_d.
+        Columns: selected_parents.
+    metadata : dict
+        Information about method, alpha, nonzero count, etc.
+    """
+    selected_parents = list(selected_parents)
+
+    index = [f"Lag_{lag}" for lag in range(1, lags + 1)]
+
+    if len(selected_parents) == 0:
+        beta_df = pd.DataFrame(
+            np.zeros((lags, 0)),
+            index=index,
+            columns=[],
+        )
+        return beta_df, {
+            "refit_method": method,
+            "reason": "no selected parents",
+            "nonzero_beta_count": 0,
+        }
+
+    X_values = X[selected_parents].to_numpy(dtype=float)
+    y_values = X[y_t].iloc[lags:].to_numpy(dtype=float)
+
+    X_lagged = build_lagged_matrix_for_refit(X_values, lags)
+
+    if len(y_values) != X_lagged.shape[0]:
+        raise ValueError(
+            f"Refit length mismatch: len(y)={len(y_values)}, "
+            f"X_lagged rows={X_lagged.shape[0]}"
+        )
+
+    method = method.lower()
+
+    metadata = {
+        "refit_method": method,
+        "refit_alpha_requested": alpha,
+        "refit_cv": cv,
+        "refit_cv_folds": cv_folds,
+        "n_refit_rows": int(X_lagged.shape[0]),
+        "n_refit_features": int(X_lagged.shape[1]),
+        "selected_parents": selected_parents,
+    }
+
+    if method == "ols":
+        model = LinearRegression()
+
+    elif method == "ridge":
+        if cv and X_lagged.shape[0] > cv_folds + 1:
+            alphas = np.logspace(-4, 4, 40)
+            cv_obj = TimeSeriesSplit(n_splits=min(cv_folds, X_lagged.shape[0] - 1))
+            model = RidgeCV(alphas=alphas, cv=cv_obj)
+        else:
+            model = Ridge(alpha=alpha)
+
+    elif method == "lasso":
+        if cv and X_lagged.shape[0] > cv_folds + 1:
+            alphas = np.logspace(-4, 1, 40)
+            cv_obj = TimeSeriesSplit(n_splits=min(cv_folds, X_lagged.shape[0] - 1))
+            model = LassoCV(
+                alphas=alphas,
+                cv=cv_obj,
+                max_iter=lasso_max_iter,
+                fit_intercept=True,
+            )
+        else:
+            model = Lasso(
+                alpha=alpha,
+                max_iter=lasso_max_iter,
+                fit_intercept=True,
+            )
+
+    else:
+        raise ValueError(
+            f"Unknown refit method {method!r}. "
+            "Use 'ols', 'ridge', or 'lasso'."
+        )
+
+    model.fit(X_lagged, y_values)
+
+    beta_flat = np.asarray(model.coef_, dtype=float).reshape(-1)
+
+    if beta_flat.shape[0] != X_lagged.shape[1]:
+        raise ValueError(
+            f"Refit beta length mismatch: got {beta_flat.shape[0]}, "
+            f"expected {X_lagged.shape[1]}"
+        )
+
+    beta_matrix = beta_flat.reshape(lags, len(selected_parents))
+
+    beta_df = pd.DataFrame(
+        beta_matrix,
+        index=index,
+        columns=selected_parents,
+    )
+
+    metadata["nonzero_beta_count"] = int(np.count_nonzero(beta_flat))
+    metadata["beta_abs_max"] = float(np.max(np.abs(beta_flat))) if beta_flat.size else 0.0
+
+    if hasattr(model, "alpha_"):
+        metadata["refit_alpha_used"] = float(model.alpha_)
+    else:
+        metadata["refit_alpha_used"] = float(alpha) if method in {"ridge", "lasso"} else None
+
+    return beta_df, metadata
+
 
 def f_statistic(rss_reduced, rss_full, n, d):
     """
@@ -358,10 +529,31 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     if config.lags < 1:
         raise ValueError(f"config.lags must be >= 1, got {config.lags}")
 
+    valid_v_weighting = {"backend", "refit", "ones"}
+    if config.v_weighting not in valid_v_weighting:
+        raise ValueError(
+            f"Unknown v_weighting={config.v_weighting!r}. "
+            "Use 'backend', 'refit', or 'ones'."
+        )
+
     if config.beta_is_ones:
         warnings.warn(
-            "beta_is_ones=True is a non-paper variant for the May-16 version. "
-            "The May-16 paper baseline uses V := X_without-trigger @ beta_star.",
+            "beta_is_ones=True is deprecated. Use v_weighting='ones' instead.",
+            UserWarning,
+        )
+
+    if config.causal_backend == "hmml" and config.v_weighting != "backend":
+        warnings.warn(
+            "For the May-16 paper-compatible HMML baseline, use v_weighting='backend'. "
+            "Other V-weighting modes are thesis sensitivity variants.",
+            UserWarning,
+        )
+
+    if config.causal_backend in {"pcmci", "pcmci_plus"} and config.v_weighting == "backend":
+        warnings.warn(
+            "PCMCI/PCMCI+ with v_weighting='backend' uses conditional-dependence "
+            "test statistics as beta-like weights. This is not May-16 paper-equivalent. "
+            "Use v_weighting='refit' for the main PCMCI/PCMCI+ thesis extension.",
             UserWarning,
         )
 
@@ -391,6 +583,9 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         "configured_lags": config.lags,
         "configured_distribution": config.distribution,
         "parameter_source": getattr(config, "parameter_source", "manual"),
+        "v_weighting": config.v_weighting,
+        "refit_method": config.refit_method if config.v_weighting == "refit" else None,
+        "refit_metadata": {},
         "diagnostics": [],
         "causal_lags": {},
         "causal_scores": {},
@@ -445,8 +640,51 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     discovery_1 = backend.discover(I_1, y_t=config.y_t)
     discovery_2 = backend.discover(I_2, y_t=config.y_t)
 
-    beta_2 = discovery_2.beta
     B_2 = list(discovery_2.parents)
+
+    if config.v_weighting == "backend":
+        # HMML paper baseline: use backend-provided beta_star.
+        # For PCMCI/PCMCI+, this is only a diagnostic/sensitivity option,
+        # because their values are not structural regression coefficients.
+        beta_2 = discovery_2.beta
+        result_refit_metadata = {
+            "v_weighting": "backend",
+            "source": config.causal_backend,
+        }
+
+    elif config.v_weighting == "refit":
+        # PCMCI/PCMCI+ thesis extension:
+        # use backend for B2, then estimate beta_star by regression on selected parents.
+        beta_2, result_refit_metadata = refit_beta_for_selected_parents(
+            X=I_2,
+            y_t=config.y_t,
+            selected_parents=B_2,
+            lags=config.lags,
+            method=config.refit_method,
+            alpha=config.refit_alpha,
+            cv=config.refit_cv,
+            cv_folds=config.refit_cv_folds,
+            lasso_max_iter=config.refit_lasso_max_iter,
+        )
+
+    elif config.v_weighting == "ones":
+        # Equal-weight sensitivity variant.
+        beta_2 = pd.DataFrame(
+            np.ones((config.lags, len(B_2))),
+            index=[f"Lag_{lag}" for lag in range(1, config.lags + 1)],
+            columns=B_2,
+        )
+        result_refit_metadata = {
+            "v_weighting": "ones",
+            "source": "equal_weights",
+            "nonzero_beta_count": int(config.lags * len(B_2)),
+        }
+
+    else:
+        raise ValueError(
+            f"Unknown v_weighting={config.v_weighting!r}. "
+            "Use 'backend', 'refit', or 'ones'."
+        )
 
     result["autoregressive_parent_in_B2"] = config.y_t in B_2
     result["backend"] = config.causal_backend
@@ -457,6 +695,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     )
     result["B_1"] = list(discovery_1.parents)
     result["B_2"] = B_2
+    result["refit_metadata"] = result_refit_metadata
 
     # Trigger candidates
     T_candidates = []
@@ -524,7 +763,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
             X_without_trigger.to_numpy(),
             beta_without_trigger.to_numpy(),
             lags=d,
-            beta_is_ones=config.beta_is_ones,
+            beta_is_ones=(config.v_weighting == "ones"),
         )
 
         x_s_values = I_2[x_s].iloc[d:].to_numpy().reshape(-1, 1)
