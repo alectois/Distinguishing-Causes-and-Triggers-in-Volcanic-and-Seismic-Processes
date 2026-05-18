@@ -233,4 +233,12 @@ def load_etnagas_csv(path, value_cols):
     for col in value_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
+    # pressure tendency and pressure drop from ETNAGAS atmospheric pressure
+    if "Patm_3" in df.columns:
+        df["pressure_change"] = df["Patm_3"].diff()
+        df["pressure_drop"] = -df["pressure_change"]
+
+        # first value has no previous pressure value
+        df["pressure_drop"] = df["pressure_drop"].fillna(0)
+
     return df

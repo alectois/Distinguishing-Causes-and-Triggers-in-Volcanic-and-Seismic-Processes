@@ -88,7 +88,7 @@ def find_distribution(series, fallback_distribution="gaussian"):
 def find_parameters(
     X,
     target_series,
-    max_lags=3,
+    max_lags=3, # Maximum lag to consider for VAR selection. (!!!!!! change it )
     criterion="aic",
     fallback_lag=1,
     fallback_distribution="gaussian",

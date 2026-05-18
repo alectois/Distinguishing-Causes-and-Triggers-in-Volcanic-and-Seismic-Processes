@@ -36,5 +36,11 @@ ETNA_WAVEFORM_CONFIG = {
     "max_interp_gap_sec": 2.0, # only interpolate tiny gaps
 }
 
-ETNA_GAS_METEO_COLS = ["CO2_3", "AirTemp_3", "Patm_3", "WindSpeed"]
+ETNA_GAS_METEO_COLS = [
+    "CO2_3",
+    "AirTemp_3",
+    "Patm_3",
+    "pressure_drop",
+    "WindSpeed",
+]
 ETNA_EVENT_TIME = UTCDateTime("2008-05-12T06:28:00")

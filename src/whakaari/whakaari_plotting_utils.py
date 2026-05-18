@@ -10,7 +10,7 @@ WHAKAARI_ALL_COLS = [
     "API",
     "pressure_drop",
     "GNSS_deformation",
-    "local_eq_count_24h",
+    "local_eq_count_1h",
     "SO2_flux",
 ]
 
@@ -56,7 +56,7 @@ def plot_with_eruption_time(
         "API": ("Antecedent precipitation index", "mm"),
         "pressure_drop": ("Atmospheric pressure drop", "hPa"),
         "GNSS_deformation": ("GNSS deformation", "m"),
-        "local_eq_count_24h": ("Local earthquakes, 24h rolling count", "Count"),
+        "local_eq_count_1h": ("Local earthquakes, 1h count", "Count"),
         "SO2_flux": ("SO₂ flux", "t d⁻¹"),
     }
 

@@ -5,6 +5,7 @@ ETNA-specific waveform processing and feature extraction.
 import numpy as np
 import pandas as pd
 from obspy import UTCDateTime, Stream
+from pathlib import Path
 
 def fetch_waveform_chunk(client, station: str, t1: UTCDateTime, t2: UTCDateTime, cfg: dict):
     st = client.get_waveforms(
@@ -181,7 +182,24 @@ def extract_etna_features_for_chunk(client, station: str, day_start: UTCDateTime
 
     return df[["S_log", "T_log", "Y_log"]]
 
-def build_station_waveform_dataset(client, station: str, cfg: dict):
+def build_station_waveform_dataset(
+    client,
+    station: str,
+    cfg: dict,
+    *,
+    cache_path: str | None = None,
+    redownload: bool = False,
+):
+    if cache_path is not None:
+        cache_path = Path(cache_path)
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if cache_path.exists() and not redownload:
+            print(f"{station}: loading cached waveform features from {cache_path}")
+            df = pd.read_pickle(cache_path)
+            failures = []
+            return df, failures
+
     starts = []
     t = cfg["start"]
     while t < cfg["end"]:
@@ -206,5 +224,9 @@ def build_station_waveform_dataset(client, station: str, cfg: dict):
     df = pd.concat(chunks).sort_index()
     df = df[~df.index.duplicated(keep="first")]
     df.index.name = "time"
+
+    if cache_path is not None:
+        df.to_pickle(cache_path)
+        print(f"{station}: saved waveform features to {cache_path}")
 
     return df, failures

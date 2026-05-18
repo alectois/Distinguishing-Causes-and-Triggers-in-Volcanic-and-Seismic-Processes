@@ -158,8 +158,6 @@ class PCMCIBackend:
         scores = {}
 
         # beta-like matrix with rows Lag_1 ... Lag_tau_max and columns variable names.
-        # For PCMCI this is not a regression beta. We store val_matrix strengths so that
-        # beta_is_ones=True remains the default for paper-compatible V.
         beta_values = np.zeros((self.tau_max, len(var_names)))
 
         contemporaneous_links = {}

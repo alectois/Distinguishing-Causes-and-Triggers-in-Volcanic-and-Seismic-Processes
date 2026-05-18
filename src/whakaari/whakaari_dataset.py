@@ -67,15 +67,15 @@ def prepare_analysis_dataframe(whakaari_raw):
     if "effect_tremor_rms_5_15" in whakaari_dataset.columns:
         whakaari_dataset["effect_tremor_rms_5_15"] = whakaari_dataset["effect_tremor_rms_5_15"].interpolate()
 
-    if "local_eq_count_24h" in whakaari_dataset.columns:
-        whakaari_dataset["local_eq_count_24h"] = whakaari_dataset["local_eq_count_24h"].fillna(0)
+    if "local_eq_count_1h" in whakaari_dataset.columns:
+        whakaari_dataset["local_eq_count_1h"] = whakaari_dataset["local_eq_count_1h"].fillna(0)
 
     required_waveform_cols = [
         "hydro_rms_2_5",
         "ratio_4p5_8_over_8_16",
         "hf_event_rate_2_5",
         "effect_tremor_rms_5_15",
-        "local_eq_count_24h",
+        "local_eq_count_1h",
     ]
 
     required_existing = [
@@ -98,7 +98,7 @@ def scale_analysis_dataframe(
             "hf_event_rate_2_5",
             "API",
             "effect_tremor_rms_5_15",
-            "local_eq_count_24h",
+            "local_eq_count_1h",
         ]
 
     analysis_prepped = whakaari_dataset.copy()
