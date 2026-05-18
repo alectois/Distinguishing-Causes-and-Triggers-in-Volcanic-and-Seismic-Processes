@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
+import numpy as np
 
 WHAKAARI_ALL_COLS = [
     "hydro_rms_2_5",
@@ -9,9 +10,10 @@ WHAKAARI_ALL_COLS = [
     "effect_tremor_rms_5_15",
     "API",
     "pressure_drop",
+    "SO2_flux",
     "GNSS_deformation",
     "local_eq_count_1h",
-    "SO2_flux",
+    
 ]
 
 def dataset_health_report(df, name):
@@ -151,3 +153,88 @@ def plot_with_eruption_time(
 
     plt.tight_layout()
     plt.show()
+
+def plot_variable_pdfs(df, name, cols=None, bins=40):
+    """
+    Plot empirical probability density functions for numeric Whakaari variables.
+    Uses density-normalized histograms.
+    """
+    if cols is None:
+        cols = [
+            c for c in df.columns
+            if c not in ["timestamp", "time", "station"]
+            and pd.api.types.is_numeric_dtype(df[c])
+        ]
+
+    cols = [c for c in cols if c in df.columns]
+
+    if len(cols) == 0:
+        print(f"No numeric columns to plot for {name}.")
+        return
+
+    ncols = 3
+    nrows = int(np.ceil(len(cols) / ncols))
+
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(5 * ncols, 3.4 * nrows),
+        squeeze=False,
+    )
+
+    axes = axes.ravel()
+
+    for ax, col in zip(axes, cols):
+        x = pd.to_numeric(df[col], errors="coerce").dropna()
+
+        ax.hist(
+            x,
+            bins=bins,
+            density=True,
+            alpha=0.75,
+            edgecolor="black",
+            linewidth=0.4,
+        )
+
+        ax.axvline(x.mean(), linestyle="--", linewidth=1.4, label="mean")
+        ax.axvline(x.median(), linestyle=":", linewidth=1.4, label="median")
+
+        ax.set_title(col)
+        ax.set_ylabel("Density")
+        ax.legend(fontsize=8)
+
+    for ax in axes[len(cols):]:
+        ax.axis("off")
+
+    fig.suptitle(f"Probability density functions — {name}", y=1.02)
+    plt.tight_layout()
+    plt.show()
+
+
+def distribution_summary(df, name=None):
+    """
+    Summary statistics useful for checking skewness, tails, constants, and missingness.
+    """
+    cols = [
+        c for c in df.columns
+        if c not in ["timestamp", "time", "station"]
+        and pd.api.types.is_numeric_dtype(df[c])
+    ]
+
+    summary = df[cols].agg([
+        "count",
+        "mean",
+        "std",
+        "min",
+        "median",
+        "max",
+        "skew",
+    ]).T
+
+    summary["n_unique"] = df[cols].nunique()
+    summary["missing_fraction"] = df[cols].isna().mean()
+
+    if name is not None:
+        print(name)
+
+    return summary.sort_index()

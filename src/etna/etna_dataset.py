@@ -2,6 +2,7 @@ import xlrd
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import requests
 
 def extract_plume_co2so2_xls(xls_path, sheet_index=2, time_col=1, ratio_col=10):
     wb = xlrd.open_workbook(xls_path)
@@ -108,6 +109,10 @@ def create_etna_final_dataset(
     plume_df: pd.DataFrame | None = None,
     plume_buffer_hours: int = 12,
     plume_tolerance_hours: int = 6,
+    weather_df: pd.DataFrame | None = None,
+    weather_cols: list[str] | None = None,
+    weather_buffer_hours: int = 6,
+    weather_tolerance_hours: int = 1,
 ):
     # ---- load station waveform features ----
     df = wave_df.copy().reset_index()
@@ -136,18 +141,36 @@ def create_etna_final_dataset(
     df["T_log_scaled"] = robust_scale_series(df["T_log"])
     df["Y_log_scaled"] = robust_scale_series(df["Y_log"])
 
+    # rename waveform variables for final dataset readability
+    df = df.rename(columns={
+        "T_log": "teleseismic_band",
+        "S_log": "background_seismic",
+        "Y_log": "effect_seismic",
+        "T_log_scaled": "teleseismic_band_scaled",
+        "S_log_scaled": "background_seismic_scaled",
+        "Y_log_scaled": "effect_seismic_scaled",
+    })
+
     # keep BOTH raw and scaled waveform variables
     base = df[[
         "time",
-        "S_log", "T_log", "Y_log",
-        "S_log_scaled", "T_log_scaled", "Y_log_scaled"
+        "teleseismic_band",
+        "background_seismic",
+        "effect_seismic",
+        "teleseismic_band_scaled",
+        "background_seismic_scaled",
+        "effect_seismic_scaled",
     ]].copy()
 
     base["station"] = station_name
     base = base[[
         "station", "time",
-        "S_log", "T_log", "Y_log",
-        "S_log_scaled", "T_log_scaled", "Y_log_scaled"
+        "teleseismic_band",
+        "background_seismic",
+        "effect_seismic",
+        "teleseismic_band_scaled",
+        "background_seismic_scaled",
+        "effect_seismic_scaled",
     ]]
 
     # ---- ETNAGAS ----
@@ -169,6 +192,28 @@ def create_etna_final_dataset(
         )
 
         for c in etnagas_cols:
+            if c in base.columns:
+                base[c + "_scaled"] = robust_scale_series(base[c])
+
+    # ---- Open-Meteo weather ----
+    if weather_df is not None and weather_cols:
+        w = weather_df.copy()
+
+        tmin = base["time"].iloc[0] - pd.Timedelta(hours=weather_buffer_hours)
+        tmax = base["time"].iloc[-1] + pd.Timedelta(hours=weather_buffer_hours)
+
+        w = w[(w["timestamp"] >= tmin) & (w["timestamp"] <= tmax)].copy()
+
+        base = merge_data(
+            base=base,
+            ext=w,
+            base_time="time",
+            ext_time="timestamp",
+            value_cols=weather_cols,
+            tolerance_hours=weather_tolerance_hours,
+        )
+
+        for c in weather_cols:
             if c in base.columns:
                 base[c + "_scaled"] = robust_scale_series(base[c])
 
@@ -246,3 +291,39 @@ def load_etnagas_csv(path, value_cols):
 
     final_cols = ["timestamp"] + [c for c in value_cols if c in df.columns]
     return df[final_cols]
+
+
+def load_openmeteo_etna_weather(
+    start_date: str,
+    end_date: str,
+    latitude: float = 37.75,
+    longitude: float = 14.99,
+    api_alpha: float = 0.05,
+):
+    url = (
+        "https://archive-api.open-meteo.com/v1/archive?"
+        f"latitude={latitude}&longitude={longitude}"
+        f"&start_date={start_date}&end_date={end_date}"
+        "&hourly=precipitation"
+        "&timezone=UTC"
+    )
+
+    r = requests.get(url, timeout=60)
+    r.raise_for_status()
+    data = r.json()
+
+    weather = pd.DataFrame({
+        "timestamp": pd.to_datetime(data["hourly"]["time"], utc=True),
+        "rainfall_mm": data["hourly"]["precipitation"],
+    }).sort_values("timestamp")
+
+    weather["rainfall_mm"] = pd.to_numeric(weather["rainfall_mm"], errors="coerce")
+
+    weather["API"] = (
+        weather["rainfall_mm"]
+        .fillna(0)
+        .ewm(alpha=api_alpha, adjust=False)
+        .mean()
+    )
+
+    return weather[["timestamp", "API"]]

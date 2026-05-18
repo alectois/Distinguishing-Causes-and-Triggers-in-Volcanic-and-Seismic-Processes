@@ -42,4 +42,5 @@ ETNA_GAS_METEO_COLS = [
     "pressure_drop",
     "WindSpeed",
 ]
+ETNA_WEATHER_COLS = ["API"]
 ETNA_EVENT_TIME = UTCDateTime("2008-05-12T06:28:00")

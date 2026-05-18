@@ -170,7 +170,7 @@ def load_local_earthquake_counts(
     if events_df.empty:
         local_eq = pd.DataFrame(index=hourly_index)
         local_eq["local_eq_count_1h"] = 0.0
-        local_eq["local_eq_count_24h"] = 0.0
+        #local_eq["local_eq_count_24h"] = 0.0
         local_eq.index.name = "timestamp"
         return local_eq, events_df
 
@@ -186,11 +186,7 @@ def load_local_earthquake_counts(
 
     local_eq = pd.DataFrame(index=hourly_index)
     local_eq["local_eq_count_1h"] = local_eq_count_1h
-    local_eq["local_eq_count_24h"] = (
-        local_eq["local_eq_count_1h"]
-        .rolling(24, min_periods=1)
-        .sum()
-    )
+    #local_eq["local_eq_count_24h"] = (local_eq["local_eq_count_1h"].rolling(24, min_periods=1).sum())
 
     local_eq.index.name = "timestamp"
 
