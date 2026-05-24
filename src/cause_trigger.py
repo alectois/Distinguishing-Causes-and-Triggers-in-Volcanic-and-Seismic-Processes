@@ -35,21 +35,22 @@ class CauseTriggerConfig:
     min_I1_length: int = 12
     min_I2_length: int = 24
 
-    beta_is_ones: bool = False
     # How to construct beta_star for V = X_without-trigger @ beta_star
-    # "backend" = use beta from backend; paper baseline for HMML
-    # "refit"   = refit beta after parent selection; recommended for PCMCI/PCMCI+
-    # "ones"    = equal-weight sensitivity variant
+    # "backend" = use beta from backend; baseline for HMML
+    # "refit"   = refit beta after parent selection; for PCMCI/PCMCI+
     v_weighting: str = "backend"
 
-    # Used only when v_weighting="refit"
-    # "ridge" for main PCMCI/PCMCI+ extension;
-    # "lasso" for sparsity sensitivity; "ols" for transparent baseline.
+    # Used only when v_weighting="refit".
+    # "ridge"          = stable coefficient refit under collinearity
+    # "adaptive_lasso" = sparse refit following Zou-style adaptive penalties
     refit_method: str = "ridge"
     refit_alpha: float = 1.0
     refit_cv: bool = True
     refit_cv_folds: int = 5
-    refit_lasso_max_iter: int = 20000
+    refit_lasso_max_iter: int = 50000
+    adaptive_gamma: float = 1.0
+    adaptive_epsilon: float = 1e-6
+
     parameter_source: str = "manual"
     selected_distribution: str = None
     selected_lag: int = None
@@ -121,8 +122,7 @@ def make_causal_backend(config: CauseTriggerConfig):
                 "PCMCI/PCMCI+ do not return HMML-style structural beta coefficients. "
                 "Their beta-like matrix stores conditional-dependence/test-statistic strengths, "
                 "not β* for V = X_without-trigger @ β*. "
-                "For PCMCI/PCMCI+ thesis extensions, use v_weighting='refit' "
-                "or v_weighting='ones'.",
+                "For PCMCI/PCMCI+ thesis extensions, use v_weighting='refit'.",
                 UserWarning,
             )
 
@@ -271,14 +271,26 @@ def refit_beta_for_selected_parents(
     alpha: float = 1.0,
     cv: bool = True,
     cv_folds: int = 5,
-    lasso_max_iter: int = 20000,
+    lasso_max_iter: int = 50000,
+    adaptive_gamma: float = 1.0,
+    adaptive_epsilon: float = 1e-6,
 ):
     """
     Estimate beta_star for selected lagged parents after causal discovery.
 
-    This is intended for PCMCI/PCMCI+ extensions:
+    This is intended for PCMCI/PCMCI+ thesis extensions:
         PCMCI/PCMCI+ selects B2.
-        This function estimates β* by regression on selected lagged parents.
+        This function estimates beta_star by regression on selected lagged parents.
+
+    Supported methods
+    -----------------
+    ridge:
+        RidgeCV/Ridge refit. Main stable refit method.
+
+    adaptive_lasso:
+        Zou-style adaptive lasso refit. Uses an initial RidgeCV/Ridge estimate
+        to construct adaptive penalty weights, then chooses the lasso penalty
+        by TimeSeriesSplit cross-validation when cv=True.
 
     Returns
     -------
@@ -287,9 +299,17 @@ def refit_beta_for_selected_parents(
         Rows: Lag_1 ... Lag_d.
         Columns: selected_parents.
     metadata : dict
-        Information about method, alpha, nonzero count, etc.
+        Information about method, selected alpha, nonzero count, etc.
     """
     selected_parents = list(selected_parents)
+    method = method.lower()
+
+    allowed_methods = {"ridge", "adaptive_lasso"}
+    if method not in allowed_methods:
+        raise ValueError(
+            f"Unknown refit method {method!r}. "
+            "Use only 'ridge' or 'adaptive_lasso'."
+        )
 
     index = [f"Lag_{lag}" for lag in range(1, lags + 1)]
 
@@ -307,7 +327,6 @@ def refit_beta_for_selected_parents(
 
     X_values = X[selected_parents].to_numpy(dtype=float)
     y_values = X[y_t].iloc[lags:].to_numpy(dtype=float)
-
     X_lagged = build_lagged_matrix_for_refit(X_values, lags)
 
     if len(y_values) != X_lagged.shape[0]:
@@ -316,55 +335,86 @@ def refit_beta_for_selected_parents(
             f"X_lagged rows={X_lagged.shape[0]}"
         )
 
-    method = method.lower()
+    n_splits = min(cv_folds, X_lagged.shape[0] - 1)
+    use_cv = bool(cv and n_splits >= 2)
+    cv_obj = TimeSeriesSplit(n_splits=n_splits) if use_cv else None
 
     metadata = {
         "refit_method": method,
         "refit_alpha_requested": alpha,
-        "refit_cv": cv,
-        "refit_cv_folds": cv_folds,
+        "refit_cv": use_cv,
+        "refit_cv_folds": int(n_splits) if use_cv else 0,
         "n_refit_rows": int(X_lagged.shape[0]),
         "n_refit_features": int(X_lagged.shape[1]),
         "selected_parents": selected_parents,
     }
 
-    if method == "ols":
-        model = LinearRegression()
+    ridge_alphas = np.logspace(-4, 4, 40)
 
-    elif method == "ridge":
-        if cv and X_lagged.shape[0] > cv_folds + 1:
-            alphas = np.logspace(-4, 4, 40)
-            cv_obj = TimeSeriesSplit(n_splits=min(cv_folds, X_lagged.shape[0] - 1))
-            model = RidgeCV(alphas=alphas, cv=cv_obj)
+    if method == "ridge":
+        if use_cv:
+            model = RidgeCV(alphas=ridge_alphas, cv=cv_obj)
         else:
             model = Ridge(alpha=alpha)
 
-    elif method == "lasso":
-        if cv and X_lagged.shape[0] > cv_folds + 1:
-            alphas = np.logspace(-4, 1, 40)
-            cv_obj = TimeSeriesSplit(n_splits=min(cv_folds, X_lagged.shape[0] - 1))
-            model = LassoCV(
-                alphas=alphas,
+        model.fit(X_lagged, y_values)
+        beta_flat = np.asarray(model.coef_, dtype=float).reshape(-1)
+
+        metadata["refit_alpha_used"] = (
+            float(model.alpha_) if hasattr(model, "alpha_") else float(alpha)
+        )
+
+    elif method == "adaptive_lasso":
+        # Stage 1: stable initial estimator for adaptive weights.
+        if use_cv:
+            ridge_init = RidgeCV(alphas=ridge_alphas, cv=cv_obj)
+        else:
+            ridge_init = Ridge(alpha=alpha)
+
+        ridge_init.fit(X_lagged, y_values)
+        beta_initial = np.asarray(ridge_init.coef_, dtype=float).reshape(-1)
+
+        # Zou-style adaptive weights:
+        # weaker initial coefficients receive stronger penalty.
+        adaptive_weights = 1.0 / (
+            (np.abs(beta_initial) + adaptive_epsilon) ** adaptive_gamma
+        )
+
+        # Weighted lasso via column scaling:
+        # min ||y - X beta||^2 + lambda * sum_j w_j |beta_j|
+        # Let theta_j = w_j * beta_j and X_weighted_j = X_j / w_j.
+        X_weighted = X_lagged / adaptive_weights.reshape(1, -1)
+
+        if use_cv:
+            lasso_alphas = np.logspace(-5, 1, 60)
+            lasso_model = LassoCV(
+                alphas=lasso_alphas,
                 cv=cv_obj,
                 max_iter=lasso_max_iter,
                 fit_intercept=True,
             )
         else:
-            model = Lasso(
+            lasso_model = Lasso(
                 alpha=alpha,
                 max_iter=lasso_max_iter,
                 fit_intercept=True,
             )
 
-    else:
-        raise ValueError(
-            f"Unknown refit method {method!r}. "
-            "Use 'ols', 'ridge', or 'lasso'."
+        lasso_model.fit(X_weighted, y_values)
+
+        theta = np.asarray(lasso_model.coef_, dtype=float).reshape(-1)
+        beta_flat = theta / adaptive_weights
+
+        metadata["initial_ridge_alpha_used"] = (
+            float(ridge_init.alpha_) if hasattr(ridge_init, "alpha_") else float(alpha)
         )
-
-    model.fit(X_lagged, y_values)
-
-    beta_flat = np.asarray(model.coef_, dtype=float).reshape(-1)
+        metadata["refit_alpha_used"] = (
+            float(lasso_model.alpha_) if hasattr(lasso_model, "alpha_") else float(alpha)
+        )
+        metadata["adaptive_gamma"] = float(adaptive_gamma)
+        metadata["adaptive_epsilon"] = float(adaptive_epsilon)
+        metadata["adaptive_weight_min"] = float(np.min(adaptive_weights))
+        metadata["adaptive_weight_max"] = float(np.max(adaptive_weights))
 
     if beta_flat.shape[0] != X_lagged.shape[1]:
         raise ValueError(
@@ -382,11 +432,6 @@ def refit_beta_for_selected_parents(
 
     metadata["nonzero_beta_count"] = int(np.count_nonzero(beta_flat))
     metadata["beta_abs_max"] = float(np.max(np.abs(beta_flat))) if beta_flat.size else 0.0
-
-    if hasattr(model, "alpha_"):
-        metadata["refit_alpha_used"] = float(model.alpha_)
-    else:
-        metadata["refit_alpha_used"] = float(alpha) if method in {"ridge", "lasso"} else None
 
     return beta_df, metadata
 
@@ -529,17 +574,18 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     if config.lags < 1:
         raise ValueError(f"config.lags must be >= 1, got {config.lags}")
 
-    valid_v_weighting = {"backend", "refit", "ones"}
+    valid_v_weighting = {"backend", "refit"}
     if config.v_weighting not in valid_v_weighting:
         raise ValueError(
             f"Unknown v_weighting={config.v_weighting!r}. "
-            "Use 'backend', 'refit', or 'ones'."
+            "Use 'backend' or 'refit'."
         )
 
-    if config.beta_is_ones:
-        warnings.warn(
-            "beta_is_ones=True is deprecated. Use v_weighting='ones' instead.",
-            UserWarning,
+    valid_refit_methods = {"ridge", "adaptive_lasso"}
+    if config.v_weighting == "refit" and config.refit_method not in valid_refit_methods:
+        raise ValueError(
+            f"Unknown refit_method={config.refit_method!r}. "
+            "Use 'ridge' or 'adaptive_lasso'."
         )
 
     if config.causal_backend == "hmml" and config.v_weighting != "backend":
@@ -665,25 +711,14 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
             cv=config.refit_cv,
             cv_folds=config.refit_cv_folds,
             lasso_max_iter=config.refit_lasso_max_iter,
+            adaptive_gamma=config.adaptive_gamma,
+            adaptive_epsilon=config.adaptive_epsilon,
         )
-
-    elif config.v_weighting == "ones":
-        # Equal-weight sensitivity variant.
-        beta_2 = pd.DataFrame(
-            np.ones((config.lags, len(B_2))),
-            index=[f"Lag_{lag}" for lag in range(1, config.lags + 1)],
-            columns=B_2,
-        )
-        result_refit_metadata = {
-            "v_weighting": "ones",
-            "source": "equal_weights",
-            "nonzero_beta_count": int(config.lags * len(B_2)),
-        }
 
     else:
         raise ValueError(
             f"Unknown v_weighting={config.v_weighting!r}. "
-            "Use 'backend', 'refit', or 'ones'."
+            "Use 'backend', or 'refit'."
         )
 
     result["autoregressive_parent_in_B2"] = config.y_t in B_2
@@ -763,7 +798,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
             X_without_trigger.to_numpy(),
             beta_without_trigger.to_numpy(),
             lags=d,
-            beta_is_ones=(config.v_weighting == "ones"),
+            beta_is_ones=False,
         )
 
         x_s_values = I_2[x_s].iloc[d:].to_numpy().reshape(-1, 1)
