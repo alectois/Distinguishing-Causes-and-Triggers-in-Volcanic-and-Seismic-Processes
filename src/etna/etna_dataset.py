@@ -136,30 +136,19 @@ def create_etna_final_dataset(
     if end_time is not None:
         df = df[df["time"] < pd.to_datetime(end_time, utc=True)]
 
-    # waveform scaling
-    df["S_log_scaled"] = robust_scale_series(df["S_log"])
-    df["T_log_scaled"] = robust_scale_series(df["T_log"])
-    df["Y_log_scaled"] = robust_scale_series(df["Y_log"])
-
     # rename waveform variables for final dataset readability
     df = df.rename(columns={
         "T_log": "teleseismic_band",
         "S_log": "background_seismic",
         "Y_log": "effect_seismic",
-        "T_log_scaled": "teleseismic_band_scaled",
-        "S_log_scaled": "background_seismic_scaled",
-        "Y_log_scaled": "effect_seismic_scaled",
     })
 
-    # keep BOTH raw and scaled waveform variables
+    # keep raw waveform variables
     base = df[[
         "time",
         "teleseismic_band",
         "background_seismic",
         "effect_seismic",
-        "teleseismic_band_scaled",
-        "background_seismic_scaled",
-        "effect_seismic_scaled",
     ]].copy()
 
     base["station"] = station_name
@@ -168,9 +157,6 @@ def create_etna_final_dataset(
         "teleseismic_band",
         "background_seismic",
         "effect_seismic",
-        "teleseismic_band_scaled",
-        "background_seismic_scaled",
-        "effect_seismic_scaled",
     ]]
 
     # ---- ETNAGAS ----
@@ -191,10 +177,6 @@ def create_etna_final_dataset(
             tolerance_hours=etnagas_tolerance_hours,
         )
 
-        for c in etnagas_cols:
-            if c in base.columns:
-                base[c + "_scaled"] = robust_scale_series(base[c])
-
     # ---- Open-Meteo weather ----
     if weather_df is not None and weather_cols:
         w = weather_df.copy()
@@ -213,10 +195,6 @@ def create_etna_final_dataset(
             tolerance_hours=weather_tolerance_hours,
         )
 
-        for c in weather_cols:
-            if c in base.columns:
-                base[c + "_scaled"] = robust_scale_series(base[c])
-
     # ---- plume ----
     if plume_df is not None:
         gpl = plume_df.copy()
@@ -234,11 +212,49 @@ def create_etna_final_dataset(
             tolerance_hours=plume_tolerance_hours,
         )
 
-        if "CO2_SO2" in base.columns:
-            base["CO2_SO2_scaled"] = robust_scale_series(base["CO2_SO2"])
-
     # final sorted dataframe
     final = base.sort_values("time").reset_index(drop=True)
+
+    # ---- final transformation + robust scaling ----
+    # Raw variables remain unchanged in final_raw.
+    # The scaled dataset is built from a transformed copy.
+
+    log_transform_cols = [
+        # rainfall / hydrological memory
+        "API",
+
+        # positive gas / plume variables; inspect distributions, but these are
+        # usually right-skewed enough to justify log1p
+        "CO2_3",
+        "CO2_SO2",
+    ]
+
+    # we do NOT log-transform:
+    # - teleseismic_band, background_seismic, effect_seismic
+    #   because they are already log-transformed waveform amplitudes.
+    # - pressure_drop because it is signed.
+    # - AirTemp_3 because temperature is not a positive burst variable.
+    # - WindSpeed unless diagnostics show strong skewness.
+
+    exclude_from_scaling = ["station", "time"]
+
+    scale_input = final.copy()
+
+    for col in log_transform_cols:
+        if col in scale_input.columns:
+            scale_input[col] = np.log1p(
+                pd.to_numeric(scale_input[col], errors="coerce").clip(lower=0)
+            )
+
+    scale_cols = [
+        c for c in scale_input.columns
+        if c not in exclude_from_scaling
+    ]
+
+    final_scaled = final[["time", "station"]].copy()
+
+    for col in scale_cols:
+        final_scaled[col + "_scaled"] = robust_scale_series(scale_input[col])
 
     if final.isna().any().any():
         print("Warning: final dataset contains missing values.")
@@ -249,13 +265,10 @@ def create_etna_final_dataset(
     Path(stem).parent.mkdir(parents=True, exist_ok=True)
 
     # save RAW dataset
-    raw_cols = [c for c in final.columns if not c.endswith("_scaled")]
-    final_raw = final[raw_cols].copy()
+    final_raw = final.copy()
     final_raw.to_csv(f"{stem}_raw.csv", index=False)
 
     # save SCALED dataset
-    scaled_cols = ["time", "station"] + [c for c in final.columns if c.endswith("_scaled")]
-    final_scaled = final[scaled_cols].copy()
     final_scaled.to_csv(f"{stem}_scaled.csv", index=False)
 
     print("Saved:", f"{stem}_raw.csv")

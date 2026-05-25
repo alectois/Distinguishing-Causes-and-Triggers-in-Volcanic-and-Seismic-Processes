@@ -97,7 +97,12 @@ def load_weather_vars(lat, lon, start, end, api_alpha=0.05):
     weather["pressure_change"] = weather["surface_pressure_hPa"].diff()
     weather["pressure_drop"] = -weather["pressure_change"]
     weather["rain_24h_sum"] = weather["rainfall_mm"].rolling(24, min_periods=1).sum()
-    weather["API"] = weather["rainfall_mm"].ewm(alpha=api_alpha).mean()
+    weather["API"] = (
+        pd.to_numeric(weather["rainfall_mm"], errors="coerce")
+        .fillna(0)
+        .ewm(alpha=api_alpha, adjust=False)
+        .mean()
+    )
 
     weather = weather.dropna()
 

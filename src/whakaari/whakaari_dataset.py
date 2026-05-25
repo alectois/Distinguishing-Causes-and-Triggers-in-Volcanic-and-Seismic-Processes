@@ -2,7 +2,21 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
+
+def robust_scale_series(s: pd.Series) -> pd.Series:
+    s = pd.to_numeric(s, errors="coerce")
+
+    med = s.median()
+    mad = np.median(np.abs(s - med))
+
+    if pd.isna(mad) or mad == 0:
+        std = s.std()
+        if pd.isna(std) or std == 0:
+            return pd.Series(np.nan, index=s.index)
+        return (s - s.mean()) / std
+
+    return (s - med) / (1.4826 * mad)
+
 
 def build_master_dataframe(
     wave,
@@ -91,6 +105,14 @@ def scale_analysis_dataframe(
     whakaari_dataset,
     log_transform_cols=None,
 ):
+    """
+    Prepare the scaled Whakaari dataset for causal analysis.
+
+    Raw variables are not modified. For the scaled dataset:
+    - non-negative, bursty/skewed variables are log1p-transformed;
+    - all variables are then robustly scaled using median/MAD.
+    """
+
     if log_transform_cols is None:
         log_transform_cols = [
             "SO2_flux",
@@ -103,21 +125,22 @@ def scale_analysis_dataframe(
 
     analysis_prepped = whakaari_dataset.copy()
 
+    # Log-transform only non-negative skewed variables.
+    # Do not include pressure_drop or GNSS_deformation because they are signed.
     for col in log_transform_cols:
         if col in analysis_prepped.columns:
             analysis_prepped[col] = np.log1p(
-                analysis_prepped[col].clip(lower=0)
+                pd.to_numeric(analysis_prepped[col], errors="coerce").clip(lower=0)
             )
 
     feature_cols = analysis_prepped.columns.tolist()
 
-    scaler = StandardScaler()
     whakaari_dataset_scaled = analysis_prepped.copy()
-    whakaari_dataset_scaled[feature_cols] = scaler.fit_transform(
-        analysis_prepped[feature_cols]
-    )
 
-    return whakaari_dataset_scaled, analysis_prepped, scaler
+    for col in feature_cols:
+        whakaari_dataset_scaled[col] = robust_scale_series(analysis_prepped[col])
+
+    return whakaari_dataset_scaled, analysis_prepped, None
 
 def save_whakaari_datasets(
     whakaari_raw,
