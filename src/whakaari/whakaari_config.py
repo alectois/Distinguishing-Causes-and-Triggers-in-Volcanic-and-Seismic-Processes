@@ -18,6 +18,7 @@ WHAKAARI_WAVEFORM_CONFIG = {
     "channel": "HHZ",
     "master_freq": "1h",
     "rms_window_sec": 600,
+    "pre_filt": (0.5, 1.0, 20.0, 25.0),
 }
 
 MASTER_FREQ = "1h"

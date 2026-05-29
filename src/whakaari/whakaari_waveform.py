@@ -25,7 +25,10 @@ def get_day_trace(client, day_start, cfg):
     tr.detrend("linear")
     tr.detrend("demean")
     tr.taper(max_percentage=0.02)
-    tr.remove_response(output="VEL")
+    tr.remove_response(
+        output="VEL",
+        pre_filt=cfg.get("pre_filt", (0.5, 1.0, 20.0, 25.0)),
+    )
 
     return tr
 
