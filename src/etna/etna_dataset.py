@@ -126,7 +126,7 @@ def create_etna_final_dataset(
     df["time"] = pd.to_datetime(df["time"], utc=True, errors="coerce")
     df = df.dropna(subset=["time"]).sort_values("time").reset_index(drop=True)
 
-    for c in ["S_log", "T_log", "Y_log"]:
+    for c in ["background_seismic", "teleseismic_band", "effect_seismic"]:
         if c not in df.columns:
             raise KeyError(f"Missing '{c}' in waveform dataframe.")
         df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -135,13 +135,6 @@ def create_etna_final_dataset(
         df = df[df["time"] >= pd.to_datetime(start_time, utc=True)]
     if end_time is not None:
         df = df[df["time"] < pd.to_datetime(end_time, utc=True)]
-
-    # rename waveform variables for final dataset readability
-    df = df.rename(columns={
-        "T_log": "teleseismic_band",
-        "S_log": "background_seismic",
-        "Y_log": "effect_seismic",
-    })
 
     # keep raw waveform variables
     base = df[[

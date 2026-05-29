@@ -144,7 +144,7 @@ def extract_etna_features_for_chunk(client, station: str, day_start: UTCDateTime
         out_freq=cfg["base_freq"],
         metric="rms",
         agg="max",     # preserve sharp arrivals
-    ).rename("T_raw")
+    ).rename("teleseismic_band_raw")
 
     # S: background / state band
     S = windowed_metric(
@@ -155,7 +155,7 @@ def extract_etna_features_for_chunk(client, station: str, day_start: UTCDateTime
         out_freq=cfg["base_freq"],
         metric="rms",
         agg="mean",
-    ).rename("S_raw")
+    ).rename("background_seismic_raw")
 
     # Y: HF response / effect band
     # Use hourly max to preserve burst-like response energy.
@@ -167,7 +167,7 @@ def extract_etna_features_for_chunk(client, station: str, day_start: UTCDateTime
         out_freq=cfg["base_freq"],
         metric="rms",
         agg="max",
-    ).rename("Y_raw")
+    ).rename("effect_seismic_raw")
 
     df = pd.concat([S, T, Y], axis=1)
 
@@ -177,10 +177,10 @@ def extract_etna_features_for_chunk(client, station: str, day_start: UTCDateTime
     df = df.loc[(df.index >= left) & (df.index < right)].copy()
 
     # Log-transform positive amplitudes safely
-    for raw, logc in [("S_raw", "S_log"), ("T_raw", "T_log"), ("Y_raw", "Y_log")]:
+    for raw, logc in [("background_seismic_raw", "background_seismic"), ("teleseismic_band_raw", "teleseismic_band"), ("effect_seismic_raw", "effect_seismic")]:
         df[logc] = np.log1p(df[raw].clip(lower=0))
 
-    return df[["S_log", "T_log", "Y_log"]]
+    return df[["background_seismic", "teleseismic_band", "effect_seismic"]]
 
 def build_station_waveform_dataset(
     client,
