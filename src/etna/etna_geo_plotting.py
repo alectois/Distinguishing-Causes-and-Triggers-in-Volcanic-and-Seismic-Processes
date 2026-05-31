@@ -3,107 +3,82 @@ import warnings
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 
-
-ETNA_FAMILY_MARKERS = {
-    "seismic": "^",
-    "seismic_effect": "*",
-    "gas": "o",
-    "gas_plume": "o",
-    "meteorology": "s",
-    "weather_proxy": "P",
+FAMILY_STYLE = {
+    "seismic": {
+        "marker": "^",
+        "color": "#1f77b4",
+        "label": "Seismic observable",
+    },
+    "gas": {
+        "marker": "o",
+        "color": "#2ca02c",
+        "label": "Gas observable",
+    },
+    "meteorology": {
+        "marker": "s",
+        "color": "#9467bd",
+        "label": "Meteorological observable",
+    },
+    "gas_plume": {
+        "marker": "D",
+        "color": "#17becf",
+        "label": "Plume observable",
+    },
+    "weather_proxy": {
+        "marker": "P",
+        "color": "#bcbd22",
+        "label": "Weather proxy",
+    },
+    "summit": {
+        "marker": "X",
+        "color": "black",
+        "label": "Etna summit",
+    },
 }
 
-ETNA_FAMILY_COLORS = {
-    "seismic": "#0072B2",
-    "seismic_effect": "#D55E00",
-    "gas": "#009E73",
-    "gas_plume": "#56B4E9",
-    "meteorology": "#CC79A7",
-    "weather_proxy": "#F0E442",
+
+SOURCE_LABELS = {
+    "ME01": "ME01",
+    "ME02": "ME02",
+    "ETNAGAS_3": "ETNAGAS network, 3c",
+    "ETNA_SUMMIT_PLUME": "INGV-PA, Multi-GAS",
+    "ETNA_OPENMETEO_PROXY": "Open-Meteo",
+    "Etna summit": "Etna summit",
+}
+
+DEFAULT_LABEL_OFFSETS = {
+    # Seismic stations
+    "ME01": (-18, -16),
+    "ME02": (18, -16),
+
+    # Summit/proxy area
+    "ETNA_OPENMETEO_PROXY": (-18, 14),
+    "ETNA_SUMMIT_PLUME": (18, 14),
+    "Etna summit": (18, -18),
+
+    # Gas/meteo station
+    "ETNAGAS_3": (26, -24),
+}
+
+SOURCE_DISPLAY_NUDGES_M = {
+    # Separate proxy/summit sources that are geographically almost identical.
+    # These move only the displayed marker positions, not the true source coordinates.
+    "ETNA_OPENMETEO_PROXY": (-2600, 1300),
+    "ETNA_SUMMIT_PLUME": (2200, 1100),
+
+    # Keep summit at the actual summit reference point.
+    "Etna summit": (0, 0),
+
+    # Leave the other sources unchanged.
+    "ME01": (0, 0),
+    "ME02": (0, 0),
+    "ETNAGAS_3": (0, 0),
 }
 
 
-def _source_level_metadata(metadata):
-    """
-    Collapse observable-level metadata to one row per measurement source.
-
-    This prevents stacked markers and unreadable labels when several variables
-    come from the same station/source.
-    """
-    rows = []
-
-    for source_id, g in metadata.groupby("source_id", dropna=False):
-        g = g.copy()
-
-        if g[["lat", "lon"]].isna().any(axis=None):
-            continue
-
-        # Prefer effect role/family only for role information, but for plotting
-        # the station/source itself should usually be the broader source family.
-        families = list(dict.fromkeys(g["family"].astype(str).tolist()))
-        spatial_types = list(dict.fromkeys(g["spatial_type"].astype(str).tolist()))
-        observables = list(dict.fromkeys(g["observable"].astype(str).tolist()))
-
-        if "seismic" in families or "seismic_effect" in families:
-            plot_family = "seismic"
-        elif "gas" in families:
-            plot_family = "gas"
-        elif "meteorology" in families:
-            plot_family = "meteorology"
-        elif "gas_plume" in families:
-            plot_family = "gas_plume"
-        elif "weather_proxy" in families:
-            plot_family = "weather_proxy"
-        else:
-            plot_family = families[0]
-
-        rows.append({
-            "source_id": source_id,
-            "source_label": g["source_label"].iloc[0],
-            "lat": float(g["lat"].iloc[0]),
-            "lon": float(g["lon"].iloc[0]),
-            "family": plot_family,
-            "families": ", ".join(families),
-            "spatial_type": spatial_types[0],
-            "observables": observables,
-            "observable_text": ", ".join(observables),
-        })
-
-    return pd.DataFrame(rows)
-
-
-def _add_basemap_if_possible(ax, crs="EPSG:3857", source=None):
-    """
-    Add a map-tile basemap if contextily is installed and internet/cache is available.
-    The plot still works without a basemap.
-    """
-    try:
-        import contextily as cx
-
-        if source is None:
-            source = cx.providers.Esri.WorldTopoMap
-
-        cx.add_basemap(
-            ax,
-            crs=crs,
-            source=source,
-            attribution_size=6,
-        )
-        return True
-
-    except Exception as exc:
-        warnings.warn(
-            f"Could not add contextily basemap. Falling back to plain map axes. "
-            f"Reason: {exc}"
-        )
-        return False
-
-
-def _to_web_mercator(df):
-    """
-    Convert lon/lat dataframe to Web Mercator coordinates for contextily basemaps.
-    """
+def _project_to_web_mercator(df):
     try:
         import geopandas as gpd
 
@@ -113,127 +88,143 @@ def _to_web_mercator(df):
             crs="EPSG:4326",
         ).to_crs("EPSG:3857")
 
-        gdf["x"] = gdf.geometry.x
-        gdf["y"] = gdf.geometry.y
-
-        return pd.DataFrame(gdf.drop(columns="geometry"))
+        out = pd.DataFrame(gdf.drop(columns="geometry"))
+        out["x"] = gdf.geometry.x
+        out["y"] = gdf.geometry.y
+        out["is_projected"] = True
+        return out
 
     except Exception as exc:
-        warnings.warn(
-            f"Could not use GeoPandas projection. Falling back to lon/lat plot. "
-            f"Reason: {exc}"
-        )
+        warnings.warn(f"Using lon/lat fallback because projection failed: {exc}")
 
         out = df.copy()
         out["x"] = out["lon"]
         out["y"] = out["lat"]
+        out["is_projected"] = False
         return out
 
 
-def _set_extent_from_center(ax, center_lon, center_lat, buffer_km, use_web_mercator=True):
-    """
-    Set map extent around a center point.
-    """
-    if use_web_mercator:
-        center = _to_web_mercator(pd.DataFrame({
-            "lon": [center_lon],
-            "lat": [center_lat],
-        }))
-        cx = float(center["x"].iloc[0])
-        cy = float(center["y"].iloc[0])
-        b = buffer_km * 1000.0
+def _add_basemap(ax, satellite=False):
+    try:
+        import contextily as cx
 
-        ax.set_xlim(cx - b, cx + b)
-        ax.set_ylim(cy - b, cy + b)
-    else:
-        # Rough degree fallback.
-        b_lat = buffer_km / 111.2
-        b_lon = buffer_km / (111.2 * np.cos(np.deg2rad(center_lat)))
-
-        ax.set_xlim(center_lon - b_lon, center_lon + b_lon)
-        ax.set_ylim(center_lat - b_lat, center_lat + b_lat)
-
-
-def _plot_source_points(ax, source_df, annotate=True):
-    """
-    Plot one marker per source.
-    """
-    for _, row in source_df.iterrows():
-        family = row["family"]
-
-        marker = ETNA_FAMILY_MARKERS.get(family, "o")
-        color = ETNA_FAMILY_COLORS.get(family, "0.5")
-
-        ax.scatter(
-            row["x"],
-            row["y"],
-            marker=marker,
-            s=170,
-            color=color,
-            edgecolor="black",
-            linewidth=0.8,
-            alpha=0.95,
-            zorder=5,
-            label=family,
+        source = (
+            cx.providers.Esri.WorldImagery
+            if satellite
+            else cx.providers.Esri.WorldTopoMap
         )
 
-        if annotate:
-            ax.annotate(
-                row["source_id"],
-                xy=(row["x"], row["y"]),
-                xytext=(7, 7),
-                textcoords="offset points",
-                fontsize=9,
-                fontweight="bold",
-                ha="left",
-                va="bottom",
-                bbox={
-                    "facecolor": "white",
-                    "edgecolor": "none",
-                    "alpha": 0.75,
-                    "pad": 1.5,
-                },
-                zorder=6,
-            )
+        cx.add_basemap(
+            ax,
+            crs="EPSG:3857",
+            source=source,
+            reset_extent=False,
+            attribution_size=4,
+        )
+
+    except Exception as exc:
+        warnings.warn(f"Could not add basemap: {exc}")
 
 
-def _make_source_table(ax, source_df, title="Observable source"):
+def _offset_observables(df, spacing_m=2300):
+    df = df.copy()
+    df["x_plot"] = df["x"]
+    df["y_plot"] = df["y"]
+
+    is_projected = bool(df["is_projected"].iloc[0])
+
+    for source_id, idx in df.groupby("source_id").groups.items():
+        idx = list(idx)
+        n = len(idx)
+
+        if n <= 1:
+            continue
+
+        # Wider, readable layouts by group size.
+        if n == 2:
+            offsets = [(-0.8, 0.0), (0.8, 0.0)]
+
+        elif n == 3:
+            offsets = [
+                (-0.85, -0.50),
+                (0.85, -0.50),
+                (0.00, 0.75),
+            ]
+
+        elif n == 4:
+            offsets = [
+                (-0.85, -0.85),
+                (0.85, -0.85),
+                (-0.85, 0.85),
+                (0.85, 0.85),
+            ]
+
+        else:
+            ncols = int(np.ceil(np.sqrt(n)))
+            nrows = int(np.ceil(n / ncols))
+
+            offsets = []
+            for i in range(n):
+                r = i // ncols
+                c = i % ncols
+
+                offsets.append((
+                    1.05 * (c - (ncols - 1) / 2),
+                    1.05 * ((nrows - 1) / 2 - r),
+                ))
+
+        for row_idx, (ox, oy) in zip(idx, offsets):
+            if is_projected:
+                dx = ox * spacing_m
+                dy = oy * spacing_m
+            else:
+                dx = ox * spacing_m / 111_200
+                dy = oy * spacing_m / 111_200
+
+            df.loc[row_idx, "x_plot"] = df.loc[row_idx, "x"] + dx
+            df.loc[row_idx, "y_plot"] = df.loc[row_idx, "y"] + dy
+
+    return df
+
+def _nudge_overlapping_sources(df, source_nudges_m=None):
     """
-    Add a compact source-to-observable table below/next to the map.
+    Move displayed marker positions for sources that share nearly the same
+    coordinates. This keeps the true coordinates unchanged in x/y, but shifts
+    x_plot/y_plot so overlapping markers become visible.
     """
-    table_rows = []
+    if source_nudges_m is None:
+        source_nudges_m = SOURCE_DISPLAY_NUDGES_M
 
-    for _, row in source_df.sort_values("source_id").iterrows():
-        table_rows.append([
-            row["source_id"],
-            row["spatial_type"],
-            row["observable_text"],
-        ])
+    df = df.copy()
+    is_projected = bool(df["is_projected"].iloc[0])
 
-    table = ax.table(
-        cellText=table_rows,
-        colLabels=["Source", "Spatial type", "Observables"],
-        loc="bottom",
-        cellLoc="left",
-        colLoc="left",
-        bbox=[0.0, -0.48, 1.0, 0.38],
-    )
+    for source_id, (dx_m, dy_m) in source_nudges_m.items():
+        mask = df["source_id"] == source_id
 
-    table.auto_set_font_size(False)
-    table.set_fontsize(7.5)
+        if not mask.any():
+            continue
 
-    for _, cell in table.get_celld().items():
-        cell.set_linewidth(0.3)
+        if is_projected:
+            dx = dx_m
+            dy = dy_m
+        else:
+            dx = dx_m / 111_200
+            dy = dy_m / 111_200
 
-    ax.text(
-        0.0,
-        -0.08,
-        title,
-        transform=ax.transAxes,
-        fontsize=9,
-        fontweight="bold",
-        va="top",
-    )
+        df.loc[mask, "x_plot"] = df.loc[mask, "x_plot"] + dx
+        df.loc[mask, "y_plot"] = df.loc[mask, "y_plot"] + dy
+
+    return df
+
+def _set_extent(ax, df, pad_fraction=0.055, min_pad_m=1800):
+    xmin, xmax = df["x_plot"].min(), df["x_plot"].max()
+    ymin, ymax = df["y_plot"].min(), df["y_plot"].max()
+
+    xpad = max((xmax - xmin) * pad_fraction, min_pad_m)
+    ypad = max((ymax - ymin) * pad_fraction, min_pad_m)
+
+    ax.set_xlim(xmin - xpad, xmax + xpad)
+    ax.set_ylim(ymin - ypad, ymax + ypad)
 
 
 def _clean_legend(ax):
@@ -244,201 +235,375 @@ def _clean_legend(ax):
         if label not in unique:
             unique[label] = handle
 
-    ax.legend(
-        unique.values(),
-        unique.keys(),
-        loc="upper right",
-        frameon=True,
-        fontsize=8,
-    )
-
-
-def plot_etna_local_observable_map(
-    metadata,
-    volcano_lat=37.748,
-    volcano_lon=14.999,
-    buffer_km=18,
-    exclude_weather_proxy=True,
-    title="Etna: local spatial provenance of observables",
-    add_table=True,
-):
-    """
-    Local map around Etna.
-
-    This should be the main thesis map. It shows direct station/source locations
-    near the volcano. Weather proxy can be excluded here because it stretches the
-    extent and makes the station map less readable.
-    """
-    source_df = _source_level_metadata(metadata)
-
-    if exclude_weather_proxy:
-        source_df = source_df[source_df["family"] != "weather_proxy"].copy()
-
-    # Add summit reference as its own source.
-    summit = pd.DataFrame([{
-        "source_id": "Etna summit",
-        "source_label": "Etna summit reference",
-        "lat": volcano_lat,
-        "lon": volcano_lon,
-        "family": "summit",
-        "families": "summit",
-        "spatial_type": "reference_point",
-        "observables": [],
-        "observable_text": "volcano reference",
-    }])
-
-    plot_df = pd.concat([source_df, summit], ignore_index=True)
-    plot_df = _to_web_mercator(plot_df)
-
-    use_web_mercator = not np.allclose(plot_df["x"], plot_df["lon"])
-
-    fig, ax = plt.subplots(figsize=(8.2, 8.0))
-
-    _set_extent_from_center(
-        ax,
-        center_lon=volcano_lon,
-        center_lat=volcano_lat,
-        buffer_km=buffer_km,
-        use_web_mercator=use_web_mercator,
-    )
-
-    if use_web_mercator:
-        _add_basemap_if_possible(ax, crs="EPSG:3857")
-
-    # Plot summit separately.
-    summit_row = plot_df[plot_df["source_id"] == "Etna summit"].iloc[0]
-    ax.scatter(
-        summit_row["x"],
-        summit_row["y"],
-        marker="^",
-        s=230,
-        color="black",
-        edgecolor="white",
-        linewidth=0.8,
-        zorder=7,
-        label="Etna summit reference",
-    )
-    ax.annotate(
+    preferred_order = [
+        "Source centre",
+        "Seismic observable",
+        "Gas observable",
+        "Meteorological observable",
+        "Weather proxy",
+        "Plume observable",
         "Etna summit",
-        xy=(summit_row["x"], summit_row["y"]),
-        xytext=(7, 7),
-        textcoords="offset points",
-        fontsize=9,
-        fontweight="bold",
-        bbox={
-            "facecolor": "white",
-            "edgecolor": "none",
-            "alpha": 0.75,
-            "pad": 1.5,
-        },
-        zorder=8,
+    ]
+
+    ordered_labels = [l for l in preferred_order if l in unique]
+    ordered_handles = [unique[l] for l in ordered_labels]
+
+    ax.legend(
+        ordered_handles,
+        ordered_labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.040),
+        ncol=4,
+        frameon=True,
+        framealpha=0.97,
+        fontsize=8.4,
+        handletextpad=0.85,
+        columnspacing=2.45,
+        borderpad=0.85,
+        labelspacing=0.85,
+        markerscale=1.0,
     )
 
-    source_plot_df = plot_df[plot_df["source_id"] != "Etna summit"].copy()
-    _plot_source_points(ax, source_plot_df, annotate=True)
 
-    _clean_legend(ax)
-
-    ax.set_title(title)
-    ax.set_xlabel("Web Mercator x" if use_web_mercator else "Longitude")
-    ax.set_ylabel("Web Mercator y" if use_web_mercator else "Latitude")
-    ax.grid(True, alpha=0.22)
-
-    if add_table:
-        _make_source_table(ax, source_plot_df)
-        fig.subplots_adjust(bottom=0.33)
-    else:
-        fig.tight_layout()
-
-    return fig, ax
-
-
-def plot_etna_proxy_context_map(
-    metadata,
-    volcano_lat=37.748,
-    volcano_lon=14.999,
-    buffer_km=55,
-    title="Etna: regional context of proxy observables",
-):
+def _source_centres(df):
     """
-    Regional map showing Etna and the Open-Meteo / other proxy points.
+    Return one row per measurement source.
 
-    Use this as a secondary panel, not as the main local station map.
+    x/y are the true source coordinates.
+    x_plot/y_plot are the mean displayed positions of that source's observables.
+    Labels should point to x_plot/y_plot so they connect to the visible cluster.
     """
-    source_df = _source_level_metadata(metadata)
+    rows = []
 
-    proxy_df = source_df[
-        source_df["family"].isin(["weather_proxy", "gas_plume"])
-    ].copy()
+    for source_id, g in df[df["source_id"] != "Etna summit"].groupby("source_id"):
+        rows.append({
+            "source_id": source_id,
+            "x": g["x"].iloc[0],
+            "y": g["y"].iloc[0],
+            "x_plot": g["x_plot"].mean(),
+            "y_plot": g["y_plot"].mean(),
+        })
 
-    summit = pd.DataFrame([{
-        "source_id": "Etna summit",
-        "source_label": "Etna summit reference",
-        "lat": volcano_lat,
-        "lon": volcano_lon,
-        "family": "summit",
-        "families": "summit",
-        "spatial_type": "reference_point",
-        "observables": [],
-        "observable_text": "volcano reference",
-    }])
+    return pd.DataFrame(rows)
 
-    plot_df = pd.concat([proxy_df, summit], ignore_index=True)
-    plot_df = _to_web_mercator(plot_df)
+def _annotate_sources(ax, centres, summit_df, satellite=False):
+    label_rows = pd.concat([centres, summit_df], ignore_index=True)
 
-    use_web_mercator = not np.allclose(plot_df["x"], plot_df["lon"])
+    line_color = "white" if satellite else "black"
+    line_alpha = 0.95 if satellite else 0.80
 
-    fig, ax = plt.subplots(figsize=(8.2, 7.4))
+    for _, row in label_rows.iterrows():
+        source_id = row["source_id"]
+        label = SOURCE_LABELS.get(source_id, source_id)
+        dx, dy = DEFAULT_LABEL_OFFSETS.get(source_id, (12, 12))
 
-    _set_extent_from_center(
-        ax,
-        center_lon=volcano_lon,
-        center_lat=volcano_lat,
-        buffer_km=buffer_km,
-        use_web_mercator=use_web_mercator,
-    )
+        x_anchor = row["x_plot"] if "x_plot" in row else row["x"]
+        y_anchor = row["y_plot"] if "y_plot" in row else row["y"]
 
-    if use_web_mercator:
-        _add_basemap_if_possible(ax, crs="EPSG:3857")
-
-    summit_row = plot_df[plot_df["source_id"] == "Etna summit"].iloc[0]
-
-    ax.scatter(
-        summit_row["x"],
-        summit_row["y"],
-        marker="^",
-        s=230,
-        color="black",
-        edgecolor="white",
-        linewidth=0.8,
-        zorder=7,
-        label="Etna summit reference",
-    )
-
-    _plot_source_points(
-        ax,
-        plot_df[plot_df["source_id"] != "Etna summit"],
-        annotate=True,
-    )
-
-    # Draw dashed lines from proxy points to summit.
-    for _, row in plot_df[plot_df["source_id"] != "Etna summit"].iterrows():
-        ax.plot(
-            [summit_row["x"], row["x"]],
-            [summit_row["y"], row["y"]],
-            color="black",
-            linestyle="--",
-            linewidth=0.8,
-            alpha=0.65,
-            zorder=4,
+        ax.annotate(
+            label,
+            xy=(x_anchor, y_anchor),
+            xytext=(dx, dy),
+            textcoords="offset points",
+            fontsize=8.6,
+            fontweight="bold",
+            ha="left" if dx >= 0 else "right",
+            va="bottom" if dy >= 0 else "top",
+            bbox={
+                "facecolor": "white",
+                "edgecolor": "0.35",
+                "linewidth": 0.35,
+                "alpha": 0.90,
+                "pad": 1.45,
+            },
+            arrowprops={
+                "arrowstyle": "-",
+                "color": line_color,
+                "linewidth": 1.15,
+                "alpha": line_alpha,
+                "shrinkA": 2,
+                "shrinkB": 5,
+                "connectionstyle": "arc3,rad=0.0",
+            },
+            zorder=45,
         )
 
+
+def _make_source_variable_table(df):
+    rows = []
+
+    for source_id, g in df[df["source_id"] != "Etna summit"].groupby("source_id"):
+        observables = list(dict.fromkeys(g["observable"].astype(str).tolist()))
+
+        rows.append({
+            "Source": SOURCE_LABELS.get(source_id, source_id),
+            "Source ID": source_id,
+            "Variables": ", ".join(observables),
+        })
+
+    return pd.DataFrame(rows).sort_values("Source").reset_index(drop=True)
+
+
+def _assign_observable_numbers(df):
+    """
+    Give each observable a short map ID.
+    Full readable labels are shown in the side panel.
+    """
+    df = df.copy()
+
+    source_order = [
+        "ME01",
+        "ME02",
+        "ETNAGAS_3",
+        "ETNA_OPENMETEO_PROXY",
+        "ETNA_SUMMIT_PLUME",
+        "Etna summit",
+    ]
+
+    df["source_order"] = df["source_id"].apply(
+        lambda x: source_order.index(x) if x in source_order else 999
+    )
+
+    df = df.sort_values(["source_order", "source_id", "observable"]).reset_index(drop=True)
+
+    df["map_id"] = [
+        f"{i + 1}" if sid != "Etna summit" else "S"
+        for i, sid in enumerate(df["source_id"])
+    ]
+
+    return df.drop(columns=["source_order"])
+
+
+def _add_observable_label_panel(fig, ax_panel, df):
+    """
+    Add readable observable labels outside the map.
+    This is the thesis-readable part of the figure.
+    """
+    ax_panel.axis("off")
+
+    rows = df[df["source_id"] != "Etna summit"].copy()
+
+    ax_panel.text(
+        0.0,
+        1.0,
+        "Observable labels",
+        fontsize=11,
+        fontweight="bold",
+        ha="left",
+        va="top",
+    )
+
+    y = 0.94
+
+    for source_id, g in rows.groupby("source_id", sort=False):
+        source_label = SOURCE_LABELS.get(source_id, source_id)
+
+        ax_panel.text(
+            0.0,
+            y,
+            source_label,
+            fontsize=9.5,
+            fontweight="bold",
+            ha="left",
+            va="top",
+        )
+        y -= 0.035
+
+        for _, row in g.iterrows():
+            label = row.get("observable_label", row["observable"])
+
+            ax_panel.text(
+                0.02,
+                y,
+                f"{row['map_id']}. {label}",
+                fontsize=8.2,
+                ha="left",
+                va="top",
+                wrap=True,
+            )
+
+            y -= 0.050
+
+        y -= 0.018
+
+    ax_panel.text(
+        0.0,
+        0.02,
+        "Clustered markers share the same measurement source.",
+        fontsize=7.8,
+        color="0.25",
+        ha="left",
+        va="bottom",
+    )
+
+
+def plot_etna_all_variables_map(
+    metadata,
+    *,
+    summit_lat=37.748,
+    summit_lon=14.999,
+    satellite=True,
+    title=None,
+    offset_radius_m=2300,
+    figsize=(10.5, 8.0),
+    show_label_panel=False,
+):
+    df = metadata.copy()
+
+    df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
+    df["lon"] = pd.to_numeric(df["lon"], errors="coerce")
+
+    missing = df[df[["lat", "lon"]].isna().any(axis=1)]
+
+    if not missing.empty:
+        print("Rows omitted because lat/lon are missing:")
+        print(
+            missing[["source_id", "observable", "family", "lat", "lon"]]
+            .to_string(index=False)
+        )
+
+    df = df.dropna(subset=["lat", "lon"]).copy()
+
+    summit_row = pd.DataFrame([{
+        "case": "Etna",
+        "source_id": "Etna summit",
+        "source_label": "Etna summit reference",
+        "observable": "summit_reference",
+        "observable_label": "Etna summit reference",
+        "family": "summit",
+        "spatial_type": "reference_point",
+        "lat": summit_lat,
+        "lon": summit_lon,
+        "plot_role": "reference",
+    }])
+
+    df = pd.concat([df, summit_row], ignore_index=True)
+
+    df = _assign_observable_numbers(df)
+    df = _project_to_web_mercator(df)
+    df = _offset_observables(df, spacing_m=offset_radius_m)
+    df = _nudge_overlapping_sources(df)
+
+    if show_label_panel:
+        fig = plt.figure(figsize=(13.5, 8.0))
+        gs = fig.add_gridspec(
+            1,
+            2,
+            width_ratios=[3.8, 1.45],
+            wspace=0.035,
+        )
+        ax = fig.add_subplot(gs[0, 0])
+        ax_panel = fig.add_subplot(gs[0, 1])
+    else:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax_panel = None
+
+    _set_extent(ax, df)
+
+    if bool(df["is_projected"].iloc[0]):
+        _add_basemap(ax, satellite=satellite)
+
+    # Thin connector lines from offset observable marker to true source centre.
+    for _, row in df.iterrows():
+        if row["source_id"] == "Etna summit":
+            continue
+
+        if row["x_plot"] != row["x"] or row["y_plot"] != row["y"]:
+            ax.plot(
+                [row["x"], row["x_plot"]],
+                [row["y"], row["y_plot"]],
+                color="white" if satellite else "black",
+                linewidth=0.55,
+                alpha=0.60,
+                zorder=6,
+            )
+
+    centres = _source_centres(df)
+
+    # True measurement source centres.
+    ax.scatter(
+        centres["x"],
+        centres["y"],
+        s=58,
+        marker="o",
+        facecolor="white",
+        edgecolor="black",
+        linewidth=1.4,
+        alpha=0.98,
+        zorder=10,
+        label="Source centre",
+    )
+
+    summit_df = df[df["source_id"] == "Etna summit"].drop_duplicates("source_id")
+
+    # Plot all observable markers.
+    for _, row in df.iterrows():
+        family = row["family"]
+        style = FAMILY_STYLE.get(
+            family,
+            {"marker": "o", "color": "0.5", "label": family},
+        )
+
+        size = 155 if family == "summit" else 105
+
+        ax.scatter(
+            row["x_plot"],
+            row["y_plot"],
+            s=size,
+            marker=style["marker"],
+            color=style["color"],
+            edgecolor="black",
+            linewidth=0.8,
+            alpha=0.96,
+            zorder=12,
+            label=style["label"],
+        )
+
+        # Short readable numbered label on top of marker.
+        ax.annotate(
+            row["map_id"],
+            xy=(row["x_plot"], row["y_plot"]),
+            xytext=(0, 9),
+            textcoords="offset points",
+            fontsize=7.8,
+            fontweight="bold",
+            color="black",
+            ha="center",
+            va="center",
+            bbox={
+                "boxstyle": "circle,pad=0.20",
+                "facecolor": "white",
+                "edgecolor": "black",
+                "linewidth": 0.6,
+                "alpha": 0.95,
+            },
+            zorder=35,
+        )
+
+    # Source names only.
+    _annotate_sources(
+        ax,
+        centres,
+        summit_df,
+        satellite=satellite,
+    )
+
     _clean_legend(ax)
 
-    ax.set_title(title)
-    ax.set_xlabel("Web Mercator x" if use_web_mercator else "Longitude")
-    ax.set_ylabel("Web Mercator y" if use_web_mercator else "Latitude")
-    ax.grid(True, alpha=0.22)
+    if title is not None:
+        ax.set_title(title, fontsize=14, pad=10)
 
-    fig.tight_layout()
-    return fig, ax
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.grid(False)
+
+    if show_label_panel and ax_panel is not None:
+        _add_observable_label_panel(fig, ax_panel, df)
+
+    fig.tight_layout(rect=[0, 0.085, 1, 1])
+
+    variable_table = _make_source_variable_table(df)
+
+    return fig, ax, variable_table
