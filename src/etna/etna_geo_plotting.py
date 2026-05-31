@@ -9,27 +9,27 @@ FAMILY_STYLE = {
     "seismic": {
         "marker": "^",
         "color": "#1f77b4",
-        "label": "Seismic observable",
+        "label": "Seismic variables",
     },
     "gas": {
         "marker": "o",
         "color": "#2ca02c",
-        "label": "Gas observable",
+        "label": "Soil CO₂ concentration",
     },
     "meteorology": {
         "marker": "s",
         "color": "#9467bd",
-        "label": "Meteorological observable",
+        "label": "Meteorological variables",
     },
     "gas_plume": {
         "marker": "D",
         "color": "#17becf",
-        "label": "Plume observable",
+        "label": "Plume CO₂/SO₂ ratio",
     },
     "weather_proxy": {
         "marker": "P",
         "color": "#bcbd22",
-        "label": "Weather proxy",
+        "label": "API",
     },
     "summit": {
         "marker": "X",
@@ -237,11 +237,11 @@ def _clean_legend(ax):
 
     preferred_order = [
         "Source centre",
-        "Seismic observable",
-        "Gas observable",
-        "Meteorological observable",
-        "Weather proxy",
-        "Plume observable",
+        "Seismic variables",
+        "Soil CO₂ concentration",
+        "Meteorological variables",
+        "API",
+        "Plume CO₂/SO₂ ratio",
         "Etna summit",
     ]
 
@@ -375,10 +375,6 @@ def _assign_observable_numbers(df):
 
 
 def _add_observable_label_panel(fig, ax_panel, df):
-    """
-    Add readable observable labels outside the map.
-    This is the thesis-readable part of the figure.
-    """
     ax_panel.axis("off")
 
     rows = df[df["source_id"] != "Etna summit"].copy()
