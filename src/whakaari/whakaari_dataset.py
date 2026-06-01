@@ -138,7 +138,7 @@ def scale_analysis_dataframe(
     whakaari_dataset_scaled = analysis_prepped.copy()
 
     for col in feature_cols:
-        whakaari_dataset_scaled[col] = robust_scale_series(analysis_prepped[col])
+        whakaari_dataset_scaled[col + "_scaled"] = robust_scale_series(analysis_prepped[col])
 
     return whakaari_dataset_scaled, analysis_prepped, None
 

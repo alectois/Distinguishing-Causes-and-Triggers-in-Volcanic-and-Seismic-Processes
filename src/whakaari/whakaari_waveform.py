@@ -5,6 +5,73 @@ from obspy import UTCDateTime
 from obspy.signal.trigger import classic_sta_lta, trigger_onset
 
 
+def _interpolate_only_short_gaps(x, max_gap_samples):
+    """
+    Interpolate only NaN gaps shorter than or equal to max_gap_samples.
+    Longer gaps remain NaN.
+    """
+    x = np.asarray(x, dtype=float)
+    isnan = np.isnan(x)
+
+    if not isnan.any():
+        return x
+
+    idx = np.arange(len(x))
+    valid = ~isnan
+
+    if not valid.any():
+        return x
+
+    nan_groups = []
+    in_gap = False
+    start = None
+
+    for i, flag in enumerate(isnan):
+        if flag and not in_gap:
+            start = i
+            in_gap = True
+        elif not flag and in_gap:
+            nan_groups.append((start, i - 1))
+            in_gap = False
+
+    if in_gap:
+        nan_groups.append((start, len(x) - 1))
+
+    for g0, g1 in nan_groups:
+        gap_len = g1 - g0 + 1
+
+        if gap_len <= max_gap_samples:
+            left_ok = g0 > 0 and not np.isnan(x[g0 - 1])
+            right_ok = g1 < len(x) - 1 and not np.isnan(x[g1 + 1])
+
+            if left_ok and right_ok:
+                x[g0:g1 + 1] = np.interp(
+                    idx[g0:g1 + 1],
+                    idx[valid],
+                    x[valid],
+                )
+
+    return x
+
+def _count_nan_groups(x):
+    isnan = np.isnan(x)
+    groups = []
+    in_gap = False
+    start = None
+
+    for i, flag in enumerate(isnan):
+        if flag and not in_gap:
+            start = i
+            in_gap = True
+        elif not flag and in_gap:
+            groups.append((start, i - 1))
+            in_gap = False
+
+    if in_gap:
+        groups.append((start, len(x) - 1))
+
+    return groups
+
 def get_day_trace(client, day_start, cfg):
     t1 = UTCDateTime(day_start)
     t2 = t1 + 24 * 3600
@@ -19,18 +86,53 @@ def get_day_trace(client, day_start, cfg):
         attach_response=True,
     )
 
-    st.merge(fill_value="interpolate")
+    st = st.copy()
+    st.sort()
+
+    if len(st) == 0:
+        raise ValueError(f"Empty waveform stream for {day_start}")
+
+    # Conservative merge: do not automatically interpolate all gaps.
+    st.merge(method=0, fill_value=None)
+
+    if len(st) != 1:
+        raise ValueError(f"Expected 1 merged trace for {day_start}, got {len(st)}")
 
     tr = st[0]
+
+    # Convert possible masked-array gaps to NaN.
+    data = np.ma.masked_invalid(np.asarray(tr.data, dtype=float))
+    x = data.filled(np.nan)
+
+    sr = tr.stats.sampling_rate
+    max_gap_sec = cfg.get("max_interp_gap_sec", 2.0)
+    max_gap_samples = int(max_gap_sec * sr)
+
+    gap_groups_before = _count_nan_groups(x)
+
+    x = _interpolate_only_short_gaps(x, max_gap_samples)
+
+    gap_groups_after = _count_nan_groups(x)
+
+    tr.stats.processing.append(
+        f"gap_policy: short_gap_limit={max_gap_sec}s, "
+        f"gaps_before={len(gap_groups_before)}, "
+        f"gaps_after={len(gap_groups_after)}"
+    )
+
+    tr.data = x.astype(np.float64)
+
     tr.detrend("linear")
     tr.detrend("demean")
     tr.taper(max_percentage=0.02)
+
     tr.remove_response(
-        output="VEL",
+        output=cfg.get("response_output", "VEL"),
         pre_filt=cfg.get("pre_filt", (0.5, 1.0, 20.0, 25.0)),
     )
 
     return tr
+
 
 # helper: RMS in a band. this will be used for: 2–5 Hz RMS, 4.5–8 Hz RMS, 8–16 Hz RMS. 
 # using 10-minute windows (600 seconds) -> each RMS value summarizes 10 minutes of seismic energy
