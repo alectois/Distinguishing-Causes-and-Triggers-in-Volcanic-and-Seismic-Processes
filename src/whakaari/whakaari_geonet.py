@@ -120,7 +120,7 @@ def load_local_earthquake_counts(
     master_freq="1h",
 ):
     """
-    Load local earthquakes around Whakaari from the GeoNet/FDSN event service
+    Load local earthquakes around Whakaari from the event service
     and convert them to hourly count variables.
     """
     start_utc = UTCDateTime(start)
