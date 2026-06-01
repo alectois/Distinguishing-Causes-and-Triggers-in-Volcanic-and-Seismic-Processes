@@ -4,6 +4,26 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
+from pathlib import Path
+
+def _save_current_figure(fig, filename, save_dir="figures"):
+    """Save a displayed plotting figure to figures/ as PDF and PNG."""
+    if save_dir is None or filename is None:
+        return
+
+    out_dir = Path(save_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    stem = Path(filename).stem
+
+    for ext in ("pdf", "png"):
+        fig.savefig(
+            out_dir / f"{stem}.{ext}",
+            bbox_inches="tight",
+            pad_inches=0.03,
+            dpi=300,
+            facecolor="white",
+        )
 
 FAMILY_STYLE = {
     "seismic": {
@@ -443,6 +463,8 @@ def plot_etna_all_variables_map(
     offset_radius_m=2300,
     figsize=(10.5, 8.0),
     show_label_panel=False,
+    filename=None,
+    save_dir="figures",
 ):
     df = metadata.copy()
 
@@ -601,5 +623,8 @@ def plot_etna_all_variables_map(
     fig.tight_layout(rect=[0, 0.085, 1, 1])
 
     variable_table = _make_source_variable_table(df)
+
+    if filename is not None:
+        _save_current_figure(fig, filename, save_dir)
 
     return fig, ax, variable_table

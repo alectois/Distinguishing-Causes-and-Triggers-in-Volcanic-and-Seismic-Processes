@@ -3,11 +3,27 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from obspy import UTCDateTime
+from pathlib import Path
 
+def _save_current_figure(fig, filename, save_dir="figures"):
+    """Save a displayed plotting figure to figures/ as PDF and PNG."""
+    if save_dir is None or filename is None:
+        return
 
-# ---------------------------------------------------------------------
-# Thesis plotting style
-# ---------------------------------------------------------------------
+    out_dir = Path(save_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    stem = Path(filename).stem
+
+    for ext in ("pdf", "png"):
+        fig.savefig(
+            out_dir / f"{stem}.{ext}",
+            bbox_inches="tight",
+            pad_inches=0.03,
+            dpi=300,
+            facecolor="white",
+        )
+
 
 THESIS_COLORS = {
     "series": "#0072B2",      
@@ -112,7 +128,7 @@ def plot_scaled_dataset(df, station_name):
     plt.show()
 
 
-def plot_variable_pdfs(df, name, cols=None, bins=40):
+def plot_variable_pdfs(df, cols=None, bins=40, save_dir="figures", filename=None):
     """
     Plot empirical probability density functions for numeric variables.
     Uses histograms normalized to density.
@@ -125,9 +141,6 @@ def plot_variable_pdfs(df, name, cols=None, bins=40):
         ]
 
     n = len(cols)
-    if n == 0:
-        print(f"No numeric columns to plot for {name}.")
-        return
     ncols = 3
     nrows = int(np.ceil(n / ncols))
 
@@ -162,8 +175,9 @@ def plot_variable_pdfs(df, name, cols=None, bins=40):
     for ax in axes[len(cols):]:
         ax.axis("off")
 
-    fig.suptitle(f"Probability density functions — {name}", y=1.02)
     plt.tight_layout()
+    _save_current_figure(fig, filename, save_dir)
+
     plt.show()
 
 
@@ -199,7 +213,7 @@ def run_teleseismic_checks(
     event_time=UTCDateTime("2008-05-12T06:28:00"),
     pre_sec=3600,
     post_sec=3600,
-    save_dir=None,
+    save_dir="figures",
     spectrogram_cmap="cividis",
 ):
     """
@@ -264,6 +278,14 @@ def run_teleseismic_checks(
     t2_mpl = mdates.date2num(t2.datetime)
     event_label = event_time.strftime("%Y-%m-%d %H:%M UTC")
 
+    def _save_teleseismic_figure(fig, stem):
+        station_lower = station.lower()
+        _save_current_figure(
+            fig,
+            filename=f"etna_{station_lower}_{stem}",
+            save_dir=save_dir,
+        )
+
     def _format_timestamp_axis(ax, xlabel=True):
         """Apply compact UTC timestamp formatting to a Matplotlib date axis."""
         ax.axvline(
@@ -283,13 +305,6 @@ def run_teleseismic_checks(
         if xlabel:
             ax.set_xlabel("Time (UTC)")
         ax.grid(True, alpha=0.22, linewidth=0.6)
-
-    def _maybe_save(fig, stem):
-        if save_dir is not None:
-            from pathlib import Path
-            out_dir = Path(save_dir)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            fig.savefig(out_dir / f"{station}_{stem}.png", bbox_inches="tight", dpi=300)
 
     # -----------------------------
     # Corrected waveform
@@ -322,7 +337,7 @@ def run_teleseismic_checks(
     )
     ax.legend(loc="upper left", frameon=False)
     fig.tight_layout()
-    _maybe_save(fig, "waveform_teleseismic")
+    _save_teleseismic_figure(fig, "waveform")
     plt.show()
 
     # -----------------------------
@@ -372,7 +387,7 @@ def run_teleseismic_checks(
     )
     ax.legend(loc="upper left", frameon=False, ncols=3)
     fig.tight_layout()
-    _maybe_save(fig, "rms_hourly_aggregation")
+    _save_teleseismic_figure(fig, "rms_aggregation")
     plt.show()
 
     t_peak_1m = rms_1min.idxmax()
@@ -495,8 +510,12 @@ def run_teleseismic_checks(
         fontsize=8,
     )
     fig.tight_layout()
-    _maybe_save(fig, "spectrogram_teleseismic")
+
+    _save_teleseismic_figure(fig, "spectro")
+
     plt.show()
+
+    fig.show()
 
     return {
         "station": station,
@@ -516,6 +535,8 @@ def plot_etna_data_with_event(
     title=None,
     tick_interval_days=4,
     figsize=None,
+    save_dir="figures",
+    filename=None,
 ):
     set_thesis_style()
 
@@ -602,5 +623,9 @@ def plot_etna_data_with_event(
         fig.suptitle(title, fontsize=12, fontweight="bold", y=0.995)
 
     plt.tight_layout()
+
+    if filename is None:
+        filename = f"{station}_variables"
+    _save_current_figure(fig, filename, save_dir)
 
     plt.show()

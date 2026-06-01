@@ -3,7 +3,7 @@ import warnings
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
+from pathlib import Path
 from whakaari_config import WHAKAARI_LAT, WHAKAARI_LON, WHAKAARI_EQ_RADIUS_KM
 
 
@@ -71,6 +71,24 @@ SOURCE_DISPLAY_NUDGES_M = {
     "RGWC_RGWI": (0, 0),
 }
 
+def _save_current_figure(fig, filename, save_dir="figures"):
+    """Save a displayed plotting figure to figures/ as PDF and PNG."""
+    if save_dir is None or filename is None:
+        return
+
+    out_dir = Path(save_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    stem = Path(filename).stem
+
+    for ext in ("pdf", "png"):
+        fig.savefig(
+            out_dir / f"{stem}.{ext}",
+            bbox_inches="tight",
+            pad_inches=0.03,
+            dpi=300,
+            facecolor="white",
+        )
 
 def _project_to_web_mercator(df):
     try:
@@ -327,70 +345,6 @@ def _annotate_sources(ax, centres, reference_df, satellite=False):
         )
 
 
-def _draw_station_pair_lines(ax, df, satellite=False):
-    if "lat2" not in df.columns or "lon2" not in df.columns:
-        return
-
-    pairs = df[df["spatial_type"] == "station_pair"].dropna(subset=["lat2", "lon2"])
-
-    if pairs.empty:
-        return
-
-    pair_points = pairs[["source_id", "lon", "lat", "lon2", "lat2"]].drop_duplicates()
-
-    try:
-        import geopandas as gpd
-        from shapely.geometry import Point
-
-        for _, row in pair_points.iterrows():
-            points = gpd.GeoSeries(
-                [
-                    Point(row["lon"], row["lat"]),
-                    Point(row["lon2"], row["lat2"]),
-                ],
-                crs="EPSG:4326",
-            ).to_crs("EPSG:3857")
-
-            x1, y1 = points.iloc[0].x, points.iloc[0].y
-            x2, y2 = points.iloc[1].x, points.iloc[1].y
-
-            ax.plot(
-                [x1, x2],
-                [y1, y2],
-                color="white" if satellite else "black",
-                linestyle="--",
-                linewidth=1.1,
-                alpha=0.8,
-                zorder=5,
-            )
-
-    except Exception:
-        return
-
-
-def _draw_eq_radius(ax, df):
-    eq = df[df["spatial_type"] == "search_radius"]
-
-    if eq.empty or "radius_km" not in eq.columns:
-        return
-
-    row = eq.iloc[0]
-    radius_m = float(row["radius_km"]) * 1000
-
-    circle = plt.Circle(
-        (row["x"], row["y"]),
-        radius_m,
-        fill=False,
-        edgecolor="#8c564b",
-        linestyle="--",
-        linewidth=1.4,
-        alpha=0.85,
-        zorder=4,
-    )
-
-    ax.add_patch(circle)
-
-
 def _make_source_variable_table(df):
     rows = []
 
@@ -438,6 +392,8 @@ def plot_whakaari_all_variables_map(
     offset_radius_m=55,
     figsize=(9.2, 8.0),
     show_label_panel=False,
+    filename=None,
+    save_dir="figures",
 ):
     df = metadata.copy()
 
@@ -478,10 +434,6 @@ def plot_whakaari_all_variables_map(
 
     if bool(df["is_projected"].iloc[0]):
         _add_basemap(ax, satellite=satellite)
-
-
-    # _draw_eq_radius(ax, df)
-    #_draw_station_pair_lines(ax, df, satellite=satellite)
 
     # Thin connector lines from offset observable marker to true source centre.
     for _, row in df.iterrows():
@@ -576,6 +528,9 @@ def plot_whakaari_all_variables_map(
     ax.grid(False)
 
     fig.tight_layout(rect=[0, 0.085, 1, 1])
+    if filename is None:
+        filename = f"{name}_map"
+    _save_current_figure(fig, filename, save_dir)
 
     variable_table = _make_source_variable_table(df)
 

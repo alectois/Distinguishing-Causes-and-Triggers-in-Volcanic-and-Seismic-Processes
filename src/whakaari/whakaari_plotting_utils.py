@@ -2,7 +2,27 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
 import numpy as np
+from pathlib import Path
 
+def _save_current_figure(fig, filename, save_dir="figures"):
+    """Save a displayed plotting figure to figures/ as PDF and PNG."""
+    if save_dir is None or filename is None:
+        return
+
+    out_dir = Path(save_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    stem = Path(filename).stem
+
+    for ext in ("pdf", "png"):
+        fig.savefig(
+            out_dir / f"{stem}.{ext}",
+            bbox_inches="tight",
+            pad_inches=0.03,
+            dpi=300,
+            facecolor="white",
+        )
+        
 WHAKAARI_ALL_COLS = [
     "hydro_rms_2_5",
     "ratio_4p5_8_over_8_16",
@@ -41,6 +61,8 @@ def plot_with_eruption_time(
     title=None,
     figsize=None,
     tick_interval_days=7,
+    save_dir="figures",
+    filename=None,
 ):
     df = pd.read_csv(csv_path, parse_dates=["timestamp"]).set_index("timestamp")
     eruption_time = pd.to_datetime(eruption_time, utc=True)
@@ -152,9 +174,13 @@ def plot_with_eruption_time(
         fig.suptitle(title, fontsize=12, fontweight="bold", y=0.995)
 
     plt.tight_layout()
+    if filename is None:
+        filename = "whakaari_variables"
+    _save_current_figure(fig, filename, save_dir)
+
     plt.show()
 
-def plot_variable_pdfs(df, name, cols=None, bins=40):
+def plot_variable_pdfs(df, name, cols=None, bins=40, filename=None, save_dir="figures"):
     """
     Plot empirical probability density functions for numeric Whakaari variables.
     Uses density-normalized histograms.
@@ -206,8 +232,11 @@ def plot_variable_pdfs(df, name, cols=None, bins=40):
     for ax in axes[len(cols):]:
         ax.axis("off")
 
-    fig.suptitle(f"Probability density functions — {name}", y=1.02)
+    fig.suptitle(f"{name}", y=1.02)
     plt.tight_layout()
+    if filename is None:
+        filename = f"{name}_variable_pdfs"
+    _save_current_figure(fig, filename, save_dir)
     plt.show()
 
 
