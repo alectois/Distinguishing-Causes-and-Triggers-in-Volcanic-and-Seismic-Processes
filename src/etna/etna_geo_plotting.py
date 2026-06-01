@@ -7,7 +7,7 @@ import matplotlib.patheffects as pe
 from pathlib import Path
 
 def _save_current_figure(fig, filename, save_dir="figures"):
-    """Save a displayed plotting figure to figures/ as PDF and PNG."""
+    """Save a displayed plotting figure to figures/ as PNG."""
     if save_dir is None or filename is None:
         return
 
@@ -16,14 +16,13 @@ def _save_current_figure(fig, filename, save_dir="figures"):
 
     stem = Path(filename).stem
 
-    for ext in ("pdf", "png"):
-        fig.savefig(
-            out_dir / f"{stem}.{ext}",
-            bbox_inches="tight",
-            pad_inches=0.03,
-            dpi=300,
-            facecolor="white",
-        )
+    fig.savefig(
+        out_dir / f"{stem}.png",
+        bbox_inches="tight",
+        pad_inches=0.03,
+        dpi=300,
+        facecolor="white",
+    )
 
 FAMILY_STYLE = {
     "seismic": {
@@ -624,7 +623,8 @@ def plot_etna_all_variables_map(
 
     variable_table = _make_source_variable_table(df)
 
-    if filename is not None:
-        _save_current_figure(fig, filename, save_dir)
+    if filename is None:
+        filename = f"{name}_map"
+    _save_current_figure(fig, filename, save_dir)
 
     return fig, ax, variable_table

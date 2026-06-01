@@ -72,7 +72,7 @@ SOURCE_DISPLAY_NUDGES_M = {
 }
 
 def _save_current_figure(fig, filename, save_dir="figures"):
-    """Save a displayed plotting figure to figures/ as PDF and PNG."""
+    """Save a displayed plotting figure to figures/ as PNG."""
     if save_dir is None or filename is None:
         return
 
@@ -81,14 +81,13 @@ def _save_current_figure(fig, filename, save_dir="figures"):
 
     stem = Path(filename).stem
 
-    for ext in ("pdf", "png"):
-        fig.savefig(
-            out_dir / f"{stem}.{ext}",
-            bbox_inches="tight",
-            pad_inches=0.03,
-            dpi=300,
-            facecolor="white",
-        )
+    fig.savefig(
+        out_dir / f"{stem}.png",
+        bbox_inches="tight",
+        pad_inches=0.03,
+        dpi=300,
+        facecolor="white",
+    )
 
 def _project_to_web_mercator(df):
     try:
