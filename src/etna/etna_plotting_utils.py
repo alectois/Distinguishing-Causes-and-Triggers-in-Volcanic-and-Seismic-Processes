@@ -32,9 +32,9 @@ THESIS_COLORS = {
 }
 
 ETNA_AXIS_LABELS = {
-    "teleseismic_band": ("Teleseismic-band energy, 0.05–0.5 Hz", "RMS"),
-    "background_seismic": ("Background seismic energy, 0.5–4 Hz", "RMS"),
-    "effect_seismic": ("High-frequency seismic response (Effect), 4–12 Hz", "RMS"),
+    "teleseismic_band": ("Teleseismic-band energy, 0.05–0.5 Hz", "log1p RMS velocity"),
+    "background_seismic": ("Background seismic energy, 0.5–4 Hz", "log1p RMS velocity"),
+    "effect_seismic": ("High-frequency seismic response (Effect), 4–12 Hz", "log1p RMS velocity"),
     "CO2_3": ("Soil CO₂ concentration", "%"),
     "AirTemp_3": ("Air temperature", "°C"),
     "API": ("Antecedent precipitation index", "mm"),
@@ -42,9 +42,9 @@ ETNA_AXIS_LABELS = {
     "WindSpeed": ("Wind speed", "m s⁻¹"),
     "CO2_SO2": ("Plume CO₂/SO₂ ratio", "Molar ratio"),
     
-    "teleseismic_band_scaled": ("Teleseismic-band energy, 0.05–0.5 Hz", "RMS, Robust-scaled"),
-    "background_seismic_scaled": ("Background seismic energy, 0.5–4 Hz", "RMS, Robust-scaled"),
-    "effect_seismic_scaled": ("High-frequency seismic response (Effect), 4–12 Hz", "RMS, Robust-scaled"),
+    "teleseismic_band_scaled": ("Teleseismic-band energy, 0.05–0.5 Hz", "Robust-scaled log1p RMS"),
+    "background_seismic_scaled": ("Background seismic energy, 0.5–4 Hz", "Robust-scaled log1p RMS"),
+    "effect_seismic_scaled": ("High-frequency seismic response (Effect), 4–12 Hz", "Robust-scaled log1p RMS"),
     "CO2_3_scaled": ("Soil CO₂ concentration", "%, Robust-scaled"),
     "AirTemp_3_scaled": ("Air temperature", "°C, Robust-scaled"),
     "API_scaled": ("Antecedent precipitation index", "Robust-scaled"),

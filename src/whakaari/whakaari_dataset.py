@@ -135,8 +135,7 @@ def scale_analysis_dataframe(
 
     feature_cols = analysis_prepped.columns.tolist()
 
-    whakaari_dataset_scaled = analysis_prepped.copy()
-
+    whakaari_dataset_scaled = pd.DataFrame(index=analysis_prepped.index)
     for col in feature_cols:
         whakaari_dataset_scaled[col + "_scaled"] = robust_scale_series(analysis_prepped[col])
 
