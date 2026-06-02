@@ -72,8 +72,8 @@ def prepare_analysis_dataframe(whakaari_raw):
     if "pressure_drop" in whakaari_dataset.columns:
         whakaari_dataset["pressure_drop"] = whakaari_dataset["pressure_drop"].fillna(0)
 
-    if "hf_event_rate_2_5" in whakaari_dataset.columns:
-        whakaari_dataset["hf_event_rate_2_5"] = whakaari_dataset["hf_event_rate_2_5"].fillna(0)
+    if "event_rate_2_5" in whakaari_dataset.columns:
+        whakaari_dataset["event_rate_2_5"] = whakaari_dataset["event_rate_2_5"].fillna(0)
 
     if "GNSS_deformation" in whakaari_dataset.columns:
         whakaari_dataset["GNSS_deformation"] = whakaari_dataset["GNSS_deformation"].ffill()
@@ -87,7 +87,7 @@ def prepare_analysis_dataframe(whakaari_raw):
     required_waveform_cols = [
         "hydro_rms_2_5",
         "ratio_4p5_8_over_8_16",
-        "hf_event_rate_2_5",
+        "event_rate_2_5",
         "effect_tremor_rms_5_15",
         "local_eq_count_1h",
     ]
@@ -117,7 +117,7 @@ def scale_analysis_dataframe(
         log_transform_cols = [
             "SO2_flux",
             "hydro_rms_2_5",
-            "hf_event_rate_2_5",
+            "event_rate_2_5",
             "API",
             "effect_tremor_rms_5_15",
             "local_eq_count_1h",

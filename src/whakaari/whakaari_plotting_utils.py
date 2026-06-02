@@ -25,7 +25,7 @@ def _save_current_figure(fig, filename, save_dir="figures"):
 WHAKAARI_ALL_COLS = [
     "hydro_rms_2_5",
     "ratio_4p5_8_over_8_16",
-    "hf_event_rate_2_5",
+    "event_rate_2_5",
     "effect_tremor_rms_5_15",
     "API",
     "pressure_drop",
@@ -74,7 +74,7 @@ def plot_with_eruption_time(
     label_map = {
         "hydro_rms_2_5": ("Hydrothermal tremor RMS, 2–5 Hz", "RMS"),
         "ratio_4p5_8_over_8_16": ("Spectral ratio, 4.5–8 / 8–16 Hz", "Ratio"),
-        "hf_event_rate_2_5": ("High-frequency event rate, 2–5 Hz", "Events per hour"),
+        "event_rate_2_5": ("High-frequency event rate, 2–5 Hz", "Events per hour"),
         "effect_tremor_rms_5_15": ("Tremor response RMS (Effect), 5–15 Hz", "RMS"),
         "API": ("Antecedent precipitation index", "mm"),
         "pressure_drop": ("Atmospheric pressure drop", "hPa"),

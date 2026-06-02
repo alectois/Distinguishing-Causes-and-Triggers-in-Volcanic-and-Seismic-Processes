@@ -37,7 +37,7 @@ def whakaari_observable_metadata():
             "case": "Whakaari",
             "source_id": "WSRZ",
             "source_label": "WSRZ seismic station",
-            "observable": "hf_event_rate_2_5",
+            "observable": "event_rate_2_5",
             "observable_label": "High-frequency event rate, 2–5 Hz",
             "family": "seismic",
             "spatial_type": "point_station",

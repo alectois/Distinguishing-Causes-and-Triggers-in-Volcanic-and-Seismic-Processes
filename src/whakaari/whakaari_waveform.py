@@ -185,7 +185,7 @@ def effect_tremor_rms_5_15(trace, win_sec=600):
     return s
 
 # HF event rate in 2–5 Hz only
-def hf_event_rate_2_5(trace,
+def event_rate_2_5(trace,
                       sta_sec=1.0,
                       lta_sec=5.0,
                       on_thres=3.0,
@@ -213,7 +213,7 @@ def hf_event_rate_2_5(trace,
             pd.to_datetime(tr.stats.endtime.datetime, utc=True).floor(out_freq),
             freq=out_freq,
         )
-        return pd.Series(0, index=idx, name="hf_event_rate_2_5")
+        return pd.Series(0, index=idx, name="event_rate_2_5")
 
     event_times = pd.to_datetime([t.datetime for t in event_times], utc=True)
 
@@ -223,7 +223,7 @@ def hf_event_rate_2_5(trace,
         .sum()
         .fillna(0)
     )
-    s.name = "hf_event_rate_2_5"
+    s.name = "event_rate_2_5"
     return s
 
 
@@ -236,7 +236,7 @@ def extract_features_for_day(client, day_start, cfg):
 
     hydro = hydro_rms_2_5(tr, win_sec=win_sec)
     ratio = spectral_ratio_4p5_8_over_8_16(tr, win_sec=win_sec)
-    hf_rate = hf_event_rate_2_5(tr, out_freq=out_freq)
+    hf_rate = event_rate_2_5(tr, out_freq=out_freq)
     effect = effect_tremor_rms_5_15(tr, win_sec=win_sec)
 
     hydro_h = hydro.resample(out_freq).mean()
@@ -292,7 +292,7 @@ def build_waveform_dataset(
     waveform_df.index = pd.to_datetime(waveform_df.index, utc=True)
     waveform_df = waveform_df.sort_index()
 
-    waveform_df["hf_event_rate_2_5"] = waveform_df["hf_event_rate_2_5"].fillna(0)
+    waveform_df["event_rate_2_5"] = waveform_df["event_rate_2_5"].fillna(0)
 
     if save_path is not None:
         save_path.parent.mkdir(parents=True, exist_ok=True)
