@@ -66,6 +66,21 @@ ETNA_RAW_ORDER = [
     "CO2_SO2",
 ]
 
+ETNA_SEISMIC_COLS = [
+    "teleseismic_band",
+    "background_seismic",
+    "effect_seismic",
+]
+
+ETNA_EXTERNAL_COLS = [
+    "CO2_3",
+    "AirTemp_3",
+    "API",
+    "pressure_drop",
+    "WindSpeed",
+    "CO2_SO2",
+]
+
 ETNA_SCALED_ORDER = [
     "teleseismic_band_scaled",
     "background_seismic_scaled",

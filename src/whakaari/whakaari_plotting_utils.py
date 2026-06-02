@@ -32,7 +32,21 @@ WHAKAARI_ALL_COLS = [
     "SO2_flux",
     "GNSS_deformation",
     "local_eq_count_1h",
-    
+]
+
+WHAKAARI_SEISMIC_COLS = [
+    "hydro_rms_2_5",
+    "ratio_4p5_8_over_8_16",
+    "event_rate_2_5",
+    "effect_tremor_rms_5_15",
+]
+
+WHAKAARI_EXTERNAL_COLS = [
+    "API",
+    "pressure_drop",
+    "SO2_flux",
+    "GNSS_deformation",
+    "local_eq_count_1h",
 ]
 
 def dataset_health_report(df, name):
@@ -62,6 +76,7 @@ def plot_with_eruption_time(
     tick_interval_days=7,
     save_dir="figures",
     filename=None,
+    display_transform=None,
 ):
     df = pd.read_csv(csv_path, parse_dates=["timestamp"]).set_index("timestamp")
     eruption_time = pd.to_datetime(eruption_time, utc=True)
@@ -74,7 +89,7 @@ def plot_with_eruption_time(
     label_map = {
         "hydro_rms_2_5": ("Hydrothermal tremor RMS, 2–5 Hz", "RMS"),
         "ratio_4p5_8_over_8_16": ("Spectral ratio, 4.5–8 / 8–16 Hz", "Ratio"),
-        "event_rate_2_5": ("High-frequency event rate, 2–5 Hz", "Events per hour"),
+        "event_rate_2_5": ("STA/LTA event-rate proxy, 2–5 Hz", "Events per hour"),
         "effect_tremor_rms_5_15": ("Tremor response RMS (Effect), 5–15 Hz", "RMS"),
         "API": ("Antecedent precipitation index", "mm"),
         "pressure_drop": ("Atmospheric pressure drop", "hPa"),
@@ -82,6 +97,9 @@ def plot_with_eruption_time(
         "local_eq_count_1h": ("Local earthquakes, 1h count", "Count"),
         "SO2_flux": ("SO₂ flux", "t d⁻¹"),
     }
+
+    if display_transform is None:
+        display_transform = {}
 
     series_color = "#0072B2"
     eruption_color = "#D55E00"
@@ -102,19 +120,53 @@ def plot_with_eruption_time(
     for ax, col in zip(axes, cols):
         panel_title, ylabel = label_map.get(col, (col, "Value"))
 
+        y = pd.to_numeric(df[col], errors="coerce")
+
+        transform = display_transform.get(col)
+
+        if transform == "log10":
+            positive = y[y > 0]
+            eps = positive.min() / 10 if len(positive) else 1e-12
+            y = np.log10(y.clip(lower=0) + eps)
+            ylabel = f"log10 {ylabel}"
+
+        elif transform == "log1p":
+            y = np.log1p(y.clip(lower=0))
+            ylabel = f"log1p {ylabel}"
+
         if col == "SO2_flux":
             ax.scatter(
                 df.index,
-                df[col],
-                s=9,
+                y,
+                s=12,
                 color=series_color,
-                alpha=0.80,
+                alpha=0.75,
                 linewidths=0,
             )
+
+        elif col == "local_eq_count_1h":
+            ax.vlines(
+                df.index[y > 0],
+                0,
+                y[y > 0],
+                color=series_color,
+                linewidth=0.75,
+                alpha=0.85,
+            )
+
+        elif col == "GNSS_deformation":
+            ax.plot(
+                df.index,
+                y,
+                color=series_color,
+                linewidth=0.85,
+                drawstyle="steps-post",
+            )
+
         else:
             ax.plot(
                 df.index,
-                df[col],
+                y,
                 color=series_color,
                 linewidth=0.75,
             )
