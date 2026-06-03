@@ -20,7 +20,7 @@ conda-env/
 *.gz
 
 # Local outputs
-outputs/
+#outputs/
 figures/tmp/
 results/tmp/
 
