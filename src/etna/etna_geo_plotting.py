@@ -59,8 +59,7 @@ FAMILY_STYLE = {
 
 
 SOURCE_LABELS = {
-    "ME01": "ME01",
-    "ME02": "ME02",
+    "ESLN": "ESLN",
     "ETNAGAS_3": "ETNAGAS network, 3c",
     "ETNA_SUMMIT_PLUME": "INGV-PA, Multi-GAS",
     "ETNA_OPENMETEO_PROXY": "Open-Meteo",
@@ -69,8 +68,7 @@ SOURCE_LABELS = {
 
 DEFAULT_LABEL_OFFSETS = {
     # Seismic stations
-    "ME01": (-18, -16),
-    "ME02": (18, -16),
+    "ESLN": (-18, -16),
 
     # Summit/proxy area
     "ETNA_OPENMETEO_PROXY": (-18, 14),
@@ -91,8 +89,7 @@ SOURCE_DISPLAY_NUDGES_M = {
     "Etna summit": (0, 0),
 
     # Leave the other sources unchanged.
-    "ME01": (0, 0),
-    "ME02": (0, 0),
+    "ESLN": (0, 0),
     "ETNAGAS_3": (0, 0),
 }
 
@@ -371,8 +368,7 @@ def _assign_observable_numbers(df):
     df = df.copy()
 
     source_order = [
-        "ME01",
-        "ME02",
+        "ESLN",
         "ETNAGAS_3",
         "ETNA_OPENMETEO_PROXY",
         "ETNA_SUMMIT_PLUME",
@@ -624,7 +620,7 @@ def plot_etna_all_variables_map(
     variable_table = _make_source_variable_table(df)
 
     if filename is None:
-        filename = f"{name}_map"
+        filename = "etna_all_variables_map"
     _save_current_figure(fig, filename, save_dir)
 
     return fig, ax, variable_table

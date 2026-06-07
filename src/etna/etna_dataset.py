@@ -126,7 +126,7 @@ def create_etna_final_dataset(
     df["time"] = pd.to_datetime(df["time"], utc=True, errors="coerce")
     df = df.dropna(subset=["time"]).sort_values("time").reset_index(drop=True)
 
-    for c in ["background_seismic", "teleseismic_band", "effect_seismic"]:
+    for c in ["background_seismic", "teleseismic", "effect_seismic"]:
         if c not in df.columns:
             raise KeyError(f"Missing '{c}' in waveform dataframe.")
         df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -139,7 +139,7 @@ def create_etna_final_dataset(
     # keep raw waveform variables
     base = df[[
         "time",
-        "teleseismic_band",
+        "teleseismic",
         "background_seismic",
         "effect_seismic",
     ]].copy()
@@ -147,7 +147,7 @@ def create_etna_final_dataset(
     base["station"] = station_name
     base = base[[
         "station", "time",
-        "teleseismic_band",
+        "teleseismic",
         "background_seismic",
         "effect_seismic",
     ]]
@@ -223,7 +223,7 @@ def create_etna_final_dataset(
     ]
 
     # we do NOT log-transform:
-    # - teleseismic_band, background_seismic, effect_seismic
+    # - teleseismic, background_seismic, effect_seismic
     #   because they are already log-transformed waveform amplitudes.
     # - pressure_drop because it is signed.
     # - AirTemp_3 because temperature is not a positive burst variable.

@@ -135,23 +135,23 @@ def extract_etna_features_for_chunk(client, station: str, day_start: UTCDateTime
     st = fetch_waveform_chunk(client, station, t1, t2, cfg)
     tr = preprocess_stream_safely(st, cfg)
 
-    # T: teleseismic trigger band
+    # teleseismic trigger band
     T = windowed_metric(
         tr,
-        fmin=cfg["bands"]["T"][0],
-        fmax=cfg["bands"]["T"][1],
-        window_sec=cfg["windows_sec"]["T"],
+        fmin=cfg["bands"]["teleseismic"][0],
+        fmax=cfg["bands"]["teleseismic"][1],
+        window_sec=cfg["windows_sec"]["teleseismic"],
         out_freq=cfg["base_freq"],
         metric="rms",
         agg="max",     # preserve sharp arrivals
-    ).rename("teleseismic_band_raw")
+    ).rename("teleseismic_raw")
 
     # S: background / state band
     S = windowed_metric(
         tr,
-        fmin=cfg["bands"]["S"][0],
-        fmax=cfg["bands"]["S"][1],
-        window_sec=cfg["windows_sec"]["S"],
+        fmin=cfg["bands"]["background_seismic"][0],
+        fmax=cfg["bands"]["background_seismic"][1],
+        window_sec=cfg["windows_sec"]["background_seismic"],
         out_freq=cfg["base_freq"],
         metric="rms",
         agg="mean",
@@ -161,9 +161,9 @@ def extract_etna_features_for_chunk(client, station: str, day_start: UTCDateTime
     # Use hourly max to preserve burst-like response energy.
     Y = windowed_metric(
         tr,
-        fmin=cfg["bands"]["Y"][0],
-        fmax=cfg["bands"]["Y"][1],
-        window_sec=cfg["windows_sec"]["Y"],
+        fmin=cfg["bands"]["effect_seismic"][0],
+        fmax=cfg["bands"]["effect_seismic"][1],
+        window_sec=cfg["windows_sec"]["effect_seismic"],
         out_freq=cfg["base_freq"],
         metric="rms",
         agg="max",
@@ -177,10 +177,10 @@ def extract_etna_features_for_chunk(client, station: str, day_start: UTCDateTime
     df = df.loc[(df.index >= left) & (df.index < right)].copy()
 
     # Log-transform positive amplitudes safely
-    for raw, logc in [("background_seismic_raw", "background_seismic"), ("teleseismic_band_raw", "teleseismic_band"), ("effect_seismic_raw", "effect_seismic")]:
+    for raw, logc in [("background_seismic_raw", "background_seismic"), ("teleseismic_raw", "teleseismic"), ("effect_seismic_raw", "effect_seismic")]:
         df[logc] = np.log1p(df[raw].clip(lower=0))
 
-    return df[["background_seismic", "teleseismic_band", "effect_seismic"]]
+    return df[["background_seismic", "teleseismic", "effect_seismic"]]
 
 def build_station_waveform_dataset(
     client,

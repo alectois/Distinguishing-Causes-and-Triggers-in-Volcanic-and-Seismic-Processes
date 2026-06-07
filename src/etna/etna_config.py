@@ -4,8 +4,8 @@ from obspy import UTCDateTime
 ETNA_WAVEFORM_CONFIG = {
     "network": "IV",
     "location": "",
-    "channel": "EHZ",
-    "stations": ["ME01", "ME02"],
+    "channel": "HHZ",
+    "stations": ["ESLN"],
 
     "start": UTCDateTime("2008-04-12T00:00:00"),
     "end": UTCDateTime("2008-05-14T00:00:00"),
@@ -17,16 +17,16 @@ ETNA_WAVEFORM_CONFIG = {
 
     # physical bands
     "bands": {
-        "T": (0.05, 0.5),   # teleseismic trigger
-        "S": (0.5, 4.0),    # slow background/state
-        "Y": (4.0, 12.0),   # HF response/effect
+        "teleseismic": (0.03, 0.30),          # teleseismic / Wenchuan wavefield
+        "background_seismic": (0.80, 2.30),   # Etna tremor/state band
+        "effect_seismic": (4.00, 8.00),       # HF local response/effect
     },
 
     # metric windows in seconds
     "windows_sec": {
-        "T": 30,
-        "S": 600,   # slower state
-        "Y": 60,    # response
+        "teleseismic": 120,
+        "background_seismic": 600,   # slower state
+        "effect_seismic": 60,    # response
     },
 
     # remove response to velocity

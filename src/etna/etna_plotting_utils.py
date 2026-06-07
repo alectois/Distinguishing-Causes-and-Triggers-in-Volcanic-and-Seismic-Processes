@@ -32,9 +32,9 @@ THESIS_COLORS = {
 }
 
 ETNA_AXIS_LABELS = {
-    "teleseismic_band": ("Teleseismic-band energy, 0.05–0.5 Hz", "log1p RMS velocity"),
-    "background_seismic": ("Background seismic energy, 0.5–4 Hz", "log1p RMS velocity"),
-    "effect_seismic": ("High-frequency seismic response (Effect), 4–12 Hz", "log1p RMS velocity"),
+    "teleseismic": ("Teleseismic trigger energy, 0.03–0.30 Hz", "log1p RMS velocity"),
+    "background_seismic": ("Etna tremor/state energy, 0.80–2.30 Hz", "log1p RMS velocity"),
+    "effect_seismic": ("High-frequency seismic response (Effect), 4–8 Hz", "log1p RMS velocity"),
     "CO2_3": ("Soil CO₂ concentration", "%"),
     "AirTemp_3": ("Air temperature", "°C"),
     "API": ("Antecedent precipitation index", "mm"),
@@ -42,9 +42,9 @@ ETNA_AXIS_LABELS = {
     "WindSpeed": ("Wind speed", "m s⁻¹"),
     "CO2_SO2": ("Plume CO₂/SO₂ ratio", "Molar ratio"),
     
-    "teleseismic_band_scaled": ("Teleseismic-band energy, 0.05–0.5 Hz", "Robust-scaled log1p RMS"),
-    "background_seismic_scaled": ("Background seismic energy, 0.5–4 Hz", "Robust-scaled log1p RMS"),
-    "effect_seismic_scaled": ("High-frequency seismic response (Effect), 4–12 Hz", "Robust-scaled log1p RMS"),
+    "teleseismic_scaled": ("Teleseismic trigger energy, 0.03–0.30 Hz", "Robust-scaled log1p RMS"),
+    "background_seismic_scaled": ("Etna tremor/state energy, 0.80–2.30 Hz", "Robust-scaled log1p RMS"),
+    "effect_seismic_scaled": ("High-frequency seismic response (Effect), 4–8 Hz", "Robust-scaled log1p RMS"),
     "CO2_3_scaled": ("Soil CO₂ concentration", "%, Robust-scaled"),
     "AirTemp_3_scaled": ("Air temperature", "°C, Robust-scaled"),
     "API_scaled": ("Antecedent precipitation index", "Robust-scaled"),
@@ -55,7 +55,7 @@ ETNA_AXIS_LABELS = {
 }
 
 ETNA_RAW_ORDER = [
-    "teleseismic_band",
+    "teleseismic",
     "background_seismic",
     "effect_seismic",
     "CO2_3",
@@ -67,7 +67,7 @@ ETNA_RAW_ORDER = [
 ]
 
 ETNA_SEISMIC_COLS = [
-    "teleseismic_band",
+    "teleseismic",
     "background_seismic",
     "effect_seismic",
 ]
@@ -82,7 +82,7 @@ ETNA_EXTERNAL_COLS = [
 ]
 
 ETNA_SCALED_ORDER = [
-    "teleseismic_band_scaled",
+    "teleseismic_scaled",
     "background_seismic_scaled",
     "effect_seismic_scaled",
     "CO2_3_scaled",
@@ -451,9 +451,11 @@ def run_teleseismic_checks(
     _format_timestamp_axis(ax)
 
     band_guides = [
-        (0.5, "0.5 Hz"),
-        (4.0, "4 Hz"),
-        (12.0, "12 Hz"),
+        (0.30, "0.30 Hz"),
+        (0.80, "0.80 Hz"),
+        (2.30, "2.30 Hz"),
+        (4.00, "4 Hz"),
+        (8.00, "8 Hz"),
     ]
 
     for freq, label in band_guides:
