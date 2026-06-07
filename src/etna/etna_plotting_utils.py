@@ -531,8 +531,6 @@ def run_teleseismic_checks(
 
     plt.show()
 
-    fig.show()
-
     return {
         "station": station,
         "trace": tr,

@@ -209,9 +209,16 @@ def probe_stream_daily(
     return pd.DataFrame(rows)
 
 
-def _date_ranges_from_ok_days(dates: list[str]) -> str:
-    """Convert successful daily-probe dates into compact continuous ranges."""
-    dates = pd.to_datetime(sorted(pd.unique(dates)))
+def _date_ranges_from_ok_days(dates):
+    """
+    Convert successful daily-probe dates into compact continuous ranges.
+    """
+    dates = pd.to_datetime(
+        pd.Series(dates)
+        .dropna()
+        .drop_duplicates()
+        .sort_values()
+    )
 
     if len(dates) == 0:
         return ""
@@ -283,22 +290,23 @@ def summarize_daily_probe(
     if channel_rank is None:
         channel_rank = DEFAULT_CHANNEL_RANK
 
-    group_cols = [
-        "network",
-        "station",
-        "location",
-        "channel",
-        "lat",
-        "lon",
-        "distance_km",
-        "metadata_start_date",
-        "metadata_end_date",
-    ]
-
     summary = (
         daily_probe
-        .groupby(group_cols, dropna=False)
-        .apply(_summarize_probe_group)
+        .groupby(
+            [
+                "network",
+                "station",
+                "location",
+                "channel",
+                "lat",
+                "lon",
+                "distance_km",
+                "metadata_start_date",
+                "metadata_end_date",
+            ],
+            dropna=False,
+        )
+        .apply(_summarize_probe_group, include_groups=False) 
         .reset_index()
     )
 
