@@ -164,7 +164,7 @@ def band_rms_series(trace, fmin, fmax, win_sec=600):
 # direct hydrothermal-state variable
 def hydro_rms_2_5(trace, win_sec=600):
     s = band_rms_series(trace, 2.0, 5.0, win_sec=win_sec)
-    s.name = "hydro_rms_2_5"
+    s.name = "hydro_2_5"
     return s
 
 # Spectral ratio 4.5–8 / 8–16 Hz
@@ -178,10 +178,10 @@ def spectral_ratio_4p5_8_over_8_16(trace, win_sec=600):
     return ratio
 
 # Continuous effect variable: eruption/tremor response energy
-# Uses 5–15 Hz to avoid directly containing hydro_rms_2_5 as a sub-band.
+# Uses 5–15 Hz to avoid directly containing hydro_2_5 as a sub-band.
 def effect_tremor_rms_5_15(trace, win_sec=600):
     s = band_rms_series(trace, 5.0, 15.0, win_sec=win_sec)
-    s.name = "effect_tremor_rms_5_15"
+    s.name = "effect_tremor_5_15"
     return s
 
 # HF event rate in 2–5 Hz only

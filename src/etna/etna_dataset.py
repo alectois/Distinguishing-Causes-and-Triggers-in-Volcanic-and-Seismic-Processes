@@ -98,7 +98,6 @@ def robust_scale_series(s: pd.Series) -> pd.Series:
 def create_etna_final_dataset(
     wave_df: pd.DataFrame,
     station_name: str,
-    out_csv: str,
     *,
     start_time: str | None = None,
     end_time: str | None = None,
@@ -113,6 +112,7 @@ def create_etna_final_dataset(
     weather_cols: list[str] | None = None,
     weather_buffer_hours: int = 6,
     weather_tolerance_hours: int = 1,
+    output_dir: str | Path | None = None,
 ):
     # ---- load station waveform features ----
     df = wave_df.copy().reset_index()
@@ -253,19 +253,20 @@ def create_etna_final_dataset(
         print("Warning: final dataset contains missing values.")
         print(final.isna().mean().sort_values())
 
-    # file stems
-    stem = out_csv[:-4] if out_csv.endswith(".csv") else out_csv
-    Path(stem).parent.mkdir(parents=True, exist_ok=True)
-
-    # save RAW dataset
     final_raw = final.copy()
-    final_raw.to_csv(f"{stem}_raw.csv", index=False)
 
-    # save SCALED dataset
-    final_scaled.to_csv(f"{stem}_scaled.csv", index=False)
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Saved:", f"{stem}_raw.csv")
-    print("Saved:", f"{stem}_scaled.csv")
+        raw_path = output_dir / "etna_raw.csv"
+        final_path = output_dir / "etna_final.csv"
+
+        final_raw.to_csv(raw_path, index=False)
+        final_scaled.to_csv(final_path, index=False)
+
+        print("Saved:", raw_path)
+        print("Saved:", final_path)
 
     return final_raw, final_scaled
 

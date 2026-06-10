@@ -37,7 +37,7 @@ THESIS_COLORS = {
 }
 
 ETNA_AXIS_LABELS = {
-    "teleseismic": ("Teleseismic trigger energy, 0.03–0.30 Hz", "log1p RMS velocity"),
+    "teleseismic": ("Teleseismic energy, 0.03–0.30 Hz", "log1p RMS velocity"),
     "background_seismic": ("Etna tremor/state energy, 0.80–2.30 Hz", "log1p RMS velocity"),
     "effect_seismic": ("High-frequency seismic response (Effect), 4–8 Hz", "log1p RMS velocity"),
     "CO2_3": ("Soil CO₂ concentration", "%"),
@@ -47,7 +47,7 @@ ETNA_AXIS_LABELS = {
     "WindSpeed": ("Wind speed", "m s⁻¹"),
     "CO2_SO2": ("Plume CO₂/SO₂ ratio", "Molar ratio"),
     
-    "teleseismic_scaled": ("Teleseismic trigger energy, 0.03–0.30 Hz", "Robust-scaled log1p RMS"),
+    "teleseismic_scaled": ("Teleseismic energy, 0.03–0.30 Hz", "Robust-scaled log1p RMS"),
     "background_seismic_scaled": ("Etna tremor/state energy, 0.80–2.30 Hz", "Robust-scaled log1p RMS"),
     "effect_seismic_scaled": ("High-frequency seismic response (Effect), 4–8 Hz", "Robust-scaled log1p RMS"),
     "CO2_3_scaled": ("Soil CO₂ concentration", "%, Robust-scaled"),
@@ -99,24 +99,6 @@ ETNA_SCALED_ORDER = [
 ]
 
 
-def set_thesis_style():
-    plt.rcParams.update({
-        "figure.dpi": 130,
-        "savefig.dpi": 300,
-        "font.size": 10,
-        "axes.titlesize": 11,
-        "axes.labelsize": 10,
-        "xtick.labelsize": 9,
-        "ytick.labelsize": 9,
-        "legend.fontsize": 9,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
-        "axes.grid": True,
-        "grid.alpha": 0.35,
-        "grid.linewidth": 0.6,
-    })
-
-
 def dataset_health_report(df, name):
     print(f"\n{name}")
     print("shape:", df.shape)
@@ -129,22 +111,6 @@ def dataset_health_report(df, name):
 
     print("\nMissing fraction:")
     print(df.isna().mean().sort_values())
-
-
-def plot_scaled_dataset(df):
-    cols = [c for c in df.columns if c.endswith("_scaled")]
-
-    fig, axes = plt.subplots(len(cols), 1, figsize=(14, 2.5 * len(cols)), sharex=True)
-    if len(cols) == 1:
-        axes = [axes]
-
-    for ax, col in zip(axes, cols):
-        ax.plot(df["time"], df[col], linewidth=0.8)
-        ax.set_title(f"ETNA — {col}")
-        ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.show()
 
 
 def plot_variable_pdfs(df, cols=None, bins=40, save_dir="figures", filename=None):
@@ -545,108 +511,6 @@ def run_teleseismic_checks(
         "t_peak_hourly": t_peak_hourly,
         "peak_diff": t_peak_1m - t_peak_hourly,
     }
-
-def plot_etna_data_with_event(
-    csv_path,
-    event_time,
-    cols=None,
-    title=None,
-    tick_interval_days=4,
-    figsize=None,
-    save_dir="figures",
-    filename=None,
-):
-    set_thesis_style()
-
-    df = pd.read_csv(csv_path, parse_dates=["time"]).set_index("time")
-
-    if isinstance(event_time, UTCDateTime):
-        event_time = pd.Timestamp(event_time.datetime, tz="UTC")
-    else:
-        event_time = pd.to_datetime(event_time, utc=True)
-
-    if "station" in df.columns:
-        df = df.drop(columns=["station"])
-
-    if cols is None:
-        cols = [c for c in ETNA_RAW_ORDER if c in df.columns]
-    else:
-        cols = [c for c in cols if c in df.columns]
-
-    if len(cols) == 0:
-        raise ValueError("No requested columns are present in the dataframe.")
-
-    if figsize is None:
-        figsize = (14, 2.05 * len(cols))
-
-    fig, axes = plt.subplots(
-        len(cols),
-        1,
-        figsize=figsize,
-        sharex=True,
-    )
-
-    if len(cols) == 1:
-        axes = [axes]
-
-    for ax, col in zip(axes, cols):
-        ax.plot(
-            df.index,
-            df[col],
-            color=THESIS_COLORS["series"],
-            linewidth=0.75,
-        )
-
-        ax.axvline(
-            event_time,
-            color=THESIS_COLORS["event"],
-            linestyle="--",
-            linewidth=1.1,
-            alpha=0.9,
-        )
-
-        panel_title, ylabel = ETNA_AXIS_LABELS.get(col, (col, "Value"))
-
-        ax.set_title(panel_title, loc="left", fontsize=10, pad=3)
-        ax.set_ylabel(ylabel, fontsize=9)
-
-        ax.grid(True, alpha=0.22, linewidth=0.6)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.tick_params(axis="both", labelsize=9)
-
-    axes[0].legend(
-        handles=[
-            plt.Line2D(
-                [0], [0],
-                color=THESIS_COLORS["event"],
-                linestyle="--",
-                linewidth=1.1,
-                label="Wenchuan earthquake",
-            )
-        ],
-        loc="upper left",
-        frameon=False,
-        fontsize=9,
-    )
-
-    locator = mdates.DayLocator(interval=tick_interval_days)
-    formatter = mdates.DateFormatter("%b %d")
-    axes[-1].xaxis.set_major_locator(locator)
-    axes[-1].xaxis.set_major_formatter(formatter)
-
-    axes[-1].set_xlabel("Time (UTC)", fontsize=10)
-
-    if title is not None:
-        fig.suptitle(title, fontsize=12, fontweight="bold", y=0.995)
-
-    plt.tight_layout()
-
-    if filename is None:
-        filename = "etna_variables"
-    _save_current_figure(fig, filename, save_dir)
-
-    plt.show()
 
 # -----------------------------------------------------------------------------
 # Clean thesis overview plots
@@ -1243,66 +1107,6 @@ def _assign_observable_numbers(df):
 
     return df.drop(columns=["source_order"])
 
-
-def _add_observable_label_panel(fig, ax_panel, df):
-    ax_panel.axis("off")
-
-    rows = df[df["source_id"] != "Etna summit"].copy()
-
-    ax_panel.text(
-        0.0,
-        1.0,
-        "Observable labels",
-        fontsize=11,
-        fontweight="bold",
-        ha="left",
-        va="top",
-    )
-
-    y = 0.94
-
-    for source_id, g in rows.groupby("source_id", sort=False):
-        source_label = SOURCE_LABELS.get(source_id, source_id)
-
-        ax_panel.text(
-            0.0,
-            y,
-            source_label,
-            fontsize=9.5,
-            fontweight="bold",
-            ha="left",
-            va="top",
-        )
-        y -= 0.035
-
-        for _, row in g.iterrows():
-            label = row.get("observable_label", row["observable"])
-
-            ax_panel.text(
-                0.02,
-                y,
-                f"{row['map_id']}. {label}",
-                fontsize=8.2,
-                ha="left",
-                va="top",
-                wrap=True,
-            )
-
-            y -= 0.050
-
-        y -= 0.018
-
-    ax_panel.text(
-        0.0,
-        0.02,
-        "Clustered markers share the same measurement source.",
-        fontsize=7.3,
-        color="0.25",
-        ha="left",
-        va="bottom",
-    )
-
-
 def plot_etna_all_variables_map(
     metadata,
     *,
@@ -1312,7 +1116,6 @@ def plot_etna_all_variables_map(
     title=None,
     offset_radius_m=1650,
     figsize=(10.5, 8.0),
-    show_label_panel=False,
     filename=None,
     save_dir="figures",
 ):
@@ -1352,19 +1155,8 @@ def plot_etna_all_variables_map(
     df = _offset_observables(df, spacing_m=offset_radius_m)
     df = _nudge_overlapping_sources(df)
 
-    if show_label_panel:
-        fig = plt.figure(figsize=(13.5, 8.0))
-        gs = fig.add_gridspec(
-            1,
-            2,
-            width_ratios=[3.8, 1.45],
-            wspace=0.035,
-        )
-        ax = fig.add_subplot(gs[0, 0])
-        ax_panel = fig.add_subplot(gs[0, 1])
-    else:
-        fig, ax = plt.subplots(figsize=figsize)
-        ax_panel = None
+    
+    fig, ax = plt.subplots(figsize=figsize)
 
     _set_extent(ax, df)
 
@@ -1466,9 +1258,6 @@ def plot_etna_all_variables_map(
     ax.set_xticks([])
     ax.set_yticks([])
     ax.grid(False)
-
-    if show_label_panel and ax_panel is not None:
-        _add_observable_label_panel(fig, ax_panel, df)
 
     fig.tight_layout(rect=[0, 0.085, 1, 1])
 
