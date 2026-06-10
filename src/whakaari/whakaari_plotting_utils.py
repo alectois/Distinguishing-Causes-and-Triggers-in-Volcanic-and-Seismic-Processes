@@ -84,7 +84,6 @@ WHAKAARI_ALL_COLS = [
     "pressure_drop",
     "SO2_flux",
     "GNSS_deformation",
-    "local_eq_count_1h",
 ]
 
 WHAKAARI_SEISMIC_COLS = [
@@ -99,19 +98,17 @@ WHAKAARI_EXTERNAL_COLS = [
     "pressure_drop",
     "SO2_flux",
     "GNSS_deformation",
-    "local_eq_count_1h",
 ]
 
 WHAKAARI_AXIS_LABELS = {
-    "hydro_2_5": ("Hydrothermal tremor RMS, 2–5 Hz", "RMS"),
+    "hydro_2_5": ("Hydrothermal tremor RMS, 2–5 Hz", "RMS velocity"),
     "ratio_4p5_8_over_8_16": ("Spectral ratio, 4.5–8 / 8–16 Hz", "Ratio"),
     "event_rate_2_5": ("STA/LTA event-rate proxy, 2–5 Hz", "Events per hour"),
-    "effect_tremor_5_15": ("Tremor response RMS (Effect), 5–15 Hz", "RMS"),
+    "effect_tremor_5_15": ("Tremor response RMS (Effect), 5–15 Hz", "RMS velocity"),
     "API": ("Antecedent precipitation index", "mm"),
     "pressure_drop": ("Atmospheric pressure drop", "hPa"),
     "SO2_flux": ("SO₂ flux", "t d⁻¹"),
     "GNSS_deformation": ("GNSS deformation", "m"),
-    "local_eq_count_1h": ("Local earthquakes, 1 h count", "Count"),
 }
 
 
@@ -236,17 +233,6 @@ def _plot_whakaari_group(
                 rasterized=False,
             )
 
-        elif col == "local_eq_count_1h":
-            mask = y > 0
-            ax.vlines(
-                df.index[mask],
-                0,
-                y[mask],
-                color=THESIS_COLORS["series"],
-                linewidth=0.58,
-                alpha=0.82,
-            )
-
         elif col == "GNSS_deformation":
             ax.plot(
                 df.index,
@@ -326,7 +312,6 @@ def plot_whakaari_thesis_figures(
     2. external / environmental variables
 
     Both PDF and PNG are saved under figures/ by default.
-    Use PDF in the thesis; PNG is only for checking.
     """
     seismic_title = "Seismic variables" if include_titles else None
     external_title = "External variables" if include_titles else None
@@ -521,11 +506,6 @@ WHAKAARI_FAMILY_STYLE = {
         "color": "#bcbd22",
         "label": "API",
     },
-    "earthquake_catalogue": {
-        "marker": "X",
-        "color": "#8c564b",
-        "label": "Local earthquake count",
-    },
 }
 
 
@@ -534,7 +514,6 @@ WHAKAARI_SOURCE_LABELS = {
     "WID01": "WID01 SO₂",
     "RGWC_RGWI": "RGWC–RGWI GNSS",
     "WHAKAARI_OPENMETEO_PROXY": "Open-Meteo",
-    "WHAKAARI_EQ_RADIUS": "EQ catalogue centre",
 }
 
 
@@ -543,13 +522,11 @@ WHAKAARI_DEFAULT_LABEL_OFFSETS = {
     "WID01": (-18, 14),
     "RGWC_RGWI": (16, 10),
     "WHAKAARI_OPENMETEO_PROXY": (12, 16),
-    "WHAKAARI_EQ_RADIUS": (14, 10),
 }
 
 
 WHAKAARI_SOURCE_DISPLAY_NUDGES_M = {
     "WHAKAARI_OPENMETEO_PROXY": (45, 90),
-    "WHAKAARI_EQ_RADIUS": (120, 35),
     "WSRZ": (0, 0),
     "WID01": (0, 0),
     "RGWC_RGWI": (0, 0),
@@ -833,7 +810,6 @@ def _assign_observable_numbers(df):
         "WID01",
         "RGWC_RGWI",
         "WHAKAARI_OPENMETEO_PROXY",
-        "WHAKAARI_EQ_RADIUS",
     ]
 
     df["source_order"] = df["source_id"].apply(

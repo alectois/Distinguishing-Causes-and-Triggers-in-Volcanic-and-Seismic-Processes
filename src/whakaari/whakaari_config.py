@@ -25,10 +25,6 @@ WHAKAARI_WAVEFORM_CONFIG = {
 
 MASTER_FREQ = "1h"
 
-# Local earthquake catalogue settings
-WHAKAARI_EQ_RADIUS_KM = 30.0
-WHAKAARI_EQ_MIN_MAGNITUDE = None
-
 #whakaari geo-metadata
 def whakaari_observable_metadata():
     rows = [
@@ -143,21 +139,6 @@ def whakaari_observable_metadata():
             "lat": WHAKAARI_LAT,
             "lon": WHAKAARI_LON,
             "plot_role": "proxy",
-        },
-
-        # Local earthquake catalogue search area
-        {
-            "case": "Whakaari",
-            "source_id": "WHAKAARI_EQ_RADIUS",
-            "source_label": "Local earthquake search radius",
-            "observable": "local_eq_count_1h",
-            "observable_label": "Local earthquake count, 1h",
-            "family": "earthquake_catalogue",
-            "spatial_type": "search_radius",
-            "lat": WHAKAARI_LAT,
-            "lon": WHAKAARI_LON,
-            "radius_km": WHAKAARI_EQ_RADIUS_KM,
-            "plot_role": "catalogue_radius",
         },
     ]
 

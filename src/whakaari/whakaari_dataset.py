@@ -26,7 +26,6 @@ def build_master_dataframe(
     start,
     end,
     master_freq="1h",
-    local_eq=None,
 ):
     master_index = pd.date_range(
         start=start,
@@ -66,12 +65,6 @@ def build_master_dataframe(
 
     frames = [wave_1h, weather_1h, so2_1h, gnss_1h]
 
-    if local_eq is not None:
-        local_eq_1h = local_eq.resample(master_freq).mean()
-        local_eq_1h = local_eq_1h.reindex(master_index)
-        local_eq_1h = local_eq_1h.fillna(0)
-        frames.append(local_eq_1h)
-
     whakaari_master = pd.concat(frames, axis=1)
     whakaari_master.index.name = "timestamp"
     return whakaari_master
@@ -95,9 +88,6 @@ def prepare_raw_analysis_dataframe(whakaari_master):
 
     if "GNSS_deformation" in whakaari_raw.columns:
         whakaari_raw["GNSS_deformation"] = whakaari_raw["GNSS_deformation"].ffill()
-
-    if "local_eq_count_1h" in whakaari_raw.columns:
-        whakaari_raw["local_eq_count_1h"] = whakaari_raw["local_eq_count_1h"].fillna(0)
 
     required_waveform_cols = [
         "hydro_2_5",
@@ -259,7 +249,6 @@ def build_final_causal_dataframe(
             "event_rate_2_5",
             "API",
             "effect_tremor_5_15",
-            "local_eq_count_1h",
         ]
 
     analysis_prepped = whakaari_raw.copy()
