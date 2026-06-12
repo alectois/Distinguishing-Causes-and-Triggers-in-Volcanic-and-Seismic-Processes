@@ -185,44 +185,59 @@ def effect_tremor_rms_5_15(trace, win_sec=600):
     return s
 
 # HF event rate in 2–5 Hz only
-def event_rate_2_5(trace,
-                      sta_sec=1.0,
-                      lta_sec=5.0,
-                      on_thres=3.0,
-                      off_thres=1.5,
-                      out_freq="1h"):
+def event_rate_2_5(
+    trace,
+    sta_sec=1.0,
+    lta_sec=5.0,
+    on_thres=3.0,
+    off_thres=1.5,
+    out_freq="1h",
+):
     tr = trace.copy()
     tr.filter("bandpass", freqmin=2.0, freqmax=5.0, corners=4, zerophase=True)
 
+    x = tr.data.astype(float)
+
+    # Do not run STA/LTA on traces containing NaNs from long gaps.
+    if np.isnan(x).any():
+        return pd.Series(dtype=float, name="event_rate_2_5")
+
     sr = tr.stats.sampling_rate
+
     cft = classic_sta_lta(
-        tr.data.astype(float),
+        x,
         int(sta_sec * sr),
-        int(lta_sec * sr)
+        int(lta_sec * sr),
     )
 
     on_off = trigger_onset(cft, on_thres, off_thres)
 
-    event_times = []
-    for on, off in on_off:
-        event_times.append(tr.stats.starttime + on / sr)
+    start = pd.to_datetime(tr.stats.starttime.datetime, utc=True).floor(out_freq)
+    end = pd.to_datetime(tr.stats.endtime.datetime, utc=True).ceil(out_freq)
 
-    if len(event_times) == 0:
-        idx = pd.date_range(
-            pd.to_datetime(tr.stats.starttime.datetime, utc=True).floor(out_freq),
-            pd.to_datetime(tr.stats.endtime.datetime, utc=True).floor(out_freq),
-            freq=out_freq,
-        )
-        return pd.Series(0, index=idx, name="event_rate_2_5")
+    # For a 24 h trace, this gives the 24 hourly bins from 00:00 to 23:00.
+    full_index = pd.date_range(
+        start=start,
+        end=end - pd.Timedelta(out_freq),
+        freq=out_freq,
+        tz="UTC",
+    )
 
-    event_times = pd.to_datetime([t.datetime for t in event_times], utc=True)
+    if len(on_off) == 0:
+        return pd.Series(0, index=full_index, name="event_rate_2_5")
+
+    event_times = pd.to_datetime(
+        [tr.stats.starttime.datetime + pd.Timedelta(seconds=on / sr) for on, _ in on_off],
+        utc=True,
+    )
 
     s = (
         pd.Series(1, index=event_times)
         .resample(out_freq)
         .sum()
-        .fillna(0)
+        .reindex(full_index, fill_value=0)
     )
+
     s.name = "event_rate_2_5"
     return s
 
