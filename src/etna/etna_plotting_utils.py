@@ -790,28 +790,24 @@ DEFAULT_LABEL_OFFSETS = {
     "ESLN": (0, -18),
 
     # Summit/proxy area
-    "ETNA_OPENMETEO_PROXY": (-8, 10),
-    "ETNA_SUMMIT_PLUME": (8, 10),
-    "Etna summit": (14, -14),
+    "ETNA_OPENMETEO_PROXY": (-10, -4),   
+    "ETNA_SUMMIT_PLUME": (0, 28),       
+    "Etna summit": (24, -18),
 
     # Gas/meteo station
     "ETNAGAS_3": (0, 40),
 }
 
 SOURCE_DISPLAY_NUDGES_M = {
-    # Separate proxy/summit sources that are geographically almost identical.
-    # These move only the displayed marker positions, not the true source coordinates.
-    "ETNA_OPENMETEO_PROXY": (-1450, 750),
-    "ETNA_SUMMIT_PLUME": (1450, 750),
+    "ETNA_OPENMETEO_PROXY": (0, 0),
+    "ETNA_SUMMIT_PLUME": (0, 0),
 
     # Keep summit at the actual summit reference point.
     "Etna summit": (0, 0),
 
-    # Leave the other sources unchanged.
     "ESLN": (0, 0),
     "ETNAGAS_3": (0, 0),
 }
-
 
 def _project_to_web_mercator(df):
     try:
@@ -1032,8 +1028,8 @@ def _annotate_sources(ax, centres, summit_df, satellite=False):
         label = SOURCE_LABELS.get(source_id, source_id)
         dx, dy = DEFAULT_LABEL_OFFSETS.get(source_id, (12, 12))
 
-        x_anchor = row["x_plot"] if "x_plot" in row else row["x"]
-        y_anchor = row["y_plot"] if "y_plot" in row else row["y"]
+        x_anchor = row["x"]
+        y_anchor = row["y"]
 
         ax.annotate(
             label,
