@@ -244,7 +244,7 @@ def create_etna_final_dataset(
         if c not in exclude_from_scaling
     ]
 
-    final_scaled = final[["time", "station"]].copy()
+    final_scaled = final[["time"]].copy()
 
     for col in scale_cols:
         final_scaled[col + "_scaled"] = robust_scale_series(scale_input[col])
