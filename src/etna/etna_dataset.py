@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 import requests
+from sklearn.preprocessing import StandardScaler
 
 def extract_plume_co2so2_xls(xls_path, sheet_index=2, time_col=1, ratio_col=10):
     wb = xlrd.open_workbook(xls_path)
@@ -84,16 +85,83 @@ def merge_data(base, ext, base_time, ext_time, value_cols, tolerance_hours):
 
     return merged
 
-def robust_scale_series(s: pd.Series) -> pd.Series:
-    s = pd.to_numeric(s, errors="coerce")
-    med = s.median()
-    mad = np.median(np.abs(s - med))
-    if pd.isna(mad) or mad == 0:
-        std = s.std()
-        if pd.isna(std) or std == 0:
-            return pd.Series(np.nan, index=s.index)
-        return (s - s.mean()) / std
-    return (s - med) / (1.4826 * mad)
+def _numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
+    return pd.to_numeric(df[col], errors="coerce")
+
+
+def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply neutral, family-aware transformations before StandardScaler.
+
+    The goal is to put heterogeneous
+    observables on numerically comparable scales for HMML/PCMCI and the
+    Cause--Trigger split.
+    """
+    transformed = final.copy()
+
+    # Positive, right-skewed variables.
+    log1p_cols = [
+        "API",
+        "CO2_3",
+        "CO2_SO2",
+    ]
+
+    # Signed or burst-like variables.
+    # The seismic variables are already log1p waveform amplitudes, but they are
+    # still extremely burst-dominated in the current Etna data. asinh is a
+    # safe monotone compression.
+    asinh_cols = [
+        "teleseismic",
+        "background_seismic",
+        "effect_seismic",
+        "pressure_drop",
+    ]
+
+    for col in log1p_cols:
+        if col in transformed.columns:
+            transformed[col] = np.log1p(
+                _numeric_series(transformed, col).clip(lower=0)
+            )
+
+    for col in asinh_cols:
+        if col in transformed.columns:
+            transformed[col] = np.arcsinh(
+                _numeric_series(transformed, col)
+            )
+
+    return transformed
+
+
+def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    StandardScaler-compatible z-standardization:
+        mean 0, variance 1.
+
+    Raises an error for constant or invalid columns instead of silently creating
+    unusable model input.
+    """
+    numeric = df.apply(pd.to_numeric, errors="coerce")
+
+    if numeric.isna().any().any():
+        missing = numeric.isna().sum()
+        missing = missing[missing > 0].sort_values(ascending=False)
+        raise ValueError(f"Cannot standardize because transformed data contain NaNs:\n{missing}")
+
+    constant_cols = [
+        col for col in numeric.columns
+        if numeric[col].nunique(dropna=True) <= 1
+    ]
+    if constant_cols:
+        raise ValueError(f"Cannot standardize constant columns: {constant_cols}")
+
+    scaler = StandardScaler()
+    scaled = scaler.fit_transform(numeric)
+
+    return pd.DataFrame(
+        scaled,
+        index=numeric.index,
+        columns=numeric.columns,
+    )
 
 def create_etna_final_dataset(
     wave_df: pd.DataFrame,
@@ -208,46 +276,26 @@ def create_etna_final_dataset(
     # final sorted dataframe
     final = base.sort_values("time").reset_index(drop=True)
 
-    # ---- final transformation + robust scaling ----
+    # ---- final transformation + StandardScaler ----
     # Raw variables remain unchanged in final_raw.
     # The scaled dataset is built from a transformed copy.
 
-    log_transform_cols = [
-        # rainfall / hydrological memory
-        "API",
-
-        # positive gas / plume variables; inspect distributions, but these are
-        # usually right-skewed enough to justify log1p
-        "CO2_3",
-        "CO2_SO2",
-    ]
-
-    # we do NOT log-transform:
-    # - teleseismic, background_seismic, effect_seismic
-    #   because they are already log-transformed waveform amplitudes.
-    # - pressure_drop because it is signed.
-    # - AirTemp_3 because temperature is not a positive burst variable.
-    # - WindSpeed unless diagnostics show strong skewness.
-
     exclude_from_scaling = ["station", "time"]
 
-    scale_input = final.copy()
-
-    for col in log_transform_cols:
-        if col in scale_input.columns:
-            scale_input[col] = np.log1p(
-                pd.to_numeric(scale_input[col], errors="coerce").clip(lower=0)
-            )
+    scale_input = transform_for_cause_trigger_scaling(final)
 
     scale_cols = [
         c for c in scale_input.columns
         if c not in exclude_from_scaling
     ]
 
+    scale_input_numeric = scale_input[scale_cols].copy()
+    scaled_numeric = standard_scale_dataframe(scale_input_numeric)
+
     final_scaled = final[["time"]].copy()
 
     for col in scale_cols:
-        final_scaled[col + "_scaled"] = robust_scale_series(scale_input[col])
+        final_scaled[col + "_scaled"] = scaled_numeric[col]
 
     if final.isna().any().any():
         print("Warning: final dataset contains missing values.")

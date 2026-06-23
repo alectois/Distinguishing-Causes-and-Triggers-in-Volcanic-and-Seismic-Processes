@@ -660,7 +660,6 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         causes = [p for p in discovery.parents if p != config.y_t] # Exclude target variable from causes
 
         result["autoregressive_parent_full_interval"] = config.y_t in discovery.parents
-
         result["C"] = causes
         result["backend"] = config.causal_backend
         result["causal_lags"] = discovery.lags
@@ -668,6 +667,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         result["full_interval_contemporaneous_links"] = discovery.scores.get(
             "_contemporaneous_links", {}
         )
+        result["stop_reason"] = "No valid I1/I2 split with |mean(y)_I2| > |mean(y)_I1|."
         return result
 
     I_1 = X.iloc[:split_index]
@@ -744,6 +744,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     result["T_candidates"] = T_candidates
 
     if len(B_2) < 2:
+        result["stop_reason"] = "Not enough B2 variables for cause selection."
         return result
         
 

@@ -9,7 +9,7 @@ ETNA_WAVEFORM_CONFIG = {
     "stations": ["ESLN"],
 
     "start": UTCDateTime("2008-04-12T00:00:00"),
-    "end": UTCDateTime("2008-05-14T00:00:00"),
+    "end": UTCDateTime("2008-05-16T00:00:00"),
 
     # process in daily chunks, but pad each day for filtering stability
     "chunk_sec": 24 * 3600,
