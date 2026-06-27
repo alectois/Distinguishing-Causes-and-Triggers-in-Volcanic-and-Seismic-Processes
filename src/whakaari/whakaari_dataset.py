@@ -2,20 +2,117 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
 
-def robust_scale_series(s: pd.Series) -> pd.Series:
-    s = pd.to_numeric(s, errors="coerce")
+def _numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
+    return pd.to_numeric(df[col], errors="coerce")
 
-    med = s.median()
-    mad = np.median(np.abs(s - med))
 
-    if pd.isna(mad) or mad == 0:
-        std = s.std()
-        if pd.isna(std) or std == 0:
-            return pd.Series(np.nan, index=s.index)
-        return (s - s.mean()) / std
+def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
+    """
+    Log-transform strictly non-negative physical amplitudes/ratios.
 
-    return (s - med) / (1.4826 * mad)
+    This is better than log1p for seismic RMS values because RMS velocities
+    can be much smaller than 1, where log1p(x) is almost identical to x.
+    """
+    x = pd.to_numeric(s, errors="coerce")
+
+    if (x < 0).any():
+        raise ValueError(f"safe_log_positive received negative values in {s.name!r}")
+
+    positive = x[x > 0]
+
+    if eps is None:
+        if len(positive) == 0:
+            eps = 1e-30
+        else:
+            eps = max(float(positive.quantile(0.01)) * 0.1, 1e-30)
+
+    return np.log(x.clip(lower=0) + eps)
+
+
+def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
+    """
+    Apply neutral, variable-family transformations before StandardScaler.
+
+    This makes heterogeneous
+    observables numerically comparable for HMML/PCMCI and the Cause--Trigger
+    split/F-test.
+    """
+    transformed = final.copy()
+
+    # Positive amplitude / ratio variables.
+    # Use log, not log1p, because waveform RMS values are often << 1.
+    log_positive_cols = [
+        "hydro_2_5",
+        "effect_tremor_5_15",
+        "ratio_4p5_8_over_8_16",
+    ]
+
+    # Positive count / accumulation / flux variables.
+    log1p_cols = [
+        "event_rate_2_5",
+        "SO2_flux",
+        "API",
+    ]
+
+    # Signed burst-like variables.
+    asinh_cols = [
+        "pressure_drop",
+    ]
+
+    for col in log_positive_cols:
+        if col in transformed.columns:
+            transformed[col] = safe_log_positive(transformed[col])
+
+    for col in log1p_cols:
+        if col in transformed.columns:
+            transformed[col] = np.log1p(
+                _numeric_series(transformed, col).clip(lower=0)
+            )
+
+    for col in asinh_cols:
+        if col in transformed.columns:
+            transformed[col] = np.arcsinh(
+                _numeric_series(transformed, col)
+            )
+
+    return transformed
+
+
+def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    StandardScaler-compatible z-standardization:
+        mean 0, variance 1.
+
+    Raises an error for NaNs or constant columns instead of silently producing
+    unusable causal-model input.
+    """
+    numeric = df.apply(pd.to_numeric, errors="coerce")
+
+    if numeric.isna().any().any():
+        missing = numeric.isna().sum()
+        missing = missing[missing > 0].sort_values(ascending=False)
+        raise ValueError(
+            "Cannot standardize because transformed data contain NaNs:\n"
+            f"{missing}"
+        )
+
+    constant_cols = [
+        col for col in numeric.columns
+        if numeric[col].nunique(dropna=True) <= 1
+    ]
+    if constant_cols:
+        raise ValueError(f"Cannot standardize constant columns: {constant_cols}")
+
+    scaler = StandardScaler()
+    scaled = scaler.fit_transform(numeric)
+
+    return pd.DataFrame(
+        scaled,
+        index=numeric.index,
+        columns=numeric.columns,
+    )
 
 
 def build_master_dataframe(
@@ -74,8 +171,12 @@ def prepare_raw_analysis_dataframe(whakaari_master):
     whakaari_raw = whakaari_master.copy()
 
     if "SO2_flux" in whakaari_raw.columns:
-        # Fill only short SO₂ gaps; long gaps remain NaN.
-        whakaari_raw["SO2_flux"] = whakaari_raw["SO2_flux"].interpolate(limit=3)
+        # SO2 is sparse/irregular compared with the hourly master grid.
+        # For the causal model, we construct a continuous hourly proxy by time interpolation.
+        whakaari_raw["SO2_flux"] = (
+            pd.to_numeric(whakaari_raw["SO2_flux"], errors="coerce")
+            .interpolate(method="time", limit_direction="both")
+        )
 
     if "API" in whakaari_raw.columns:
         whakaari_raw["API"] = whakaari_raw["API"].interpolate()
@@ -231,41 +332,43 @@ def preprocessing_report(rawest_df, prepared_df):
     return report
 
 def build_final_causal_dataframe(
-    whakaari_raw,
-    log_transform_cols=None,
+    whakaari_raw: pd.DataFrame,
 ):
     """
-    Prepare the scaled Whakaari dataset for causal analysis.
+    Prepare the standardized Whakaari dataset for causal analysis.
 
-    Raw variables are not modified. For the scaled dataset:
-    - non-negative, bursty/skewed variables are log1p-transformed;
-    - all variables are then robustly scaled using median/MAD.
+    Raw variables are not modified. For the model dataset:
+    - positive seismic amplitude/ratio variables are log-transformed;
+    - count/flux/accumulation variables are log1p-transformed;
+    - signed burst-like variables are asinh-transformed;
+    - all numeric variables are then standardized using StandardScaler.
+
+    The returned dataframe keeps the old column naming convention:
+        original_name + "_scaled"
     """
 
-    if log_transform_cols is None:
-        log_transform_cols = [
-            "SO2_flux",
-            "hydro_2_5",
-            "event_rate_2_5",
-            "API",
-            "effect_tremor_5_15",
-        ]
+    analysis_input = whakaari_raw.copy()
 
-    analysis_prepped = whakaari_raw.copy()
+    # Keep only numeric candidate variables.
+    # This preserves the principle that all numeric observables are eligible.
+    feature_cols = [
+        c for c in analysis_input.columns
+        if pd.api.types.is_numeric_dtype(analysis_input[c])
+    ]
 
-    # Log-transform only non-negative skewed variables.
-    # Do not include pressure_drop or GNSS_deformation because they are signed.
-    for col in log_transform_cols:
-        if col in analysis_prepped.columns:
-            analysis_prepped[col] = np.log1p(
-                pd.to_numeric(analysis_prepped[col], errors="coerce").clip(lower=0)
-            )
+    if len(feature_cols) == 0:
+        raise ValueError("No numeric columns found for Whakaari causal dataframe.")
 
-    feature_cols = analysis_prepped.columns.tolist()
+    transformed = transform_for_cause_trigger_scaling(
+        analysis_input[feature_cols]
+    )
 
-    whakaari_final = pd.DataFrame(index=analysis_prepped.index)
+    scaled_numeric = standard_scale_dataframe(transformed)
+
+    whakaari_final = pd.DataFrame(index=analysis_input.index)
+
     for col in feature_cols:
-        whakaari_final[col + "_scaled"] = robust_scale_series(analysis_prepped[col])
+        whakaari_final[col + "_scaled"] = scaled_numeric[col]
 
     return whakaari_final
 
