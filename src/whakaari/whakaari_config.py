@@ -1,7 +1,7 @@
 import pandas as pd
 
 WHAKAARI_START = "2019-10-01"
-WHAKAARI_END = "2019-12-10"
+WHAKAARI_END = "2019-12-12"
 
 WHAKAARI_ERUPTION_TIME = pd.Timestamp("2019-12-09 01:11", tz="UTC")
 
