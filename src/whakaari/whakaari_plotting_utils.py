@@ -962,3 +962,191 @@ def plot_whakaari_all_variables_map(
     variable_table = _make_source_variable_table(df)
 
     return fig, ax, variable_table
+
+def plot_loglog_distributions(
+    df,
+    cols=None,
+    *,
+    axis_labels=None,
+    bins=35,
+    filename=None,
+    save_dir="figures",
+    formats=("pdf", "png"),
+    title=None,
+    ncols=3,
+    fig_width_per_col=4.7,
+    panel_height=3.0,
+    min_positive_count=5,
+):
+    """
+    Plot log-binned empirical densities on log-log axes for all requested variables.
+
+    Non-positive values cannot appear on true log axes, so they are excluded
+    variable-by-variable and reported. Variables with too few positive values
+    still get a panel explaining why they were skipped.
+    """
+    set_thesis_style()
+
+    if axis_labels is None:
+        axis_labels = {}
+
+    if cols is None:
+        cols = [
+            c for c in df.columns
+            if c not in ["time", "timestamp", "station"]
+            and pd.api.types.is_numeric_dtype(df[c])
+        ]
+
+    cols = [c for c in cols if c in df.columns]
+
+    if len(cols) == 0:
+        print("No requested numeric columns available for log-log plotting.")
+        return None, None, pd.DataFrame()
+
+    nrows = int(np.ceil(len(cols) / ncols))
+
+    fig, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(fig_width_per_col * ncols, panel_height * nrows),
+        squeeze=False,
+    )
+    axes = axes.ravel()
+
+    report_rows = []
+
+    for ax, col in zip(axes, cols):
+        x_all = pd.to_numeric(df[col], errors="coerce").dropna()
+        x_pos = x_all[x_all > 0]
+
+        n_total = int(len(x_all))
+        n_positive = int(len(x_pos))
+        n_nonpositive = int((x_all <= 0).sum())
+        n_unique_positive = int(x_pos.nunique())
+
+        report_rows.append({
+            "variable": col,
+            "n_total_nonmissing": n_total,
+            "n_positive_used": n_positive,
+            "n_nonpositive_dropped": n_nonpositive,
+            "positive_fraction": n_positive / n_total if n_total else np.nan,
+            "min_positive": float(x_pos.min()) if n_positive else np.nan,
+            "max_positive": float(x_pos.max()) if n_positive else np.nan,
+            "n_unique_positive": n_unique_positive,
+        })
+
+        panel_title, unit_label = axis_labels.get(col, (col, "Value"))
+
+        if n_positive < min_positive_count or n_unique_positive < 2:
+            ax.axis("off")
+            ax.text(
+                0.02,
+                0.72,
+                f"{panel_title}\n\n"
+                f"Not enough positive values for log-log axes\n"
+                f"positive n = {n_positive}\n"
+                f"unique positive = {n_unique_positive}\n"
+                f"non-positive dropped = {n_nonpositive}",
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                fontsize=9,
+            )
+            continue
+
+        xmin = float(x_pos.min())
+        xmax = float(x_pos.max())
+
+        if xmin <= 0 or xmax <= xmin:
+            ax.axis("off")
+            ax.text(
+                0.02,
+                0.72,
+                f"{panel_title}\n\nSkipped: invalid positive range.",
+                transform=ax.transAxes,
+                ha="left",
+                va="top",
+                fontsize=9,
+            )
+            continue
+
+        edges = np.geomspace(xmin, xmax, bins + 1)
+        counts, edges = np.histogram(x_pos, bins=edges, density=True)
+
+        centres = np.sqrt(edges[:-1] * edges[1:])
+        mask = counts > 0
+
+        ax.plot(
+            centres[mask],
+            counts[mask],
+            marker="o",
+            markersize=3.0,
+            linewidth=0.85,
+            color=THESIS_COLORS["series"],
+        )
+
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_title(panel_title, loc="left")
+        ax.set_xlabel(unit_label)
+        ax.set_ylabel("Density")
+        ax.grid(True, which="both", alpha=0.14, linewidth=0.42)
+
+        ax.text(
+            0.98,
+            0.95,
+            f"positive n={n_positive}\n≤0 dropped={n_nonpositive}",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=7.6,
+            color="0.30",
+        )
+
+    for ax in axes[len(cols):]:
+        ax.axis("off")
+
+    if title is not None:
+        fig.suptitle(title, y=1.01, fontsize=11.0, fontweight="bold")
+
+    plt.tight_layout()
+
+    _save_current_figure(
+        fig,
+        filename=filename,
+        save_dir=save_dir,
+        formats=formats,
+    )
+
+    plt.show()
+
+    report = pd.DataFrame(report_rows)
+    return fig, axes[:len(cols)], report
+
+def plot_whakaari_loglog_distributions(
+    df,
+    cols=None,
+    *,
+    bins=35,
+    filename="whakaari_loglog_all_raw_variables",
+    save_dir="figures",
+):
+    """
+    Whakaari all-variable log-log distribution diagnostic.
+
+    Uses all raw Whakaari variables by default. Variables with zeros or negative
+    values are represented by their positive subset only, with exclusions
+    reported in the returned table.
+    """
+    if cols is None:
+        cols = [c for c in WHAKAARI_ALL_COLS if c in df.columns]
+
+    return plot_loglog_distributions(
+        df=df,
+        cols=cols,
+        axis_labels=WHAKAARI_AXIS_LABELS,
+        bins=bins,
+        filename=filename,
+        save_dir=save_dir,
+        title="",
+    )
