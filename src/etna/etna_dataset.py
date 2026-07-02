@@ -92,7 +92,7 @@ def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
     """
     Log-transform strictly non-negative physical amplitudes.
 
-    This is better than log1p for seismic RMS values because RMS velocities
+    better than log1p for seismic RMS values because RMS velocities
     can be much smaller than 1, where log1p(x) is almost identical to x.
     """
     x = pd.to_numeric(s, errors="coerce")
