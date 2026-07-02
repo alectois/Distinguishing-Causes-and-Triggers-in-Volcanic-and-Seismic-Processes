@@ -37,9 +37,18 @@ THESIS_COLORS = {
 }
 
 ETNA_AXIS_LABELS = {
-    "teleseismic": ("Teleseismic energy, 0.03–0.30 Hz", "log1p RMS velocity"),
-    "background_seismic": ("Etna tremor/state energy, 0.80–2.30 Hz", "log1p RMS velocity"),
-    "effect_seismic": ("High-frequency seismic response (Effect), 4–8 Hz", "log1p RMS velocity"),
+    "teleseismic": (
+        "Teleseismic energy, 0.03–0.30 Hz",
+        "RMS velocity"
+    ),
+    "background_seismic": (
+        "Etna tremor/state energy, 0.80–2.30 Hz",
+        "RMS velocity"
+    ),
+    "effect_seismic": (
+        "High-frequency seismic response (Effect), 4–8 Hz",
+        "RMS velocity"
+    ),
     "CO2_3": ("Soil CO₂ concentration", "%"),
     "AirTemp_3": ("Air temperature", "°C"),
     "API": ("Antecedent precipitation index", "mm"),
@@ -47,15 +56,24 @@ ETNA_AXIS_LABELS = {
     "WindSpeed": ("Wind speed", "m s⁻¹"),
     "CO2_SO2": ("Plume CO₂/SO₂ ratio", "Molar ratio"),
     
-    "teleseismic_scaled": ("Teleseismic energy, 0.03–0.30 Hz", "Robust-scaled log1p RMS"),
-    "background_seismic_scaled": ("Etna tremor/state energy, 0.80–2.30 Hz", "Robust-scaled log1p RMS"),
-    "effect_seismic_scaled": ("High-frequency seismic response (Effect), 4–8 Hz", "Robust-scaled log1p RMS"),
-    "CO2_3_scaled": ("Soil CO₂ concentration", "%, Robust-scaled"),
-    "AirTemp_3_scaled": ("Air temperature", "°C, Robust-scaled"),
-    "API_scaled": ("Antecedent precipitation index", "Robust-scaled"),
-    "pressure_drop_scaled": ("Atmospheric pressure drop", "hPa, Robust-scaled"),
-    "WindSpeed_scaled": ("Wind speed", "m s⁻¹, Robust-scaled"),
-    "CO2_SO2_scaled": ("Plume CO₂/SO₂ ratio", "Molar ratio, Robust-scaled"),
+    "teleseismic_scaled": (
+        "Teleseismic energy, 0.03–0.30 Hz",
+        "Standardized log RMS"
+    ),
+    "background_seismic_scaled": (
+        "Etna tremor/state energy, 0.80–2.30 Hz",
+        "Standardized log RMS"
+    ),
+    "effect_seismic_scaled": (
+        "High-frequency seismic response (Effect), 4–8 Hz",
+        "Standardized log RMS"
+    ),
+    "CO2_3_scaled": ("Soil CO₂ concentration", "Standardized transformed value"),
+    "AirTemp_3_scaled": ("Air temperature", "Standardized value"),
+    "API_scaled": ("Antecedent precipitation index", "Standardized transformed value"),
+    "pressure_drop_scaled": ("Atmospheric pressure drop", "Standardized transformed value"),
+    "WindSpeed_scaled": ("Wind speed", "Standardized value"),
+    "CO2_SO2_scaled": ("Plume CO₂/SO₂ ratio", "Standardized transformed value"),
     
 }
 
@@ -721,7 +739,7 @@ def plot_etna_thesis_figures(
         tick_interval_days=4,
         line_width=0.70,
         shared_y=True,   # shared label only
-        common_y_label="log1p RMS velocity",
+        common_y_label="RMS velocity",
     )
 
     external = _plot_etna_group(
@@ -1433,13 +1451,6 @@ def plot_etna_loglog_distributions(
     filename="etna_loglog_all_raw_variables",
     save_dir="figures",
 ):
-    """
-    Etna all-variable log-log distribution diagnostic.
-
-    Uses all raw Etna variables by default. Variables with zeros or negative
-    values are represented by their positive subset only, with exclusions
-    reported in the returned table.
-    """
     if cols is None:
         cols = [c for c in ETNA_RAW_ORDER if c in df.columns]
 

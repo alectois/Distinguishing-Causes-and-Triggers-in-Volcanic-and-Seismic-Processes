@@ -216,6 +216,10 @@ def load_weather_vars(
         raise ValueError(f"Weather variables contain NaNs after processing:\n{missing}")
 
     if cache_path is not None:
-        weather_out.reset_index().to_csv(cache_path, index=False)
+        weather_out.reset_index().to_csv(
+            cache_path,
+            index=False,
+            float_format="%.17g",
+        )
 
     return weather_out

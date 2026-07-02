@@ -88,34 +88,60 @@ def merge_data(base, ext, base_time, ext_time, value_cols, tolerance_hours):
 def _numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce")
 
+def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
+    """
+    Log-transform strictly non-negative physical amplitudes.
+
+    This is better than log1p for seismic RMS values because RMS velocities
+    can be much smaller than 1, where log1p(x) is almost identical to x.
+    """
+    x = pd.to_numeric(s, errors="coerce")
+
+    if (x < 0).any():
+        raise ValueError(f"safe_log_positive received negative values in {s.name!r}")
+
+    positive = x[x > 0]
+
+    if eps is None:
+        if len(positive) == 0:
+            eps = 1e-30
+        else:
+            eps = max(float(positive.quantile(0.01)) * 0.1, 1e-30)
+
+    return np.log(x.clip(lower=0) + eps)
 
 def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     """
-    Apply neutral, family-aware transformations before StandardScaler.
+    Apply family-aware transformations before StandardScaler.
 
-    The goal is to put heterogeneous
-    observables on numerically comparable scales for HMML/PCMCI and the
-    Cause--Trigger split.
+    final_raw remains unchanged. This transformed copy is used only for
+    constructing etna_final.csv.
     """
     transformed = final.copy()
 
-    # Positive, right-skewed variables.
+    # Positive waveform-amplitude variables.
+    # Use log, not log1p, because RMS velocities can be much smaller than 1.
+    log_positive_cols = [
+        "teleseismic",
+        "background_seismic",
+        "effect_seismic",
+    ]
+
+    # Positive accumulation / gas variables.
     log1p_cols = [
         "API",
         "CO2_3",
         "CO2_SO2",
     ]
 
-    # Signed or burst-like variables.
-    # The seismic variables are already log1p waveform amplitudes, but they are
-    # still extremely burst-dominated in the current Etna data. asinh is a
-    # safe monotone compression.
+    # Signed burst-like variables.
     asinh_cols = [
-        "teleseismic",
-        "background_seismic",
-        "effect_seismic",
         "pressure_drop",
     ]
+
+    for col in log_positive_cols:
+        if col in transformed.columns:
+            transformed[col] = safe_log_positive(transformed[col])
 
     for col in log1p_cols:
         if col in transformed.columns:
@@ -194,7 +220,13 @@ def create_etna_final_dataset(
     df["time"] = pd.to_datetime(df["time"], utc=True, errors="coerce")
     df = df.dropna(subset=["time"]).sort_values("time").reset_index(drop=True)
 
-    for c in ["background_seismic", "teleseismic", "effect_seismic"]:
+    seismic_cols = [
+        "teleseismic",
+        "background_seismic",
+        "effect_seismic",
+    ]
+
+    for c in seismic_cols:
         if c not in df.columns:
             raise KeyError(f"Missing '{c}' in waveform dataframe.")
         df[c] = pd.to_numeric(df[c], errors="coerce")
@@ -204,21 +236,15 @@ def create_etna_final_dataset(
     if end_time is not None:
         df = df[df["time"] < pd.to_datetime(end_time, utc=True)]
 
-    # keep raw waveform variables
-    base = df[[
+    base_cols = [
         "time",
-        "teleseismic",
-        "background_seismic",
-        "effect_seismic",
-    ]].copy()
+        *seismic_cols,
+    ]
+
+    base = df[base_cols].copy()
 
     base["station"] = station_name
-    base = base[[
-        "station", "time",
-        "teleseismic",
-        "background_seismic",
-        "effect_seismic",
-    ]]
+    base = base[["station", *base_cols]]
 
     # ---- ETNAGAS ----
     if etnagas_df is not None and etnagas_cols:
@@ -302,6 +328,28 @@ def create_etna_final_dataset(
         print(final.isna().mean().sort_values())
 
     final_raw = final.copy()
+
+    unexpected_raw_suffix_cols = [
+        c for c in final_raw.columns
+        if c.endswith("_raw")
+    ]
+
+    if unexpected_raw_suffix_cols:
+        raise ValueError(
+            "etna_raw should not contain *_raw columns after the Etna-Whakaari "
+            f"schema cleanup. Found: {unexpected_raw_suffix_cols}"
+        )
+
+    non_scaled_model_cols = [
+        c for c in final_scaled.columns
+        if c != "time" and not c.endswith("_scaled")
+    ]
+
+    if non_scaled_model_cols:
+        raise ValueError(
+            "etna_final should contain only 'time' and *_scaled variables. "
+            f"Found unexpected columns: {non_scaled_model_cols}"
+        )
 
     if output_dir is not None:
         output_dir = Path(output_dir)
