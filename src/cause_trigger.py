@@ -688,10 +688,44 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
 
     B_2 = list(discovery_2.parents)
 
+    # Raw backend parents may include the target itself as an autoregressive parent.
+    B_1_raw = list(discovery_1.parents)
+    B_2_raw = list(discovery_2.parents)
+
+    # Cause--Trigger candidate sets must exclude the target.
+    # The target autoregressive parent is diagnostically useful, but it is not a
+    # valid cause or trigger candidate in this thesis interpretation.
+    B_1 = [v for v in B_1_raw if v != config.y_t]
+    B_2 = [v for v in B_2_raw if v != config.y_t]
+
+    result["autoregressive_parent_in_B2"] = config.y_t in B_2_raw
+    result["backend"] = config.causal_backend
+    result["causal_lags"] = discovery_2.lags
+    result["causal_scores"] = discovery_2.scores
+    result["contemporaneous_links"] = discovery_2.scores.get(
+        "_contemporaneous_links", {}
+    )
+
+    # Store both raw and CT-valid parent sets.
+    result["B_1_raw"] = B_1_raw
+    result["B_2_raw"] = B_2_raw
+    result["B_1"] = B_1
+    result["B_2"] = B_2
+
+    # Need at least two non-target variables: one candidate trigger and one
+    # remaining candidate cause after removing the trigger.
+    if len(B_2) < 2:
+        result["refit_metadata"] = {
+            "reason": "not enough non-target B2 variables",
+            "raw_B2": B_2_raw,
+            "non_target_B2": B_2,
+        }
+        result["stop_reason"] = (
+            "Not enough non-target B2 variables for cause-trigger testing."
+        )
+        return result
+
     if config.v_weighting == "backend":
-        # HMML paper baseline: use backend-provided beta_star.
-        # For PCMCI/PCMCI+, this is only a diagnostic/sensitivity option,
-        # because their values are not structural regression coefficients.
         beta_2 = discovery_2.beta
         result_refit_metadata = {
             "v_weighting": "backend",
@@ -699,8 +733,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         }
 
     elif config.v_weighting == "refit":
-        # PCMCI/PCMCI+ thesis extension:
-        # use backend for B2, then estimate beta_star by regression on selected parents.
+        # Important: refit only on non-target B2 parents.
         beta_2, result_refit_metadata = refit_beta_for_selected_parents(
             X=I_2,
             y_t=config.y_t,
@@ -721,24 +754,13 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
             "Use 'backend', or 'refit'."
         )
 
-    result["autoregressive_parent_in_B2"] = config.y_t in B_2
-    result["backend"] = config.causal_backend
-    result["causal_lags"] = discovery_2.lags
-    result["causal_scores"] = discovery_2.scores
-    result["contemporaneous_links"] = discovery_2.scores.get(
-        "_contemporaneous_links", {}
-    )
-    result["B_1"] = list(discovery_1.parents)
-    result["B_2"] = B_2
     result["refit_metadata"] = result_refit_metadata
 
-    # Trigger candidates
+    # Trigger candidates: x_s ∈ B2, x_s != y_t already guaranteed,
+    # and |E(x_s)|_I2 > |E(x_s)|_I1.
     T_candidates = []
-    # x_s ∈ B2, x_s ≠ y_t, and |E(x_s)|_I2 > |E(x_s)|_I1
     for col in B_2:
-        if col == config.y_t: # Exclude target variable from trigger candidates
-            continue
-        if abs(I_2[col].mean()) > abs(I_1[col].mean()): # Alg. line 10: |E(x_s^t)|_I2 > |E(x_s^t)|_I1
+        if abs(I_2[col].mean()) > abs(I_1[col].mean()):
             T_candidates.append(col)
 
     result["T_candidates"] = T_candidates
@@ -751,7 +773,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     for x_s in T_candidates:
         B_2_without_trigger = [
             v for v in B_2
-            if v != x_s and v != config.y_t
+            if v != x_s
         ]
 
         if len(B_2_without_trigger) == 0:
@@ -763,7 +785,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
             })
             continue
 
-        # cause selection: (line 14 in Alg.)
+        # cause selection:
         # x_u := arg max_k |E(x_k)_I1 - E(x_k)_I2|
         # where x_k is selected from the B2-based variable set.
         mu_before = I_1[B_2_without_trigger].mean()
