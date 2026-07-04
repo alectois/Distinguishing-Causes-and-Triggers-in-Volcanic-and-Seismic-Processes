@@ -384,7 +384,8 @@ def save_whakaari_datasets(
         Filled, analysis-ready dataframe in physical units.
 
     whakaari_final:
-        Log-transformed and robust-scaled dataframe for the causal algorithm.
+        Transformed and mean-zero/unit-variance standardized dataframe
+        for the causal algorithm.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
