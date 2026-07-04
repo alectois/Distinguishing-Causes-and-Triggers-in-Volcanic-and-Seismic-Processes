@@ -132,15 +132,8 @@ def build_master_dataframe(
     )
 
     wave_1h = wave.resample(master_freq).mean()
-
-    weather_1h = (
-        weather_vars
-        .resample(master_freq)
-        .interpolate(limit_direction="both")
-    )
-
+    weather_1h = weather_vars.resample(master_freq).mean()
     so2_1h = so2.resample(master_freq).mean()
-
     gnss_1h = (
         gnss
         .resample("1D")
@@ -152,12 +145,10 @@ def build_master_dataframe(
     wave_1h = wave_1h.reindex(master_index)
     weather_1h = weather_1h.reindex(master_index)
     so2_1h = so2_1h.reindex(master_index)
-
     gnss_1h = (
         gnss_1h
         .reindex(master_index)
         .ffill()
-        .bfill()
     )
 
     frames = [wave_1h, weather_1h, so2_1h, gnss_1h]
@@ -171,24 +162,35 @@ def prepare_raw_analysis_dataframe(whakaari_master):
     whakaari_raw = whakaari_master.copy()
 
     if "SO2_flux" in whakaari_raw.columns:
-        # SO2 is sparse/irregular compared with the hourly master grid.
-        # For the causal model, we construct a continuous hourly proxy by time interpolation.
+        # SO2 is sparse and slow-changing.
+        # Prepare it as a past-only step function:
+        # each observed value is carried forward until the next observation.
         whakaari_raw["SO2_flux"] = (
             pd.to_numeric(whakaari_raw["SO2_flux"], errors="coerce")
-            .interpolate(method="time", limit_direction="both")
+            .clip(lower=0)
+            .ffill()
         )
 
+        # Remove only the part before the first real SO2 observation.
+        whakaari_raw = whakaari_raw.dropna(subset=["SO2_flux"])
+
     if "API" in whakaari_raw.columns:
-        whakaari_raw["API"] = whakaari_raw["API"].interpolate()
+        whakaari_raw["API"] = (
+            pd.to_numeric(whakaari_raw["API"], errors="coerce")
+            .ffill(limit=1)
+        )
 
     if "pressure_drop" in whakaari_raw.columns:
-        whakaari_raw["pressure_drop"] = whakaari_raw["pressure_drop"].fillna(0)
-
-    if "event_rate_2_5" in whakaari_raw.columns:
-        whakaari_raw["event_rate_2_5"] = whakaari_raw["event_rate_2_5"].fillna(0)
+        whakaari_raw["pressure_drop"] = (
+            pd.to_numeric(whakaari_raw["pressure_drop"], errors="coerce")
+            .ffill(limit=1)
+        )
 
     if "GNSS_deformation" in whakaari_raw.columns:
-        whakaari_raw["GNSS_deformation"] = whakaari_raw["GNSS_deformation"].ffill()
+        whakaari_raw["GNSS_deformation"] = (
+            pd.to_numeric(whakaari_raw["GNSS_deformation"], errors="coerce")
+            .ffill()
+        )
 
     required_waveform_cols = [
         "hydro_2_5",
@@ -333,28 +335,24 @@ def preprocessing_report(rawest_df, prepared_df):
 
 def build_final_causal_dataframe(
     whakaari_raw: pd.DataFrame,
+    include_columns: list[str] | None = None,
+    drop_columns: list[str] | None = None,
 ):
-    """
-    Prepare the standardized Whakaari dataset for causal analysis.
-
-    Raw variables are not modified. For the model dataset:
-    - positive seismic amplitude/ratio variables are log-transformed;
-    - count/flux/accumulation variables are log1p-transformed;
-    - signed burst-like variables are asinh-transformed;
-    - all numeric variables are then standardized using StandardScaler.
-
-    The returned dataframe keeps the old column naming convention:
-        original_name + "_scaled"
-    """
 
     analysis_input = whakaari_raw.copy()
 
-    # Keep only numeric candidate variables.
-    # This preserves the principle that all numeric observables are eligible.
-    feature_cols = [
-        c for c in analysis_input.columns
-        if pd.api.types.is_numeric_dtype(analysis_input[c])
-    ]
+    if include_columns is not None:
+        missing = sorted(set(include_columns) - set(analysis_input.columns))
+        if missing:
+            raise ValueError(f"Requested columns not found: {missing}")
+        feature_cols = list(include_columns)
+    else:
+        drop_columns = [] if drop_columns is None else list(drop_columns)
+        feature_cols = [
+            c for c in analysis_input.columns
+            if pd.api.types.is_numeric_dtype(analysis_input[c])
+            and c not in drop_columns
+        ]
 
     if len(feature_cols) == 0:
         raise ValueError("No numeric columns found for Whakaari causal dataframe.")

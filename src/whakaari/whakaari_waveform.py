@@ -197,12 +197,23 @@ def event_rate_2_5(
     tr.filter("bandpass", freqmin=2.0, freqmax=5.0, corners=4, zerophase=True)
 
     x = tr.data.astype(float)
+    sr = tr.stats.sampling_rate
+
+    start = pd.to_datetime(tr.stats.starttime.datetime, utc=True).floor(out_freq)
+    end = pd.to_datetime(tr.stats.endtime.datetime, utc=True).ceil(out_freq)
+
+    full_index = pd.date_range(
+        start=start,
+        end=end - pd.Timedelta(out_freq),
+        freq=out_freq,
+        tz="UTC",
+    )
 
     # Do not run STA/LTA on traces containing NaNs from long gaps.
+    # But return NaN, not an empty series, so missing data is not later
+    # confused with zero detected events.
     if np.isnan(x).any():
-        return pd.Series(dtype=float, name="event_rate_2_5")
-
-    sr = tr.stats.sampling_rate
+        return pd.Series(np.nan, index=full_index, name="event_rate_2_5")
 
     cft = classic_sta_lta(
         x,
@@ -211,17 +222,6 @@ def event_rate_2_5(
     )
 
     on_off = trigger_onset(cft, on_thres, off_thres)
-
-    start = pd.to_datetime(tr.stats.starttime.datetime, utc=True).floor(out_freq)
-    end = pd.to_datetime(tr.stats.endtime.datetime, utc=True).ceil(out_freq)
-
-    # For a 24 h trace, this gives the 24 hourly bins from 00:00 to 23:00.
-    full_index = pd.date_range(
-        start=start,
-        end=end - pd.Timedelta(out_freq),
-        freq=out_freq,
-        tz="UTC",
-    )
 
     if len(on_off) == 0:
         return pd.Series(0, index=full_index, name="event_rate_2_5")
@@ -306,8 +306,6 @@ def build_waveform_dataset(
 
     waveform_df.index = pd.to_datetime(waveform_df.index, utc=True)
     waveform_df = waveform_df.sort_index()
-
-    waveform_df["event_rate_2_5"] = waveform_df["event_rate_2_5"].fillna(0)
 
     if save_path is not None:
         save_path.parent.mkdir(parents=True, exist_ok=True)
