@@ -301,7 +301,6 @@ def split_diagnostics(
         "split_score_I2_length": split_info.get("score_I2_length"),
         "signed_mean_I1": split_info["target_mean_I1"],
         "signed_mean_I2": split_info["target_mean_I2"],
-        "signed_mean_difference": split_info["target_mean_difference"],
     }
 
 

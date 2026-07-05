@@ -665,7 +665,6 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         "split_boundary_candidate": None,
         "target_mean_I1": None,
         "target_mean_I2": None,
-        "target_mean_difference": None,
     }
 
     backend = make_causal_backend(config)
@@ -683,11 +682,9 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     result["split_index"] = split_index
     result["split_end_index"] = split_end_index
     result["split_score"] = split_info["score"]
-    result["split_response_length"] = split_info["response_length"]
     result["split_boundary_candidate"] = split_info["boundary_split"]
     result["target_mean_I1"] = split_info["target_mean_I1"]
     result["target_mean_I2"] = split_info["target_mean_I2"]
-    result["target_mean_difference"] = split_info["target_mean_difference"]
     result["split_lag_buffer"] = split_info.get("lag_buffer")
     result["split_score_start_index"] = split_info.get("split_score_start_index")
     result["split_score_end_index"] = split_info.get("split_score_end_index")
