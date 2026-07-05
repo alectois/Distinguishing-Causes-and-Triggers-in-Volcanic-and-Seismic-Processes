@@ -21,11 +21,9 @@ from parameter_extraction import find_parameters
 EFFECT = "effect_tremor_5_15_scaled"
 
 DEFAULT_RUN_SPECS = (
-    {"run": "hmml_backend_beta", "backend": "hmml", "refit_method": None},
-    {"run": "pcmci_ridge", "backend": "pcmci", "refit_method": "ridge"},
-    {"run": "pcmci_adaptive_lasso", "backend": "pcmci", "refit_method": "adaptive_lasso"},
-    {"run": "pcmci_plus_ridge", "backend": "pcmci_plus", "refit_method": "ridge"},
-    {"run": "pcmci_plus_adaptive_lasso", "backend": "pcmci_plus", "refit_method": "adaptive_lasso"},
+    {"run": "hmml_backend_beta", "backend": "hmml"},
+    {"run": "pcmci_ridge", "backend": "pcmci"},
+    {"run": "pcmci_plus_ridge", "backend": "pcmci_plus"},
 )
 
 
@@ -49,11 +47,6 @@ class WhakaariWorkflowConfig:
     max_lags: int = 6
     min_I1_length: int = 48
     min_I2_length: int = 48
-    split_method: str = "local_response"
-    split_direction: str = "increase"
-    split_response_length: Optional[int] = 72
-    split_search_start: Optional[pd.Timestamp] = None
-    split_search_end: Optional[pd.Timestamp] = None
     distribution: str = "gaussian"
     parameter_source: str = "automatic"
 
@@ -61,9 +54,6 @@ class WhakaariWorkflowConfig:
     refit_alpha: float = 1.0
     refit_cv: bool = True
     refit_cv_folds: int = 5
-    refit_lasso_max_iter: int = 50_000
-    adaptive_gamma: float = 1.0
-    adaptive_epsilon: float = 1e-6
 
     # PCMCI / PCMCI+ settings.
     pcmci_pc_alpha: float = 0.05
@@ -257,21 +247,11 @@ def split_diagnostics(
     event_time: Optional[pd.Timestamp] = None,
     min_I1_length: int = 48,
     min_I2_length: int = 48,
-    split_method: str = "local_response",
-    split_direction: str = "increase",
-    split_response_length: Optional[int] = 72,
-    split_search_start: Optional[pd.Timestamp] = None,
-    split_search_end: Optional[pd.Timestamp] = None,
 ) -> dict:
     split_info = find_effect_split(
         df[effect],
         min_I1_length=min_I1_length,
         min_I2_length=min_I2_length,
-        method=split_method,
-        direction=split_direction,
-        response_length=split_response_length,
-        search_start=split_search_start,
-        search_end=split_search_end,
         return_info=True,
     )
 
@@ -281,16 +261,16 @@ def split_diagnostics(
     if split_idx is None:
         return {
             "effect": effect,
-            "split_index": None,
-            "split_time": None,
-            "I1_length": None,
-            "I2_length": None,
-            "abs_mean_I1": None,
-            "abs_mean_I2": None,
-            "abs_mean_difference": None,
+            "split_index": int(split_idx),
+            "split_time": split_time,
+            "I1_length": int(len(I1)),
+            "I2_length": int(len(I2)),
+            "abs_mean_I1": split_info["target_abs_mean_I1"],
+            "abs_mean_I2": split_info["target_abs_mean_I2"],
+            "abs_mean_difference": split_info["target_abs_mean_difference"],
             "event_time": event_time,
-            "distance_to_event": None,
-            "boundary_split": None,
+            "distance_to_event": distance_to_event,
+            "boundary_split": split_info["boundary_split"],
         }
 
     I1 = df.iloc[:split_idx]
@@ -316,12 +296,9 @@ def split_diagnostics(
         "boundary_split": bool(boundary_split),
         "split_end_index": int(split_end_idx),
         "split_end_time": df.index[split_end_idx - 1],
-        "split_method": split_info["method"],
-        "split_direction": split_info["direction"],
         "split_score": split_info["score"],
-        "split_response_length": split_info["response_length"],
-        "split_search_start": split_info["search_start"],
-        "split_search_end": split_info["search_end"],
+        "split_lag_buffer": split_info.get("lag_buffer"),
+        "split_score_I2_length": split_info.get("score_I2_length"),
         "signed_mean_I1": split_info["target_mean_I1"],
         "signed_mean_I2": split_info["target_mean_I2"],
         "signed_mean_difference": split_info["target_mean_difference"],
@@ -333,13 +310,12 @@ def split_diagnostics(
 # ---------------------------------------------------------------------------
 
 
-def default_weighting_for_backend(backend: str, refit_method: Optional[str] = None) -> tuple[str, Optional[str]]:
-    """Resolve how beta_star is constructed for each causal-discovery backend."""
+def default_weighting_for_backend(backend: str) -> str:
     if backend == "hmml":
-        return "backend", None
+        return "backend"
 
     if backend in {"pcmci", "pcmci_plus"}:
-        return "refit", refit_method or "ridge"
+        return "refit"
 
     raise ValueError(f"Unknown backend: {backend!r}")
 
@@ -352,20 +328,19 @@ def make_cause_trigger_config(
     distribution: Optional[str] = None,
     parameter_source: Optional[str] = None,
     cond_ind_test: Optional[str] = None,
-    refit_method: Optional[str] = None,
     use_contemporaneous_triggers: Optional[bool] = None,
 ) -> CauseTriggerConfig:
     """Create one CauseTriggerConfig without relying on notebook globals."""
     lag = workflow.selected_lag if lag is None else int(lag)
     distribution = workflow.distribution if distribution is None else distribution
     cond_ind_test = workflow.pcmci_cond_ind_test if cond_ind_test is None else cond_ind_test
-    v_weighting, resolved_refit_method = default_weighting_for_backend(backend, refit_method)
+    v_weighting = default_weighting_for_backend(backend)
     
     if use_contemporaneous_triggers is None:
         use_contemporaneous_triggers = workflow.pcmci_plus_use_contemporaneous_triggers
     
     if parameter_source is None:
-        suffix = "backend_beta" if backend == "hmml" else f"{resolved_refit_method}_refit"
+        suffix = "backend_beta" if backend == "hmml" else "ridge_refit"
         parameter_source = f"{workflow.parameter_source}_{backend}_lag{lag}_{distribution}_{suffix}"
 
     return CauseTriggerConfig(
@@ -376,22 +351,13 @@ def make_cause_trigger_config(
         alpha=workflow.alpha,
         min_I1_length=workflow.min_I1_length,
         min_I2_length=workflow.min_I2_length,
-        split_method=workflow.split_method,
-        split_direction=workflow.split_direction,
-        split_response_length=workflow.split_response_length,
-        split_search_start=workflow.split_search_start,
-        split_search_end=workflow.split_search_end,
         parameter_source=parameter_source,
         selected_distribution=distribution,
         selected_lag=lag,
         v_weighting=v_weighting,
-        refit_method=resolved_refit_method or "ridge",
         refit_alpha=workflow.refit_alpha,
         refit_cv=workflow.refit_cv,
         refit_cv_folds=workflow.refit_cv_folds,
-        refit_lasso_max_iter=workflow.refit_lasso_max_iter,
-        adaptive_gamma=workflow.adaptive_gamma,
-        adaptive_epsilon=workflow.adaptive_epsilon,
         pcmci_pc_alpha=workflow.pcmci_pc_alpha,
         pcmci_alpha_level=workflow.pcmci_alpha_level,
         pcmci_fdr_method=workflow.pcmci_fdr_method,
@@ -420,6 +386,11 @@ def result_to_row(run_name: str, result: dict, effect: str) -> dict:
         "refit_alpha_used": refit_metadata.get("refit_alpha_used"),
         "split_index": result.get("split_index"),
         "split_timestamp": result.get("split_timestamp"),
+        "split_end_timestamp": result.get("split_end_timestamp"),
+        "split_method": result.get("split_method"),
+        "split_lag_buffer": result.get("split_lag_buffer"),
+        "split_score_start_timestamp": result.get("split_score_start_timestamp"),
+        "split_score_end_timestamp": result.get("split_score_end_timestamp"),
         "I1_length": result.get("I1_length"),
         "I2_length": result.get("I2_length"),
         "target_abs_mean_I1": result.get("target_abs_mean_I1"),
@@ -467,7 +438,6 @@ def run_one(
     lag: Optional[int] = None,
     distribution: Optional[str] = None,
     cond_ind_test: Optional[str] = None,
-    refit_method: Optional[str] = None,
     parameter_source: Optional[str] = None,
     use_contemporaneous_triggers: Optional[bool] = None,
 ) -> tuple[dict, pd.DataFrame, dict]:
@@ -479,7 +449,6 @@ def run_one(
         distribution=distribution,
         parameter_source=parameter_source,
         cond_ind_test=cond_ind_test,
-        refit_method=refit_method,
         use_contemporaneous_triggers=use_contemporaneous_triggers,
     )
     result = run_cause_trigger(df, config)
@@ -506,8 +475,6 @@ def run_suite(
     for spec in run_specs:
         run_name = str(spec["run"])
         backend = str(spec["backend"])
-        refit_method = spec.get("refit_method")
-        refit_method = None if refit_method is None else str(refit_method)
 
         result, diag, row = run_one(
             df,
@@ -517,7 +484,6 @@ def run_suite(
             lag=lag,
             distribution=distribution,
             cond_ind_test=cond_ind_test,
-            refit_method=refit_method,
         )
         results[run_name] = result
         comparison_rows.append(row)
@@ -551,8 +517,6 @@ def run_sensitivity_grid(
     for spec in run_specs:
         run_name = str(spec["run"])
         backend = str(spec["backend"])
-        refit_method = spec.get("refit_method")
-        refit_method = None if refit_method is None else str(refit_method)
 
         for lag in lags:
             for distribution in distributions:
@@ -573,7 +537,6 @@ def run_sensitivity_grid(
                         lag=int(lag),
                         distribution=distribution,
                         cond_ind_test=cond_ind_test,
-                        refit_method=refit_method,
                         parameter_source=f"{run_name}_sensitivity_grid",
                     )
                     row = {
@@ -583,6 +546,11 @@ def run_sensitivity_grid(
                         "refit_nonzero_beta_count": (result.get("refit_metadata", {}) or {}).get("nonzero_beta_count"),
                         "refit_alpha_used": (result.get("refit_metadata", {}) or {}).get("refit_alpha_used"),
                         "split_timestamp": result.get("split_timestamp"),
+                        "split_end_timestamp": result.get("split_end_timestamp"),
+                        "split_method": result.get("split_method"),
+                        "split_lag_buffer": result.get("split_lag_buffer"),
+                        "split_score_start_timestamp": result.get("split_score_start_timestamp"),
+                        "split_score_end_timestamp": result.get("split_score_end_timestamp"),
                         "I1_length": result.get("I1_length"),
                         "I2_length": result.get("I2_length"),
                         "target_abs_mean_difference": result.get("target_abs_mean_difference"),

@@ -20,7 +20,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from scipy.stats import f
-from sklearn.linear_model import LinearRegression, Ridge, RidgeCV, Lasso, LassoCV
+from sklearn.linear_model import LinearRegression, Ridge, RidgeCV
 from sklearn.model_selection import TimeSeriesSplit
 from hmml_runner import HMMLRunner
 from pcmci_runner import PCMCIBackend
@@ -37,22 +37,12 @@ class CauseTriggerConfig:
     min_I2_length: int = 24
 
     # Split selection.
-    # "paper_suffix" reproduces the previous implementation:
-    #     I2 = suffix from split_index to end.
-    #
-    # "local_response" is the thesis main split:
-    #     score candidate split using a finite post-split response window
-    #     and use that finite window as I2.
-    split_method: str = "local_response"
-    split_direction: str = "increase"
-
-    # If None, uses min_I2_length.
-    split_response_length: Optional[int] = None
-
-    # Optional search bounds for event-case studies.
-    # These do not set the split; they only restrict where the automatic split is allowed.
-    split_search_start: Optional[pd.Timestamp] = None
-    split_search_end: Optional[pd.Timestamp] = None
+    # I1 = X.iloc[:split_index]
+    # I2 = X.iloc[split_index:]
+    # split_index maximizes abs(mean(y in I2)) - abs(mean(y in I1)),
+    # subject to min_I1_length and min_I2_length.
+    min_I1_length: int = 12
+    min_I2_length: int = 24
 
     # How to construct beta_star for V = X_without-trigger @ beta_star
     # "backend" = use beta from backend; baseline for HMML
@@ -61,14 +51,9 @@ class CauseTriggerConfig:
 
     # Used only when v_weighting="refit".
     # "ridge"          = stable coefficient refit under collinearity
-    # "adaptive_lasso" = sparse refit following Zou-style adaptive penalties
-    refit_method: str = "ridge"
     refit_alpha: float = 1.0
     refit_cv: bool = True
     refit_cv_folds: int = 5
-    refit_lasso_max_iter: int = 50000
-    adaptive_gamma: float = 1.0
-    adaptive_epsilon: float = 1e-6
 
     parameter_source: str = "manual"
     selected_distribution: str = None
@@ -220,170 +205,85 @@ def find_effect_split(
     min_I1_length: int = 12,
     min_I2_length: int = 30,
     *,
-    method: str = "local_response",
-    direction: str = "increase",
-    response_length: int | None = None,
-    search_start=None,
-    search_end=None,
     return_info: bool = False,
 ):
     """
-    Select I1 and I2 for the Cause--Trigger algorithm.
+    Paper-compatible Cause--Trigger split.
 
-    method="paper_suffix":
-        Original/paper-style implementation.
-        Candidate I2 is the full suffix from split_index to the end.
-
-    method="local_response":
-        Thesis main implementation.
-        Candidate I2 is a finite response window:
-            I2 = [split_index, split_index + response_length)
-
-        This avoids selecting late high-response tails merely because the suffix
-        mean is large.
-
-    search_start/search_end:
-        Optional bounds on where split_index may lie. These are useful for
-        known event-case studies. They do not set the split manually.
+    Finds I1=(start, split_index) and I2=[split_index, end)
+    such that abs(E[y]_I2) > abs(E[y]_I1), selecting the split
+    that maximizes the absolute-mean difference.
     """
     y = pd.to_numeric(pd.Series(y), errors="coerce")
 
     if y.isna().any():
         raise ValueError("find_effect_split received NaNs in the target series.")
 
-    if method not in {"paper_suffix", "local_response"}:
-        raise ValueError(
-            f"Unknown split_method={method!r}. "
-            "Use 'paper_suffix' or 'local_response'."
-        )
-
-    if response_length is None:
-        response_length = min_I2_length
-
-    response_length = int(response_length)
-
-    if response_length < min_I2_length:
-        raise ValueError(
-            f"split_response_length={response_length} must be >= "
-            f"min_I2_length={min_I2_length}."
-        )
-
     n = len(y)
+    lower = int(min_I1_length)
+    upper = n - int(min_I2_length)
 
-    lower = min_I1_length
-    upper = n - min_I2_length
-
-    start_pos = _to_position(y.index, search_start, side="left")
-    end_pos = _to_position(y.index, search_end, side="right")
-
-    if start_pos is not None:
-        lower = max(lower, start_pos)
-
-    if end_pos is not None:
-        upper = min(upper, end_pos)
-
-    candidates = []
+    best = None
+    best_score = float("-inf")
 
     for split_index in range(lower, upper + 1):
         interval_1 = y.iloc[:split_index]
+        interval_2 = y.iloc[split_index:]
 
-        if method == "paper_suffix":
-            split_end_index = n
-        else:
-            split_end_index = split_index + response_length
+        mean_1 = float(interval_1.mean())
+        mean_2 = float(interval_2.mean())
 
-        if split_end_index > n:
+        abs_mean_1 = abs(mean_1)
+        abs_mean_2 = abs(mean_2)
+
+        score = abs_mean_2 - abs_mean_1
+
+        if score <= 0:
             continue
 
-        interval_2 = y.iloc[split_index:split_end_index]
-
-        if len(interval_1) < min_I1_length:
-            continue
-
-        if len(interval_2) < min_I2_length:
-            continue
-
-        if direction == "absolute_mean" and method == "paper_suffix":
-            difference, mean_1, mean_2 = _mean_difference(
-                interval_1,
-                interval_2,
-                direction="absolute_mean",
-            )
-            score = difference
-        else:
-            score, difference, mean_1, mean_2 = _welch_score(
-                interval_1,
-                interval_2,
-                direction=direction,
-            )
-
-        if difference <= 0:
-            continue
-
-        if not np.isfinite(score):
-            continue
-
-        candidates.append(
-            {
+        if score > best_score:
+            best_score = score
+            best = {
                 "split_index": int(split_index),
-                "split_end_index": int(split_end_index),
+                "split_end_index": int(n),
                 "score": float(score),
-                "target_mean_I1": float(mean_1),
-                "target_mean_I2": float(mean_2),
-                "target_mean_difference": float(difference),
+                "target_mean_I1": mean_1,
+                "target_mean_I2": mean_2,
+                "target_abs_mean_I1": abs_mean_1,
+                "target_abs_mean_I2": abs_mean_2,
+                "target_abs_mean_difference": float(score),
                 "I1_length": int(len(interval_1)),
                 "I2_length": int(len(interval_2)),
-                "boundary_split": bool(split_end_index == n),
-                "method": method,
-                "direction": direction,
-                "response_length": int(response_length),
-                "search_start": search_start,
-                "search_end": search_end,
+                "boundary_split": bool(split_index == n - min_I2_length),
             }
-        )
 
-    if not candidates:
+    if best is None:
         out = {
             "split_index": None,
             "split_end_index": None,
             "score": None,
             "target_mean_I1": None,
             "target_mean_I2": None,
-            "target_mean_difference": None,
+            "target_abs_mean_I1": None,
+            "target_abs_mean_I2": None,
+            "target_abs_mean_difference": None,
             "I1_length": None,
             "I2_length": None,
             "boundary_split": None,
-            "method": method,
-            "direction": direction,
-            "response_length": response_length,
-            "search_start": search_start,
-            "search_end": search_end,
         }
         return out if return_info else None
 
-    # Select the strongest local effect-regime contrast inside the allowed search window.
-    best = max(candidates, key=lambda c: c["score"])
-    best["max_score"] = float(best["score"])
-
     return best if return_info else best["split_index"]
-
 
 def find_increase_split(
     y: pd.Series,
     min_I1_length: int = 12,
     min_I2_length: int = 30,
 ):
-    """
-    Backward-compatible wrapper for older notebooks/helpers.
-
-    This reproduces the previous suffix split.
-    """
     return find_effect_split(
         y,
         min_I1_length=min_I1_length,
         min_I2_length=min_I2_length,
-        method="paper_suffix",
-        direction="absolute_mean",
         return_info=False,
     )
 
@@ -482,50 +382,17 @@ def refit_beta_for_selected_parents(
     y_t: str,
     selected_parents: list,
     lags: int,
-    method: str = "ridge",
     alpha: float = 1.0,
     cv: bool = True,
     cv_folds: int = 5,
-    lasso_max_iter: int = 50000,
-    adaptive_gamma: float = 1.0,
-    adaptive_epsilon: float = 1e-6,
 ):
     """
-    Estimate beta_star for selected lagged parents after causal discovery.
+    Ridge refit for selected lagged parents.
 
-    This is intended for PCMCI/PCMCI+ thesis extensions:
-        PCMCI/PCMCI+ selects B2.
-        This function estimates beta_star by regression on selected lagged parents.
-
-    Supported methods
-    -----------------
-    ridge:
-        RidgeCV/Ridge refit. Main stable refit method.
-
-    adaptive_lasso:
-        Zou-style adaptive lasso refit. Uses an initial RidgeCV/Ridge estimate
-        to construct adaptive penalty weights, then chooses the lasso penalty
-        by TimeSeriesSplit cross-validation when cv=True.
-
-    Returns
-    -------
-    beta_df : pd.DataFrame
-        Shape (lags, len(selected_parents)).
-        Rows: Lag_1 ... Lag_d.
-        Columns: selected_parents.
-    metadata : dict
-        Information about method, selected alpha, nonzero count, etc.
+    Used for PCMCI/PCMCI+ extensions because those backends select parents
+    but do not provide HMML-style structural beta coefficients.
     """
     selected_parents = list(selected_parents)
-    method = method.lower()
-
-    allowed_methods = {"ridge", "adaptive_lasso"}
-    if method not in allowed_methods:
-        raise ValueError(
-            f"Unknown refit method {method!r}. "
-            "Use only 'ridge' or 'adaptive_lasso'."
-        )
-
     index = [f"Lag_{lag}" for lag in range(1, lags + 1)]
 
     if len(selected_parents) == 0:
@@ -535,7 +402,7 @@ def refit_beta_for_selected_parents(
             columns=[],
         )
         return beta_df, {
-            "refit_method": method,
+            "refit_method": "ridge",
             "reason": "no selected parents",
             "nonzero_beta_count": 0,
         }
@@ -554,82 +421,16 @@ def refit_beta_for_selected_parents(
     use_cv = bool(cv and n_splits >= 2)
     cv_obj = TimeSeriesSplit(n_splits=n_splits) if use_cv else None
 
-    metadata = {
-        "refit_method": method,
-        "refit_alpha_requested": alpha,
-        "refit_cv": use_cv,
-        "refit_cv_folds": int(n_splits) if use_cv else 0,
-        "n_refit_rows": int(X_lagged.shape[0]),
-        "n_refit_features": int(X_lagged.shape[1]),
-        "selected_parents": selected_parents,
-    }
-
     ridge_alphas = np.logspace(-4, 4, 40)
 
-    if method == "ridge":
-        if use_cv:
-            model = RidgeCV(alphas=ridge_alphas, cv=cv_obj)
-        else:
-            model = Ridge(alpha=alpha)
+    if use_cv:
+        model = RidgeCV(alphas=ridge_alphas, cv=cv_obj)
+    else:
+        model = Ridge(alpha=alpha)
 
-        model.fit(X_lagged, y_values)
-        beta_flat = np.asarray(model.coef_, dtype=float).reshape(-1)
+    model.fit(X_lagged, y_values)
 
-        metadata["refit_alpha_used"] = (
-            float(model.alpha_) if hasattr(model, "alpha_") else float(alpha)
-        )
-
-    elif method == "adaptive_lasso":
-        # Stage 1: stable initial estimator for adaptive weights.
-        if use_cv:
-            ridge_init = RidgeCV(alphas=ridge_alphas, cv=cv_obj)
-        else:
-            ridge_init = Ridge(alpha=alpha)
-
-        ridge_init.fit(X_lagged, y_values)
-        beta_initial = np.asarray(ridge_init.coef_, dtype=float).reshape(-1)
-
-        # Zou-style adaptive weights:
-        # weaker initial coefficients receive stronger penalty.
-        adaptive_weights = 1.0 / (
-            (np.abs(beta_initial) + adaptive_epsilon) ** adaptive_gamma
-        )
-
-        # Weighted lasso via column scaling:
-        # min ||y - X beta||^2 + lambda * sum_j w_j |beta_j|
-        # Let theta_j = w_j * beta_j and X_weighted_j = X_j / w_j.
-        X_weighted = X_lagged / adaptive_weights.reshape(1, -1)
-
-        if use_cv:
-            lasso_alphas = np.logspace(-5, 1, 60)
-            lasso_model = LassoCV(
-                alphas=lasso_alphas,
-                cv=cv_obj,
-                max_iter=lasso_max_iter,
-                fit_intercept=True,
-            )
-        else:
-            lasso_model = Lasso(
-                alpha=alpha,
-                max_iter=lasso_max_iter,
-                fit_intercept=True,
-            )
-
-        lasso_model.fit(X_weighted, y_values)
-
-        theta = np.asarray(lasso_model.coef_, dtype=float).reshape(-1)
-        beta_flat = theta / adaptive_weights
-
-        metadata["initial_ridge_alpha_used"] = (
-            float(ridge_init.alpha_) if hasattr(ridge_init, "alpha_") else float(alpha)
-        )
-        metadata["refit_alpha_used"] = (
-            float(lasso_model.alpha_) if hasattr(lasso_model, "alpha_") else float(alpha)
-        )
-        metadata["adaptive_gamma"] = float(adaptive_gamma)
-        metadata["adaptive_epsilon"] = float(adaptive_epsilon)
-        metadata["adaptive_weight_min"] = float(np.min(adaptive_weights))
-        metadata["adaptive_weight_max"] = float(np.max(adaptive_weights))
+    beta_flat = np.asarray(model.coef_, dtype=float).reshape(-1)
 
     if beta_flat.shape[0] != X_lagged.shape[1]:
         raise ValueError(
@@ -645,11 +446,22 @@ def refit_beta_for_selected_parents(
         columns=selected_parents,
     )
 
-    metadata["nonzero_beta_count"] = int(np.count_nonzero(beta_flat))
-    metadata["beta_abs_max"] = float(np.max(np.abs(beta_flat))) if beta_flat.size else 0.0
+    metadata = {
+        "refit_method": "ridge",
+        "refit_alpha_requested": float(alpha),
+        "refit_alpha_used": (
+            float(model.alpha_) if hasattr(model, "alpha_") else float(alpha)
+        ),
+        "refit_cv": bool(use_cv),
+        "refit_cv_folds": int(n_splits) if use_cv else 0,
+        "n_refit_rows": int(X_lagged.shape[0]),
+        "n_refit_features": int(X_lagged.shape[1]),
+        "selected_parents": selected_parents,
+        "nonzero_beta_count": int(np.count_nonzero(beta_flat)),
+        "beta_abs_max": float(np.max(np.abs(beta_flat))) if beta_flat.size else 0.0,
+    }
 
     return beta_df, metadata
-
 
 def f_statistic(rss_reduced, rss_full, n, d):
     """
@@ -796,13 +608,6 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
             "Use 'backend' or 'refit'."
         )
 
-    valid_refit_methods = {"ridge", "adaptive_lasso"}
-    if config.v_weighting == "refit" and config.refit_method not in valid_refit_methods:
-        raise ValueError(
-            f"Unknown refit_method={config.refit_method!r}. "
-            "Use 'ridge' or 'adaptive_lasso'."
-        )
-
     if config.causal_backend == "hmml" and config.v_weighting != "backend":
         warnings.warn(
             "For the May-16 paper-compatible HMML baseline, use v_weighting='backend'. "
@@ -845,7 +650,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         "configured_distribution": config.distribution,
         "parameter_source": getattr(config, "parameter_source", "manual"),
         "v_weighting": config.v_weighting,
-        "refit_method": config.refit_method if config.v_weighting == "refit" else None,
+        "refit_method": "ridge" if config.v_weighting == "refit" else None,
         "refit_metadata": {},
         "diagnostics": [],
         "causal_lags": {},
@@ -857,12 +662,6 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         "autoregressive_parent_full_interval": False,
         "split_end_index": None,
         "split_end_timestamp": None,
-        "split_method": getattr(config, "split_method", None),
-        "split_direction": getattr(config, "split_direction", None),
-        "split_score": None,
-        "split_response_length": getattr(config, "split_response_length", None),
-        "split_search_start": getattr(config, "split_search_start", None),
-        "split_search_end": getattr(config, "split_search_end", None),
         "split_boundary_candidate": None,
         "target_mean_I1": None,
         "target_mean_I2": None,
@@ -875,11 +674,6 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         X[config.y_t],
         min_I1_length=config.min_I1_length,
         min_I2_length=config.min_I2_length,
-        method=config.split_method,
-        direction=config.split_direction,
-        response_length=config.split_response_length,
-        search_start=config.split_search_start,
-        search_end=config.split_search_end,
         return_info=True,
     )
 
@@ -888,16 +682,16 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
 
     result["split_index"] = split_index
     result["split_end_index"] = split_end_index
-    result["split_method"] = split_info["method"]
-    result["split_direction"] = split_info["direction"]
     result["split_score"] = split_info["score"]
     result["split_response_length"] = split_info["response_length"]
-    result["split_search_start"] = split_info["search_start"]
-    result["split_search_end"] = split_info["search_end"]
     result["split_boundary_candidate"] = split_info["boundary_split"]
     result["target_mean_I1"] = split_info["target_mean_I1"]
     result["target_mean_I2"] = split_info["target_mean_I2"]
     result["target_mean_difference"] = split_info["target_mean_difference"]
+    result["split_lag_buffer"] = split_info.get("lag_buffer")
+    result["split_score_start_index"] = split_info.get("split_score_start_index")
+    result["split_score_end_index"] = split_info.get("split_score_end_index")
+    result["split_score_I2_length"] = split_info.get("score_I2_length")
 
     if split_index is not None:
         result["split_timestamp"] = X.index[split_index]
@@ -917,15 +711,11 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         result["full_interval_contemporaneous_links"] = discovery.scores.get(
             "_contemporaneous_links", {}
         )
-        result["stop_reason"] = (
-            "No valid I1/I2 split found under "
-            f"split_method={config.split_method!r}, "
-            f"split_direction={config.split_direction!r}."
-        )
+        result["stop_reason"] = "No valid I1/I2 split found."
         return result
 
     I_1 = X.iloc[:split_index]
-    I_2 = X.iloc[split_index:split_end_index]
+    I_2 = X.iloc[split_index:]
 
     result["I1_length"] = len(I_1)
     result["I2_length"] = len(I_2)
@@ -1062,18 +852,14 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         # refit only on lagged non-target B2 parents.
         # Contemporaneous PCMCI+ trigger candidates are not added to B2
         # and are not used to construct V.
-        beta_2, result_refit_metadata = refit_beta_for_selected_parents(
+        beta_star, refit_metadata = refit_beta_for_selected_parents(
             X=I_2,
             y_t=config.y_t,
-            selected_parents=B_2,
+            selected_parents=non_trigger_vars,
             lags=config.lags,
-            method=config.refit_method,
             alpha=config.refit_alpha,
             cv=config.refit_cv,
             cv_folds=config.refit_cv_folds,
-            lasso_max_iter=config.refit_lasso_max_iter,
-            adaptive_gamma=config.adaptive_gamma,
-            adaptive_epsilon=config.adaptive_epsilon,
         )
 
     else:
