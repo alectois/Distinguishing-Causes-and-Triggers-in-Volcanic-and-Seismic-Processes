@@ -74,6 +74,10 @@ class CauseTriggerConfig:
     pcmci_conflict_resolution: bool = True
     pcmci_keep_raw_results: bool = False
 
+    # If True, PCMCI+ tau=0 source-target links are allowed as trigger candidates.
+    # They are not added to B2 and are not used to construct V.
+    pcmci_plus_use_contemporaneous_triggers: bool = False
+
 @dataclass
 class BackendResult:
     parents: list
@@ -712,19 +716,91 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     result["B_1"] = B_1
     result["B_2"] = B_2
 
-    # Need at least two non-target variables: one candidate trigger and one
-    # remaining candidate cause after removing the trigger.
-    if len(B_2) < 2:
+    # ------------------------------------------------------------------
+    # Trigger candidates
+    # ------------------------------------------------------------------
+    # Paper-compatible lagged trigger candidates:
+    # x_s is in lagged non-target B2 and increases from I1 to I2.
+    T_candidates_lagged = []
+    for col in B_2:
+        if abs(I_2[col].mean()) > abs(I_1[col].mean()):
+            T_candidates_lagged.append(col)
+
+    # Thesis extension:
+    # PCMCI+ tau=0 links may be used as same-bin / immediate trigger candidates.
+    # They are NOT added to B2, and they are NOT used in V.
+    contemporaneous_links = result.get("contemporaneous_links", {}) or {}
+
+    T_candidates_contemporaneous = []
+    if (
+        config.causal_backend == "pcmci_plus"
+        and config.pcmci_plus_use_contemporaneous_triggers
+    ):
+        for col in contemporaneous_links.keys():
+            if col == config.y_t:
+                continue
+            if col not in X.columns:
+                continue
+
+            # Keep the original Cause--Trigger increase condition.
+            if abs(I_2[col].mean()) > abs(I_1[col].mean()):
+                T_candidates_contemporaneous.append(col)
+
+    # Preserve order and remove duplicates.
+    T_candidates = list(dict.fromkeys(
+        T_candidates_lagged + T_candidates_contemporaneous
+    ))
+
+    result["T_candidates_lagged"] = T_candidates_lagged
+    result["T_candidates_contemporaneous"] = T_candidates_contemporaneous
+    result["T_candidates"] = T_candidates
+
+    # We need at least one lagged non-target B2 parent to construct V.
+    # A contemporaneous trigger can be outside B2, but the candidate cause part
+    # must still come from lagged B2.
+    if len(B_2) < 1:
         result["refit_metadata"] = {
-            "reason": "not enough non-target B2 variables",
+            "reason": "no lagged non-target B2 variables for V",
             "raw_B2": B_2_raw,
             "non_target_B2": B_2,
+            "contemporaneous_trigger_candidates": T_candidates_contemporaneous,
         }
         result["stop_reason"] = (
-            "Not enough non-target B2 variables for cause-trigger testing."
+            "No lagged non-target B2 variables available to construct V."
         )
         return result
 
+    if len(T_candidates) == 0:
+        result["refit_metadata"] = {
+            "reason": "no trigger candidates",
+            "raw_B2": B_2_raw,
+            "non_target_B2": B_2,
+            "contemporaneous_links": contemporaneous_links,
+        }
+        result["stop_reason"] = (
+            "No lagged or contemporaneous trigger candidates satisfy the I1/I2 increase condition."
+        )
+        return result
+
+    # At least one trigger must leave at least one B2 variable available as
+    # candidate cause after removing the trigger.
+    valid_trigger_exists = any(
+        len([v for v in B_2 if v != x_s]) > 0
+        for x_s in T_candidates
+    )
+
+    if not valid_trigger_exists:
+        result["refit_metadata"] = {
+            "reason": "trigger candidates leave no B2 variable for cause",
+            "raw_B2": B_2_raw,
+            "non_target_B2": B_2,
+            "T_candidates": T_candidates,
+        }
+        result["stop_reason"] = (
+            "No trigger candidate leaves a lagged B2 variable available as cause."
+        )
+        return result
+    
     if config.v_weighting == "backend":
         beta_2 = discovery_2.beta
         result_refit_metadata = {
@@ -733,7 +809,9 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         }
 
     elif config.v_weighting == "refit":
-        # Important: refit only on non-target B2 parents.
+        # refit only on lagged non-target B2 parents.
+        # Contemporaneous PCMCI+ trigger candidates are not added to B2
+        # and are not used to construct V.
         beta_2, result_refit_metadata = refit_beta_for_selected_parents(
             X=I_2,
             y_t=config.y_t,
@@ -751,30 +829,23 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     else:
         raise ValueError(
             f"Unknown v_weighting={config.v_weighting!r}. "
-            "Use 'backend', or 'refit'."
+            "Use 'backend' or 'refit'."
         )
 
     result["refit_metadata"] = result_refit_metadata
-
-    # Trigger candidates: x_s ∈ B2, x_s != y_t already guaranteed,
-    # and |E(x_s)|_I2 > |E(x_s)|_I1.
-    T_candidates = []
-    for col in B_2:
-        if abs(I_2[col].mean()) > abs(I_1[col].mean()):
-            T_candidates.append(col)
-
-    result["T_candidates"] = T_candidates
-
-    if len(B_2) < 2:
-        result["stop_reason"] = "Not enough B2 variables for cause selection."
-        return result
-        
 
     for x_s in T_candidates:
         B_2_without_trigger = [
             v for v in B_2
             if v != x_s
         ]
+
+        if x_s in T_candidates_lagged and x_s in T_candidates_contemporaneous:
+            trigger_source = "lagged_and_contemporaneous"
+        elif x_s in T_candidates_contemporaneous:
+            trigger_source = "contemporaneous_pcmci_plus_tau0"
+        else:
+            trigger_source = "lagged_B2"
 
         if len(B_2_without_trigger) == 0:
             result["diagnostics"].append({
@@ -858,6 +929,11 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
 
         moderation["trigger"] = x_s
         moderation["cause"] = x_u
+        moderation["trigger_source"] = trigger_source
+        moderation["trigger_is_contemporaneous_pcmci_plus"] = (
+            x_s in T_candidates_contemporaneous
+        )
+        moderation["trigger_tau0_info"] = contemporaneous_links.get(x_s)
         result["diagnostics"].append(moderation)
 
         if moderation["accepted"]:

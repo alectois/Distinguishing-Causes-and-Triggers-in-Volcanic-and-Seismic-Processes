@@ -167,18 +167,27 @@ class PCMCIBackend:
             selected_pvals = []
             selected_vals = []
 
-            # Store contemporaneous PCMCI+ links separately.
-            # They are not used in B2 because the Cause–Trigger F-test is lagged.
+            # Store PCMCI+ contemporaneous source-target links separately.
+            # These are NOT ordinary B2 parents. They can only be used later as
+            # same-bin / immediate trigger candidates in the Cause--Trigger extension.
             if self.method == "pcmci_plus" and graph is not None and source_idx != target_idx:
-                tau0_link = graph[source_idx, target_idx, 0]
+                tau0_link = str(graph[source_idx, target_idx, 0])
                 tau0_p = p_matrix[source_idx, target_idx, 0]
                 tau0_val = val_matrix[source_idx, target_idx, 0]
 
-                if tau0_link != "" and tau0_p <= self.alpha_level:
+                # Conservative choice:
+                #   "-->" means source -> target.
+                #   "o-o" or "x-x" are unresolved/ambiguous contemporaneous adjacency.
+                # Do not use "<--", because that means target -> source in this array slot.
+                eligible_tau0_links = {"-->", "o-o", "x-x"}
+
+                if tau0_link in eligible_tau0_links and tau0_p <= self.alpha_level:
                     contemporaneous_links[source_name] = {
-                        "graph_link": str(tau0_link),
+                        "graph_link": tau0_link,
                         "p_value": float(tau0_p),
                         "val": float(tau0_val),
+                        "tau": 0,
+                        "role": "contemporaneous_trigger_candidate_only",
                     }
 
             # Lagged links tau=1..tau_max are eligible for B2.

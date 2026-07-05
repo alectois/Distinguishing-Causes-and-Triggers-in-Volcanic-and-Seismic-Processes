@@ -70,7 +70,8 @@ class WhakaariWorkflowConfig:
     pcmci_contemp_collider_rule: str = "majority"
     pcmci_conflict_resolution: bool = True
     pcmci_keep_raw_results: bool = False
-
+    pcmci_plus_use_contemporaneous_triggers: bool = False
+    
     run_specs: Sequence[Mapping[str, object]] = field(default_factory=lambda: DEFAULT_RUN_SPECS)
 
 
@@ -325,13 +326,17 @@ def make_cause_trigger_config(
     parameter_source: Optional[str] = None,
     cond_ind_test: Optional[str] = None,
     refit_method: Optional[str] = None,
+    use_contemporaneous_triggers: Optional[bool] = None,
 ) -> CauseTriggerConfig:
     """Create one CauseTriggerConfig without relying on notebook globals."""
     lag = workflow.selected_lag if lag is None else int(lag)
     distribution = workflow.distribution if distribution is None else distribution
     cond_ind_test = workflow.pcmci_cond_ind_test if cond_ind_test is None else cond_ind_test
     v_weighting, resolved_refit_method = default_weighting_for_backend(backend, refit_method)
-
+    
+    if use_contemporaneous_triggers is None:
+        use_contemporaneous_triggers = workflow.pcmci_plus_use_contemporaneous_triggers
+    
     if parameter_source is None:
         suffix = "backend_beta" if backend == "hmml" else f"{resolved_refit_method}_refit"
         parameter_source = f"{workflow.parameter_source}_{backend}_lag{lag}_{distribution}_{suffix}"
@@ -363,6 +368,7 @@ def make_cause_trigger_config(
         pcmci_contemp_collider_rule=workflow.pcmci_contemp_collider_rule,
         pcmci_conflict_resolution=workflow.pcmci_conflict_resolution,
         pcmci_keep_raw_results=workflow.pcmci_keep_raw_results,
+        pcmci_plus_use_contemporaneous_triggers=use_contemporaneous_triggers,
     )
 
 
@@ -431,6 +437,7 @@ def run_one(
     cond_ind_test: Optional[str] = None,
     refit_method: Optional[str] = None,
     parameter_source: Optional[str] = None,
+    use_contemporaneous_triggers: Optional[bool] = None,
 ) -> tuple[dict, pd.DataFrame, dict]:
     """Run one backend and return result, diagnostics, and comparison row."""
     config = make_cause_trigger_config(
@@ -441,6 +448,7 @@ def run_one(
         parameter_source=parameter_source,
         cond_ind_test=cond_ind_test,
         refit_method=refit_method,
+        use_contemporaneous_triggers=use_contemporaneous_triggers,
     )
     result = run_cause_trigger(df, config)
     diagnostics = diagnostics_to_dataframe(result)

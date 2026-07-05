@@ -85,8 +85,8 @@ def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     StandardScaler-compatible z-standardization:
         mean 0, variance 1.
 
-    Raises an error for NaNs or constant columns instead of silently producing
-    unusable causal-model input.
+    Raises an error for NaNs, infinite values, or constant columns instead of
+    silently producing unusable causal-model input.
     """
     numeric = df.apply(pd.to_numeric, errors="coerce")
 
@@ -96,6 +96,16 @@ def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         raise ValueError(
             "Cannot standardize because transformed data contain NaNs:\n"
             f"{missing}"
+        )
+
+    if not np.isfinite(numeric.to_numpy()).all():
+        bad_cols = [
+            col for col in numeric.columns
+            if not np.isfinite(numeric[col].to_numpy()).all()
+        ]
+        raise ValueError(
+            "Cannot standardize because transformed data contain infinite values: "
+            f"{bad_cols}"
         )
 
     constant_cols = [
@@ -144,7 +154,14 @@ def build_master_dataframe(
 
     wave_1h = wave_1h.reindex(master_index)
     weather_1h = weather_1h.reindex(master_index)
-    so2_1h = so2_1h.reindex(master_index)
+    # Carry the last pre-window SO2 observation into the modelling window.
+    so2_1h = (
+        so2_1h
+        .reindex(so2_1h.index.union(master_index))
+        .sort_index()
+        .ffill()
+        .reindex(master_index)
+    )
     gnss_1h = (
         gnss_1h
         .reindex(master_index)
@@ -338,16 +355,31 @@ def build_final_causal_dataframe(
     include_columns: list[str] | None = None,
     drop_columns: list[str] | None = None,
 ):
+    """
+    Prepare the standardized Whakaari dataset for causal analysis.
+    """
 
     analysis_input = whakaari_raw.copy()
+
+    if analysis_input.index.has_duplicates:
+        duplicates = analysis_input.index[analysis_input.index.duplicated()].unique()[:5]
+        raise ValueError(
+            f"Whakaari causal dataframe has duplicate timestamps, e.g. {list(duplicates)}"
+        )
+
+    if not analysis_input.index.is_monotonic_increasing:
+        analysis_input = analysis_input.sort_index()
 
     if include_columns is not None:
         missing = sorted(set(include_columns) - set(analysis_input.columns))
         if missing:
             raise ValueError(f"Requested columns not found: {missing}")
+
         feature_cols = list(include_columns)
+
     else:
         drop_columns = [] if drop_columns is None else list(drop_columns)
+
         feature_cols = [
             c for c in analysis_input.columns
             if pd.api.types.is_numeric_dtype(analysis_input[c])
@@ -357,9 +389,27 @@ def build_final_causal_dataframe(
     if len(feature_cols) == 0:
         raise ValueError("No numeric columns found for Whakaari causal dataframe.")
 
-    transformed = transform_for_cause_trigger_scaling(
-        analysis_input[feature_cols]
-    )
+    non_numeric_cols = [
+        c for c in feature_cols
+        if not pd.api.types.is_numeric_dtype(analysis_input[c])
+    ]
+
+    if non_numeric_cols:
+        raise ValueError(
+            f"Selected columns must be numeric. Non-numeric columns: {non_numeric_cols}"
+        )
+
+    model_input = analysis_input[feature_cols].copy()
+
+    if model_input.isna().any().any():
+        missing = model_input.isna().sum()
+        missing = missing[missing > 0].sort_values(ascending=False)
+        raise ValueError(
+            "Selected Whakaari model columns still contain NaNs:\n"
+            f"{missing}"
+        )
+
+    transformed = transform_for_cause_trigger_scaling(model_input)
 
     scaled_numeric = standard_scale_dataframe(transformed)
 
@@ -388,5 +438,5 @@ def save_whakaari_datasets(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    whakaari_raw.to_csv(output_dir / "whakaari_raw.csv")
-    whakaari_final.to_csv(output_dir / "whakaari_final.csv")
+    whakaari_raw.to_csv(output_dir / "whakaari_raw.csv", index_label="timestamp")
+    whakaari_final.to_csv(output_dir / "whakaari_final.csv", index_label="timestamp")
