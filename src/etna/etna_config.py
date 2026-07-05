@@ -67,7 +67,7 @@ def etna_observable_metadata():
             "source_id": "ESLN",
             "source_label": "ESLN seismic station (HHZ)",
             "observable": "background_seismic",
-            "observable_label": "Etna tremor/state energy, 0.80–2.30 Hz",
+            "observable_label": "Past-smoothed Etna seismic background state, 0.80–2.30 Hz",
             "family": "seismic",
             "spatial_type": "point_station",
             "lat": 37.6934,
