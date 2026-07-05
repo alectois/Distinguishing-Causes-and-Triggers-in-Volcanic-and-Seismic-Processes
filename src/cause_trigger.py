@@ -784,32 +784,23 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     
     if config.v_weighting == "backend":
         beta_2 = discovery_2.beta
-        result_refit_metadata = {
+        result["refit_metadata"] = {
             "v_weighting": "backend",
             "source": config.causal_backend,
         }
 
     elif config.v_weighting == "refit":
-        # refit only on lagged non-target B2 parents.
-        # Contemporaneous PCMCI+ trigger candidates are not added to B2
-        # and are not used to construct V.
-        beta_star, refit_metadata = refit_beta_for_selected_parents(
-            X=I_2,
-            y_t=config.y_t,
-            selected_parents=B_2_without_trigger
-            lags=config.lags,
-            alpha=config.refit_alpha,
-            cv=config.refit_cv,
-            cv_folds=config.refit_cv_folds,
-        )
+        beta_2 = None
+        result["refit_metadata"] = {
+            "v_weighting": "refit",
+            "source": "ridge_refit_per_trigger",
+        }
 
     else:
         raise ValueError(
             f"Unknown v_weighting={config.v_weighting!r}. "
             "Use 'backend' or 'refit'."
         )
-
-    result["refit_metadata"] = result_refit_metadata
 
     for x_s in T_candidates:
         B_2_without_trigger = [
@@ -830,12 +821,10 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
                 "cause": None,
                 "accepted": False,
                 "reason": "No B2 variables left after removing candidate trigger and target.",
+                "trigger_source": trigger_source,
             })
             continue
 
-        # cause selection:
-        # x_u := arg max_k |E(x_k)_I1 - E(x_k)_I2|
-        # where x_k is selected from the B2-based variable set.
         mu_before = I_1[B_2_without_trigger].mean()
         mu_after = I_2[B_2_without_trigger].mean()
         delta_mu = (mu_after - mu_before).abs()
@@ -853,17 +842,35 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
                 "trigger": x_s,
                 "cause": x_u,
                 "accepted": False,
-                "reason": "Too few observations for May-16 moderation F-test.",
+                "reason": "Too few observations for moderation F-test.",
                 "I2_length": n_I2,
                 "lags": d,
                 "n_regression_rows": regression_rows,
                 "dfd": denominator_df,
                 "required_min_I2_length": d + 4,
+                "trigger_source": trigger_source,
             })
             continue
 
         X_without_trigger = I_2[B_2_without_trigger]
-        beta_without_trigger = beta_2[B_2_without_trigger]
+
+        if config.v_weighting == "backend":
+            beta_without_trigger = beta_2[B_2_without_trigger]
+            refit_metadata_for_trigger = {
+                "v_weighting": "backend",
+                "source": config.causal_backend,
+            }
+
+        else:
+            beta_without_trigger, refit_metadata_for_trigger = refit_beta_for_selected_parents(
+                X=I_2,
+                y_t=config.y_t,
+                selected_parents=B_2_without_trigger,
+                lags=config.lags,
+                alpha=config.refit_alpha,
+                cv=config.refit_cv,
+                cv_folds=config.refit_cv_folds,
+            )
 
         V, X_without_trigger_lagged, beta_star = build_lagged_design_matrix_for_V(
             X_without_trigger.to_numpy(),
@@ -911,6 +918,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
             x_s in T_candidates_contemporaneous
         )
         moderation["trigger_tau0_info"] = contemporaneous_links.get(x_s)
+        moderation["refit_metadata_for_trigger"] = refit_metadata_for_trigger
         result["diagnostics"].append(moderation)
 
         if moderation["accepted"]:
