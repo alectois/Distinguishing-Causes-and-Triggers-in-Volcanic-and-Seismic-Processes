@@ -46,9 +46,9 @@ class EtnaWorkflowConfig:
     event_time: Optional[pd.Timestamp] = None
     alpha: float = 0.05
     selected_lag: int = 1
-    max_lags: int = 6
+    max_lags: int = 12
     min_I1_length: int = 48
-    min_I2_length: int = 48
+    min_I2_length: int = 30
     distribution: str = "gaussian"
     parameter_source: str = "automatic"
 
@@ -188,7 +188,7 @@ def select_parameters(
     df: pd.DataFrame,
     effect: str,
     *,
-    max_lags: int = 6,
+    max_lags: int = 12,
     criterion: str = "aic",
     fallback_lag: int = 1,
     fallback_distribution: str = "gaussian",
@@ -226,7 +226,7 @@ def select_lag_by_var(
     df: pd.DataFrame,
     effect: str,
     *,
-    max_lags: int = 6,
+    max_lags: int = 12,
     criterion: str = "aic",
     fallback_lag: int = 1,
 ) -> int:
@@ -248,7 +248,7 @@ def split_diagnostics(
     *,
     event_time: Optional[pd.Timestamp] = None,
     min_I1_length: int = 48,
-    min_I2_length: int = 48,
+    min_I2_length: int = 30,
 ) -> dict:
     split_info = find_effect_split(
         df[effect],
@@ -263,16 +263,21 @@ def split_diagnostics(
     if split_idx is None:
         return {
             "effect": effect,
-            "split_index": int(split_idx),
-            "split_time": split_time,
-            "I1_length": int(len(I1)),
-            "I2_length": int(len(I2)),
-            "abs_mean_I1": split_info["target_abs_mean_I1"],
-            "abs_mean_I2": split_info["target_abs_mean_I2"],
-            "abs_mean_difference": split_info["target_abs_mean_difference"],
+            "split_index": None,
+            "split_time": None,
+            "I1_length": None,
+            "I2_length": None,
+            "abs_mean_I1": None,
+            "abs_mean_I2": None,
+            "abs_mean_difference": None,
             "event_time": event_time,
-            "distance_to_event": distance_to_event,
-            "boundary_split": split_info["boundary_split"],
+            "distance_to_event": None,
+            "boundary_split": None,
+            "split_end_index": None,
+            "split_end_time": None,
+            "split_score": None,
+            "signed_mean_I1": None,
+            "signed_mean_I2": None,
         }
 
     I1 = df.iloc[:split_idx]
@@ -385,9 +390,6 @@ def result_to_row(run_name: str, result: dict, effect: str) -> dict:
         "split_index": result.get("split_index"),
         "split_timestamp": result.get("split_timestamp"),
         "split_end_timestamp": result.get("split_end_timestamp"),
-        "split_method": result.get("split_method"),
-        "split_score_start_timestamp": result.get("split_score_start_timestamp"),
-        "split_score_end_timestamp": result.get("split_score_end_timestamp"),
         "I1_length": result.get("I1_length"),
         "I2_length": result.get("I2_length"),
         "target_abs_mean_I1": result.get("target_abs_mean_I1"),
@@ -499,12 +501,13 @@ def run_suite(
 
 def run_sensitivity_grid(
     df: pd.DataFrame,
-    workflow: EtnaWorkflowConfig,
+    workflow,
     *,
     run_specs: Optional[Sequence[Mapping[str, object]]] = None,
     lags: Iterable[int] = (1, 2, 3),
     distributions: Iterable[str] = ("gaussian",),
     cond_ind_test: Optional[str] = None,
+    use_contemporaneous_triggers: Optional[bool] = None,
 ) -> pd.DataFrame:
     """Run backend/lag/distribution sensitivity checks with safe error reporting."""
     run_specs = workflow.run_specs if run_specs is None else run_specs
@@ -535,6 +538,7 @@ def run_sensitivity_grid(
                         distribution=distribution,
                         cond_ind_test=cond_ind_test,
                         parameter_source=f"{run_name}_sensitivity_grid",
+                        use_contemporaneous_triggers=use_contemporaneous_triggers,
                     )
                     row = {
                         **base_row,
@@ -544,9 +548,6 @@ def run_sensitivity_grid(
                         "refit_alpha_used": (result.get("refit_metadata", {}) or {}).get("refit_alpha_used"),
                         "split_timestamp": result.get("split_timestamp"),
                         "split_end_timestamp": result.get("split_end_timestamp"),
-                        "split_method": result.get("split_method"),
-                        "split_score_start_timestamp": result.get("split_score_start_timestamp"),
-                        "split_score_end_timestamp": result.get("split_score_end_timestamp"),
                         "I1_length": result.get("I1_length"),
                         "I2_length": result.get("I2_length"),
                         "target_abs_mean_difference": result.get("target_abs_mean_difference"),
@@ -554,6 +555,8 @@ def run_sensitivity_grid(
                         "B_2": result.get("B_2"),
                         "autoregressive_effect_parent_in_B2": result.get("autoregressive_parent_in_B2"),
                         "trigger_candidates": result.get("T_candidates"),
+                        "T_candidates_lagged": result.get("T_candidates_lagged"),
+                        "T_candidates_contemporaneous": result.get("T_candidates_contemporaneous"),
                         "accepted_triggers": result.get("T"),
                         "causes": result.get("C"),
                         "pairs": result.get("pairs"),
@@ -616,9 +619,14 @@ SENSITIVITY_COLUMNS = [
     "I2_length",
     "B_2",
     "trigger_candidates",
+    "T_candidates_lagged",
+    "T_candidates_contemporaneous",
     "accepted_triggers",
     "causes",
     "pairs",
+    "min_p_value",
+    "max_rss_reduction_ratio",
+    "n_contemporaneous_links",
     "error",
 ]
 
@@ -655,6 +663,131 @@ def accepted_sensitivity_rows(sensitivity: pd.DataFrame) -> pd.DataFrame:
     )
     return compact_sensitivity(sensitivity.loc[mask])
 
+def summarise_lag_stability(
+    sensitivity: pd.DataFrame,
+    *,
+    backend: str = "hmml",
+    reference_lag: Optional[int] = None,
+    min_adjacent: int = 2,
+) -> pd.DataFrame:
+    """
+    Summarise accepted cause-trigger pairs across lag sensitivity runs.
+
+    A pair is considered stable if it appears in at least `min_adjacent`
+    adjacent lags. If the VAR reference lag lies inside a stable cluster,
+    it is kept as the recommended lag; otherwise the first lag of the first
+    stable cluster is used.
+    """
+    if sensitivity is None or sensitivity.empty:
+        return pd.DataFrame()
+
+    rows = []
+
+    sub = sensitivity[
+        (sensitivity["backend"] == backend)
+        & sensitivity["pairs"].notna()
+        & (sensitivity["pairs"].astype(str) != "[]")
+    ].copy()
+
+    if sub.empty:
+        return pd.DataFrame()
+
+    for _, row in sub.iterrows():
+        lag = int(row["lag"])
+        pairs = row["pairs"]
+
+        if isinstance(pairs, str):
+            try:
+                import ast
+                pairs = ast.literal_eval(pairs)
+            except Exception:
+                continue
+
+        for pair in pairs:
+            if not isinstance(pair, (tuple, list)) or len(pair) != 2:
+                continue
+
+            cause, trigger = pair
+
+            rows.append({
+                "backend": row["backend"],
+                "lag": lag,
+                "cause": cause,
+                "trigger": trigger,
+                "pair": (cause, trigger),
+                "min_p_value": row.get("min_p_value"),
+                "max_rss_reduction_ratio": row.get("max_rss_reduction_ratio"),
+            })
+
+    if len(rows) == 0:
+        return pd.DataFrame()
+
+    expanded = pd.DataFrame(rows)
+    summary_rows = []
+
+    for pair, g in expanded.groupby("pair"):
+        lags = sorted(g["lag"].unique())
+
+        clusters = []
+        current = [lags[0]]
+
+        for lag in lags[1:]:
+            if lag == current[-1] + 1:
+                current.append(lag)
+            else:
+                clusters.append(current)
+                current = [lag]
+
+        clusters.append(current)
+
+        stable_clusters = [
+            cluster for cluster in clusters
+            if len(cluster) >= min_adjacent
+        ]
+
+        first_stable_cluster = stable_clusters[0] if stable_clusters else []
+
+        reference_in_stable_cluster = False
+        if reference_lag is not None:
+            reference_in_stable_cluster = any(
+                int(reference_lag) in cluster
+                for cluster in stable_clusters
+            )
+
+        if reference_in_stable_cluster:
+            recommended_lag = int(reference_lag)
+            recommendation_source = "reference_lag_inside_stable_cluster"
+        elif first_stable_cluster:
+            recommended_lag = int(first_stable_cluster[0])
+            recommendation_source = "first_stable_cluster"
+        else:
+            recommended_lag = None
+            recommendation_source = "not_stable"
+
+        summary_rows.append({
+            "pair": pair,
+            "cause": pair[0],
+            "trigger": pair[1],
+            "lags": lags,
+            "n_lags": len(lags),
+            "stable": bool(first_stable_cluster),
+            "stable_clusters": stable_clusters,
+            "reference_lag": reference_lag,
+            "reference_lag_in_stable_cluster": bool(reference_in_stable_cluster),
+            "recommended_lag": recommended_lag,
+            "recommendation_source": recommendation_source,
+            "min_p_value": g["min_p_value"].min(),
+            "max_rss_reduction_ratio": g["max_rss_reduction_ratio"].max(),
+        })
+
+    return (
+        pd.DataFrame(summary_rows)
+        .sort_values(
+            ["stable", "n_lags", "min_p_value"],
+            ascending=[False, False, True],
+        )
+        .reset_index(drop=True)
+    )
 
 # ---------------------------------------------------------------------------
 # Plot helpers

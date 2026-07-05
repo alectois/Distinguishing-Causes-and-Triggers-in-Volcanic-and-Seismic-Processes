@@ -156,8 +156,7 @@ def find_effect_split(
     return_info: bool = False,
 ):
     """
-    Paper-compatible Cause--Trigger split.
-
+    Original Cause--Trigger split.
     Finds I1=(start, split_index) and I2=[split_index, end)
     such that abs(E[y]_I2) > abs(E[y]_I1), selecting the split
     that maximizes the absolute-mean difference.

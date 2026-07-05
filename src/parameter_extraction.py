@@ -16,7 +16,7 @@ import pandas as pd
 from statsmodels.tsa.api import VAR
 
 
-def select_var_lag(df, max_lags=3, criterion="aic", fallback_lag=1):
+def select_var_lag(df, max_lags=12, criterion="aic", fallback_lag=1):
     """
     Select the optimal lag for a multivariate time series using VAR.
 
@@ -88,7 +88,7 @@ def find_distribution(series, fallback_distribution="gaussian"):
 def find_parameters(
     X,
     target_series,
-    max_lags=3, # Maximum lag to consider for VAR selection. (!!!!!! change it )
+    max_lags=12,
     criterion="aic",
     fallback_lag=1,
     fallback_distribution="gaussian",
