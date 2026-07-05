@@ -127,29 +127,6 @@ def windowed_metric(trace, fmin, fmax, window_sec, out_freq="1min", metric="rms"
     s = s.resample(out_freq).agg(agg)
     return s
 
-def make_past_background_seismic_state(
-    s: pd.Series,
-    *,
-    window_hours: int = 6,
-    min_periods: int = 3,
-) -> pd.Series:
-    """
-    Convert immediate low-frequency seismic RMS into a past-only
-    background-state proxy.
-
-    The raw hourly background_seismic feature can still respond during the
-    event itself. For Cause--Trigger analysis, the intended role of this
-    variable is a pre-existing volcanic seismic state. Therefore we smooth it
-    with a rolling median and shift it by one hour so that the value at time t
-    only depends on observations before t.
-    """
-    return (
-        pd.to_numeric(s, errors="coerce")
-        .rolling(window=window_hours, min_periods=min_periods)
-        .median()
-        .shift(1)
-    )
-
 def extract_etna_features_for_chunk(client, station: str, day_start: UTCDateTime, cfg: dict):
     pad = cfg["pad_sec"]
     t1 = day_start - pad
@@ -220,18 +197,6 @@ def build_station_waveform_dataset(
         if cache_path.exists() and not redownload:
             print(f"{station}: loading cached waveform features from {cache_path}")
             df = pd.read_pickle(cache_path)
-
-            # Recompute the background-state proxy even for cached waveform features,
-            # so old cached files do not silently keep the immediate RMS version.
-            if "background_seismic" in df.columns:
-                df = df.copy()
-                df["background_seismic"] = make_past_background_seismic_state(
-                    df["background_seismic"],
-                    window_hours=6,
-                    min_periods=3,
-                )
-                df = df.dropna(subset=["background_seismic"])
-
             failures = []
             return df, failures
 
@@ -259,17 +224,6 @@ def build_station_waveform_dataset(
     df = pd.concat(chunks).sort_index()
     df = df[~df.index.duplicated(keep="first")]
     df.index.name = "time"
-
-    # Replace immediate low-frequency RMS with a past-only smoothed
-    # seismic background-state proxy.
-    df["background_seismic"] = make_past_background_seismic_state(
-        df["background_seismic"],
-        window_hours=6,
-        min_periods=3,
-    )
-
-    # Drop only the first few rows where the past-only state proxy is undefined.
-    df = df.dropna(subset=["background_seismic"])
 
     if cache_path is not None:
         df.to_pickle(cache_path)

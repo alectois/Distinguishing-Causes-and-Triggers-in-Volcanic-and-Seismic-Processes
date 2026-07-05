@@ -46,7 +46,7 @@ def whakaari_observable_metadata():
             "source_id": "WSRZ",
             "source_label": "WSRZ seismic station",
             "observable": "ratio_4p5_8_over_8_16",
-            "observable_label": "Spectral ratio, 4.5–8 / 8–16 Hz",
+            "observable_label": "Past-smoothed spectral ratio, 4.5–8 / 8–16 Hz",
             "family": "seismic",
             "spatial_type": "point_station",
             "lat": -37.5181,

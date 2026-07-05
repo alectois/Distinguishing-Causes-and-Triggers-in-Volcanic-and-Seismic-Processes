@@ -39,7 +39,6 @@ ETNA_WAVEFORM_CONFIG = {
 
 ETNA_GAS_METEO_COLS = [
     "CO2_3",
-    "AirTemp_3",
     "pressure_drop",
     "WindSpeed",
 ]
@@ -95,18 +94,6 @@ def etna_observable_metadata():
             "observable": "CO2_3",
             "observable_label": "Soil CO₂ concentration",
             "family": "gas",
-            "spatial_type": "point_or_network_station",
-            "lat": 37.6086,
-            "lon": 15.0822,
-            "plot_role": "direct_or_network_measurement",
-        },
-        {
-            "case": "Etna",
-            "source_id": "ETNAGAS_3",
-            "source_label": "ETNAGAS network, 3c",
-            "observable": "AirTemp_3",
-            "observable_label": "Air temperature",
-            "family": "meteorology",
             "spatial_type": "point_or_network_station",
             "lat": 37.6086,
             "lon": 15.0822,

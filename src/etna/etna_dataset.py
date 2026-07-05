@@ -88,6 +88,25 @@ def merge_data(base, ext, base_time, ext_time, value_cols, tolerance_hours):
 def _numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce")
 
+def past_rolling_median_state(
+    s: pd.Series,
+    *,
+    window: int = 6,
+    min_periods: int = 3,
+) -> pd.Series:
+    """
+    Convert an immediate hourly variable into a past-only state proxy.
+
+    The value at time t depends only on observations before t:
+    a rolling median is computed and shifted by one sample.
+    """
+    return (
+        pd.to_numeric(s, errors="coerce")
+        .rolling(window=window, min_periods=min_periods)
+        .median()
+        .shift(1)
+    )
+
 def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
     """
     Log-transform strictly non-negative physical amplitudes.
@@ -242,6 +261,17 @@ def create_etna_final_dataset(
     ]
 
     base = df[base_cols].copy()
+
+    # Replace immediate low-frequency RMS with a past-only smoothed
+    # seismic background-state proxy for causal analysis.
+    base["background_seismic"] = past_rolling_median_state(
+        base["background_seismic"],
+        window=6,
+        min_periods=3,
+    )
+
+    # Drop only the first few rows where the past-only state proxy is undefined.
+    base = base.dropna(subset=["background_seismic"]).reset_index(drop=True)
 
     base["station"] = station_name
     base = base[["station", *base_cols]]

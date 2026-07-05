@@ -7,6 +7,24 @@ from sklearn.preprocessing import StandardScaler
 def _numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce")
 
+def past_rolling_median_state(
+    s: pd.Series,
+    *,
+    window: int = 6,
+    min_periods: int = 3,
+) -> pd.Series:
+    """
+    Convert an immediate hourly variable into a past-only state proxy.
+
+    The value at time t depends only on observations before t:
+        rolling median over previous values, shifted by one sample.
+    """
+    return (
+        pd.to_numeric(s, errors="coerce")
+        .rolling(window=window, min_periods=min_periods)
+        .median()
+        .shift(1)
+    )
 
 def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
     """
@@ -142,6 +160,16 @@ def build_master_dataframe(
     )
 
     wave_1h = wave.resample(master_freq).mean()
+
+    # Replace the immediate spectral ratio with a past-only smoothed
+    # spectral-state proxy. The column name is kept unchanged so the final
+    # model still uses ratio_4p5_8_over_8_16_scaled.
+    if "ratio_4p5_8_over_8_16" in wave_1h.columns:
+        wave_1h["ratio_4p5_8_over_8_16"] = past_rolling_median_state(
+            wave_1h["ratio_4p5_8_over_8_16"],
+            window=6,
+            min_periods=3,
+        )
     weather_1h = weather_vars.resample(master_freq).mean()
     so2_1h = so2.resample(master_freq).mean()
     gnss_1h = (
