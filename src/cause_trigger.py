@@ -32,10 +32,6 @@ class CauseTriggerConfig:
     distribution: str = "gaussian"
     alpha: float = 0.05
 
-    # Original experiments constrained I2; thesis adaptation also constrains I1.
-    min_I1_length: int = 12
-    min_I2_length: int = 24
-
     # Split selection.
     # I1 = X.iloc[:split_index]
     # I2 = X.iloc[split_index:]
@@ -151,54 +147,6 @@ def make_causal_backend(config: CauseTriggerConfig):
         f"Unknown causal_backend={config.causal_backend!r}. "
         "Use 'hmml', 'pcmci', or 'pcmci_plus'."
     )
-
-
-def _to_position(index, value, side="left"):
-    if value is None:
-        return None
-
-    ts = pd.Timestamp(value)
-    if getattr(index, "tz", None) is not None and ts.tzinfo is None:
-        ts = ts.tz_localize(index.tz)
-    elif getattr(index, "tz", None) is not None:
-        ts = ts.tz_convert(index.tz)
-
-    return int(index.searchsorted(ts, side=side))
-
-
-def _mean_difference(interval_1: pd.Series, interval_2: pd.Series, direction: str):
-    mean_1 = float(interval_1.mean())
-    mean_2 = float(interval_2.mean())
-
-    if direction == "increase":
-        difference = mean_2 - mean_1
-    elif direction == "absolute_mean":
-        difference = abs(mean_2) - abs(mean_1)
-    else:
-        raise ValueError(
-            f"Unknown split_direction={direction!r}. "
-            "Use 'increase' or 'absolute_mean'."
-        )
-
-    return difference, mean_1, mean_2
-
-
-def _welch_score(interval_1: pd.Series, interval_2: pd.Series, direction: str):
-    difference, mean_1, mean_2 = _mean_difference(interval_1, interval_2, direction)
-
-    n1 = len(interval_1)
-    n2 = len(interval_2)
-
-    var_1 = float(interval_1.var(ddof=1))
-    var_2 = float(interval_2.var(ddof=1))
-
-    standard_error = np.sqrt((var_1 / max(n1, 1)) + (var_2 / max(n2, 1)))
-    standard_error = max(float(standard_error), 1e-12)
-
-    score = difference / standard_error
-
-    return score, difference, mean_1, mean_2
-
 
 def find_effect_split(
     y: pd.Series,
@@ -685,10 +633,6 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     result["split_boundary_candidate"] = split_info["boundary_split"]
     result["target_mean_I1"] = split_info["target_mean_I1"]
     result["target_mean_I2"] = split_info["target_mean_I2"]
-    result["split_lag_buffer"] = split_info.get("lag_buffer")
-    result["split_score_start_index"] = split_info.get("split_score_start_index")
-    result["split_score_end_index"] = split_info.get("split_score_end_index")
-    result["split_score_I2_length"] = split_info.get("score_I2_length")
 
     if split_index is not None:
         result["split_timestamp"] = X.index[split_index]
@@ -852,7 +796,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         beta_star, refit_metadata = refit_beta_for_selected_parents(
             X=I_2,
             y_t=config.y_t,
-            selected_parents=non_trigger_vars,
+            selected_parents=B_2_without_trigger
             lags=config.lags,
             alpha=config.refit_alpha,
             cv=config.refit_cv,
