@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from cause_trigger import (
     CauseTriggerConfig,
     diagnostics_to_dataframe,
+    find_effect_split,
     find_increase_split,
     run_cause_trigger,
 )
@@ -50,6 +51,11 @@ class EtnaWorkflowConfig:
     max_lags: int = 6
     min_I1_length: int = 48
     min_I2_length: int = 48
+    split_method: str = "local_response"
+    split_direction: str = "increase"
+    split_response_length: Optional[int] = 72
+    split_search_start: Optional[pd.Timestamp] = None
+    split_search_end: Optional[pd.Timestamp] = None
     distribution: str = "gaussian"
     parameter_source: str = "automatic"
 
@@ -253,16 +259,26 @@ def split_diagnostics(
     event_time: Optional[pd.Timestamp] = None,
     min_I1_length: int = 48,
     min_I2_length: int = 48,
+    split_method: str = "local_response",
+    split_direction: str = "increase",
+    split_response_length: Optional[int] = 72,
+    split_search_start: Optional[pd.Timestamp] = None,
+    split_search_end: Optional[pd.Timestamp] = None,
 ) -> dict:
-    """Inspect the automatic paper-style split used by find_increase_split().
-
-    event_time is not used for the split. It is returned only as temporal context.
-    """
-    split_idx = find_increase_split(
+    split_info = find_effect_split(
         df[effect],
         min_I1_length=min_I1_length,
         min_I2_length=min_I2_length,
+        method=split_method,
+        direction=split_direction,
+        response_length=split_response_length,
+        search_start=split_search_start,
+        search_end=split_search_end,
+        return_info=True,
     )
+
+    split_idx = split_info["split_index"]
+    split_end_idx = split_info["split_end_index"]
 
     if split_idx is None:
         return {
@@ -280,9 +296,9 @@ def split_diagnostics(
         }
 
     I1 = df.iloc[:split_idx]
-    I2 = df.iloc[split_idx:]
+    I2 = df.iloc[split_idx:split_end_idx]
     split_time = df.index[split_idx]
-    boundary_split = split_idx == len(df) - min_I2_length
+    boundary_split = split_end_idx == len(df)
 
     distance_to_event = None
     if event_time is not None:
@@ -300,6 +316,17 @@ def split_diagnostics(
         "event_time": event_time,
         "distance_to_event": distance_to_event,
         "boundary_split": bool(boundary_split),
+        "split_end_index": int(split_end_idx),
+        "split_end_time": df.index[split_end_idx - 1],
+        "split_method": split_info["method"],
+        "split_direction": split_info["direction"],
+        "split_score": split_info["score"],
+        "split_response_length": split_info["response_length"],
+        "split_search_start": split_info["search_start"],
+        "split_search_end": split_info["search_end"],
+        "signed_mean_I1": split_info["target_mean_I1"],
+        "signed_mean_I2": split_info["target_mean_I2"],
+        "signed_mean_difference": split_info["target_mean_difference"],
     }
 
 
@@ -350,6 +377,11 @@ def make_cause_trigger_config(
         alpha=workflow.alpha,
         min_I1_length=workflow.min_I1_length,
         min_I2_length=workflow.min_I2_length,
+        split_method=workflow.split_method,
+        split_direction=workflow.split_direction,
+        split_response_length=workflow.split_response_length,
+        split_search_start=workflow.split_search_start,
+        split_search_end=workflow.split_search_end,
         parameter_source=parameter_source,
         selected_distribution=distribution,
         selected_lag=lag,

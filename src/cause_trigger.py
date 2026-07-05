@@ -16,6 +16,7 @@ return causes, trigger candidates, accepted triggers, cause-trigger pairs, and d
 
 import warnings
 from dataclasses import dataclass
+from typing import Optional
 import numpy as np
 import pandas as pd
 from scipy.stats import f
@@ -34,6 +35,24 @@ class CauseTriggerConfig:
     # Original experiments constrained I2; thesis adaptation also constrains I1.
     min_I1_length: int = 12
     min_I2_length: int = 24
+
+    # Split selection.
+    # "paper_suffix" reproduces the previous implementation:
+    #     I2 = suffix from split_index to end.
+    #
+    # "local_response" is the thesis main split:
+    #     score candidate split using a finite post-split response window
+    #     and use that finite window as I2.
+    split_method: str = "local_response"
+    split_direction: str = "increase"
+
+    # If None, uses min_I2_length.
+    split_response_length: Optional[int] = None
+
+    # Optional search bounds for event-case studies.
+    # These do not set the split; they only restrict where the automatic split is allowed.
+    split_search_start: Optional[pd.Timestamp] = None
+    split_search_end: Optional[pd.Timestamp] = None
 
     # How to construct beta_star for V = X_without-trigger @ beta_star
     # "backend" = use beta from backend; baseline for HMML
@@ -148,33 +167,225 @@ def make_causal_backend(config: CauseTriggerConfig):
         "Use 'hmml', 'pcmci', or 'pcmci_plus'."
     )
 
+
+def _to_position(index, value, side="left"):
+    if value is None:
+        return None
+
+    ts = pd.Timestamp(value)
+    if getattr(index, "tz", None) is not None and ts.tzinfo is None:
+        ts = ts.tz_localize(index.tz)
+    elif getattr(index, "tz", None) is not None:
+        ts = ts.tz_convert(index.tz)
+
+    return int(index.searchsorted(ts, side=side))
+
+
+def _mean_difference(interval_1: pd.Series, interval_2: pd.Series, direction: str):
+    mean_1 = float(interval_1.mean())
+    mean_2 = float(interval_2.mean())
+
+    if direction == "increase":
+        difference = mean_2 - mean_1
+    elif direction == "absolute_mean":
+        difference = abs(mean_2) - abs(mean_1)
+    else:
+        raise ValueError(
+            f"Unknown split_direction={direction!r}. "
+            "Use 'increase' or 'absolute_mean'."
+        )
+
+    return difference, mean_1, mean_2
+
+
+def _welch_score(interval_1: pd.Series, interval_2: pd.Series, direction: str):
+    difference, mean_1, mean_2 = _mean_difference(interval_1, interval_2, direction)
+
+    n1 = len(interval_1)
+    n2 = len(interval_2)
+
+    var_1 = float(interval_1.var(ddof=1))
+    var_2 = float(interval_2.var(ddof=1))
+
+    standard_error = np.sqrt((var_1 / max(n1, 1)) + (var_2 / max(n2, 1)))
+    standard_error = max(float(standard_error), 1e-12)
+
+    score = difference / standard_error
+
+    return score, difference, mean_1, mean_2
+
+
+def find_effect_split(
+    y: pd.Series,
+    min_I1_length: int = 12,
+    min_I2_length: int = 30,
+    *,
+    method: str = "local_response",
+    direction: str = "increase",
+    response_length: int | None = None,
+    search_start=None,
+    search_end=None,
+    return_info: bool = False,
+):
+    """
+    Select I1 and I2 for the Cause--Trigger algorithm.
+
+    method="paper_suffix":
+        Original/paper-style implementation.
+        Candidate I2 is the full suffix from split_index to the end.
+
+    method="local_response":
+        Thesis main implementation.
+        Candidate I2 is a finite response window:
+            I2 = [split_index, split_index + response_length)
+
+        This avoids selecting late high-response tails merely because the suffix
+        mean is large.
+
+    search_start/search_end:
+        Optional bounds on where split_index may lie. These are useful for
+        known event-case studies. They do not set the split manually.
+    """
+    y = pd.to_numeric(pd.Series(y), errors="coerce")
+
+    if y.isna().any():
+        raise ValueError("find_effect_split received NaNs in the target series.")
+
+    if method not in {"paper_suffix", "local_response"}:
+        raise ValueError(
+            f"Unknown split_method={method!r}. "
+            "Use 'paper_suffix' or 'local_response'."
+        )
+
+    if response_length is None:
+        response_length = min_I2_length
+
+    response_length = int(response_length)
+
+    if response_length < min_I2_length:
+        raise ValueError(
+            f"split_response_length={response_length} must be >= "
+            f"min_I2_length={min_I2_length}."
+        )
+
+    n = len(y)
+
+    lower = min_I1_length
+    upper = n - min_I2_length
+
+    start_pos = _to_position(y.index, search_start, side="left")
+    end_pos = _to_position(y.index, search_end, side="right")
+
+    if start_pos is not None:
+        lower = max(lower, start_pos)
+
+    if end_pos is not None:
+        upper = min(upper, end_pos)
+
+    candidates = []
+
+    for split_index in range(lower, upper + 1):
+        interval_1 = y.iloc[:split_index]
+
+        if method == "paper_suffix":
+            split_end_index = n
+        else:
+            split_end_index = split_index + response_length
+
+        if split_end_index > n:
+            continue
+
+        interval_2 = y.iloc[split_index:split_end_index]
+
+        if len(interval_1) < min_I1_length:
+            continue
+
+        if len(interval_2) < min_I2_length:
+            continue
+
+        if direction == "absolute_mean" and method == "paper_suffix":
+            difference, mean_1, mean_2 = _mean_difference(
+                interval_1,
+                interval_2,
+                direction="absolute_mean",
+            )
+            score = difference
+        else:
+            score, difference, mean_1, mean_2 = _welch_score(
+                interval_1,
+                interval_2,
+                direction=direction,
+            )
+
+        if difference <= 0:
+            continue
+
+        if not np.isfinite(score):
+            continue
+
+        candidates.append(
+            {
+                "split_index": int(split_index),
+                "split_end_index": int(split_end_index),
+                "score": float(score),
+                "target_mean_I1": float(mean_1),
+                "target_mean_I2": float(mean_2),
+                "target_mean_difference": float(difference),
+                "I1_length": int(len(interval_1)),
+                "I2_length": int(len(interval_2)),
+                "boundary_split": bool(split_end_index == n),
+                "method": method,
+                "direction": direction,
+                "response_length": int(response_length),
+                "search_start": search_start,
+                "search_end": search_end,
+            }
+        )
+
+    if not candidates:
+        out = {
+            "split_index": None,
+            "split_end_index": None,
+            "score": None,
+            "target_mean_I1": None,
+            "target_mean_I2": None,
+            "target_mean_difference": None,
+            "I1_length": None,
+            "I2_length": None,
+            "boundary_split": None,
+            "method": method,
+            "direction": direction,
+            "response_length": response_length,
+            "search_start": search_start,
+            "search_end": search_end,
+        }
+        return out if return_info else None
+
+    # Select the strongest local effect-regime contrast inside the allowed search window.
+    best = max(candidates, key=lambda c: c["score"])
+    best["max_score"] = float(best["score"])
+
+    return best if return_info else best["split_index"]
+
+
 def find_increase_split(
     y: pd.Series,
     min_I1_length: int = 12,
     min_I2_length: int = 30,
 ):
-    # find I1, I2 such that |E(y_t)|_I2 > |E(y_t)|_I1
-    best_split = None
-    max_abs_mean_difference = float("-inf")
+    """
+    Backward-compatible wrapper for older notebooks/helpers.
 
-    for i in range(1, len(y) - 1):
-        interval_1 = y.iloc[:i]
-        interval_2 = y.iloc[i:]
-
-        if len(interval_1) < min_I1_length:
-            continue
-        if len(interval_2) < min_I2_length:
-            continue
-
-        #|E(y_t)|_I2 > |E(y_t)|_I1
-        abs_mean_difference = abs(interval_2.mean()) - abs(interval_1.mean())
-
-        if abs_mean_difference > max_abs_mean_difference and abs_mean_difference > 0:
-            max_abs_mean_difference = abs_mean_difference
-            best_split = i
-
-    return best_split
-
+    This reproduces the previous suffix split.
+    """
+    return find_effect_split(
+        y,
+        min_I1_length=min_I1_length,
+        min_I2_length=min_I2_length,
+        method="paper_suffix",
+        direction="absolute_mean",
+        return_info=False,
+    )
 
 def residual_sum_of_squares(y_true, X_features, model):
     y_hat = model.predict(X_features)
@@ -644,20 +855,55 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         "selected_cause_shift_scores": {},
         "autoregressive_parent_in_B2": False,
         "autoregressive_parent_full_interval": False,
+        "split_end_index": None,
+        "split_end_timestamp": None,
+        "split_method": getattr(config, "split_method", None),
+        "split_direction": getattr(config, "split_direction", None),
+        "split_score": None,
+        "split_response_length": getattr(config, "split_response_length", None),
+        "split_search_start": getattr(config, "split_search_start", None),
+        "split_search_end": getattr(config, "split_search_end", None),
+        "split_boundary_candidate": None,
+        "target_mean_I1": None,
+        "target_mean_I2": None,
+        "target_mean_difference": None,
     }
 
     backend = make_causal_backend(config)
 
-    split_index = find_increase_split(
+    split_info = find_effect_split(
         X[config.y_t],
         min_I1_length=config.min_I1_length,
         min_I2_length=config.min_I2_length,
+        method=config.split_method,
+        direction=config.split_direction,
+        response_length=config.split_response_length,
+        search_start=config.split_search_start,
+        search_end=config.split_search_end,
+        return_info=True,
     )
 
+    split_index = split_info["split_index"]
+    split_end_index = split_info["split_end_index"]
+
     result["split_index"] = split_index
+    result["split_end_index"] = split_end_index
+    result["split_method"] = split_info["method"]
+    result["split_direction"] = split_info["direction"]
+    result["split_score"] = split_info["score"]
+    result["split_response_length"] = split_info["response_length"]
+    result["split_search_start"] = split_info["search_start"]
+    result["split_search_end"] = split_info["search_end"]
+    result["split_boundary_candidate"] = split_info["boundary_split"]
+    result["target_mean_I1"] = split_info["target_mean_I1"]
+    result["target_mean_I2"] = split_info["target_mean_I2"]
+    result["target_mean_difference"] = split_info["target_mean_difference"]
 
     if split_index is not None:
         result["split_timestamp"] = X.index[split_index]
+
+    if split_end_index is not None:
+        result["split_end_timestamp"] = X.index[split_end_index - 1]
 
     if split_index is None:
         discovery = backend.discover(X, y_t=config.y_t)
@@ -671,11 +917,15 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         result["full_interval_contemporaneous_links"] = discovery.scores.get(
             "_contemporaneous_links", {}
         )
-        result["stop_reason"] = "No valid I1/I2 split with |mean(y)_I2| > |mean(y)_I1|."
+        result["stop_reason"] = (
+            "No valid I1/I2 split found under "
+            f"split_method={config.split_method!r}, "
+            f"split_direction={config.split_direction!r}."
+        )
         return result
 
     I_1 = X.iloc[:split_index]
-    I_2 = X.iloc[split_index:]
+    I_2 = X.iloc[split_index:split_end_index]
 
     result["I1_length"] = len(I_1)
     result["I2_length"] = len(I_2)
