@@ -281,7 +281,7 @@ def split_diagnostics(
     I1 = df.iloc[:split_idx]
     I2 = df.iloc[split_idx:split_end_idx]
     split_time = df.index[split_idx]
-    boundary_split = split_end_idx == len(df)
+    boundary_split = bool(split_info["boundary_split"])
 
     distance_to_event = None
     if event_time is not None:

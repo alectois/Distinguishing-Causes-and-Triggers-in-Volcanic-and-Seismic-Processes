@@ -73,8 +73,11 @@ def _count_nan_groups(x):
     return groups
 
 def get_day_trace(client, day_start, cfg):
-    t1 = UTCDateTime(day_start)
-    t2 = t1 + 24 * 3600
+    pad = cfg.get("pad_sec", 0)
+
+    day_start_utc = UTCDateTime(day_start)
+    t1 = day_start_utc - pad
+    t2 = day_start_utc + 24 * 3600 + pad
 
     st = client.get_waveforms(
         cfg["network"],
@@ -259,6 +262,11 @@ def extract_features_for_day(client, day_start, cfg):
     effect_h = effect.resample(out_freq).mean()
 
     df = pd.concat([hydro_h, ratio_h, hf_rate, effect_h], axis=1)
+
+    left = pd.Timestamp(UTCDateTime(day_start).datetime, tz="UTC")
+    right = left + pd.Timedelta(days=1)
+
+    df = df.loc[(df.index >= left) & (df.index < right)].copy()
 
     return df
 

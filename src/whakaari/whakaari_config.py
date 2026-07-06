@@ -21,6 +21,7 @@ WHAKAARI_WAVEFORM_CONFIG = {
     "response_output": "VEL",
     "pre_filt": (0.5, 1.0, 20.0, 25.0),
     "max_interp_gap_sec": 2.0,
+    "pad_sec": 3600,
 }
 
 MASTER_FREQ = "1h"
