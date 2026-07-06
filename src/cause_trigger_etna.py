@@ -29,17 +29,7 @@ DEFAULT_RUN_SPECS = (
 
 @dataclass(frozen=True)
 class EtnaWorkflowConfig:
-    """Shared experiment settings for one Etna Cause--Trigger analysis.
-
-    The main notebook should keep the method generalized:
-        - selected_lag is normally obtained by VAR/AIC before creating this config;
-        - distribution is normally obtained by find_parameters(), with Gaussian expected
-          for standardized data containing negative values;
-        - the split is selected inside run_cause_trigger() from the effect series.
-
-    event_time is kept only for plotting/context. For Etna this is the
-    Wenchuan origin time or the local teleseismic-arrival time. It is not used by
-    the algorithm.
+    """Shared experiment settings for Etna Cause--Trigger analysis.
     """
 
     effect: str = EFFECT
@@ -47,8 +37,8 @@ class EtnaWorkflowConfig:
     alpha: float = 0.05
     selected_lag: int = 1
     max_lags: int = 12
-    min_I1_length: int = 48
-    min_I2_length: int = 30
+    min_I1_length = 48
+    min_I2_length = 48
     distribution: str = "gaussian"
     parameter_source: str = "automatic"
 
@@ -248,7 +238,7 @@ def split_diagnostics(
     *,
     event_time: Optional[pd.Timestamp] = None,
     min_I1_length: int = 48,
-    min_I2_length: int = 30,
+    min_I2_length: int = 48,
 ) -> dict:
     split_info = find_effect_split(
         df[effect],
