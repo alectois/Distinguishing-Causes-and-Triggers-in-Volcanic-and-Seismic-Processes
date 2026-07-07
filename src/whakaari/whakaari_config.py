@@ -71,7 +71,7 @@ def whakaari_observable_metadata():
             "source_id": "WSRZ",
             "source_label": "WSRZ seismic station",
             "observable": "effect_tremor_5_15",
-            "observable_label": "Tremor response RMS, 5–15 Hz",
+            "observable_label": "Positive tremor-response anomaly, 5–15 Hz",
             "family": "seismic",
             "spatial_type": "point_station",
             "lat": -37.5181,

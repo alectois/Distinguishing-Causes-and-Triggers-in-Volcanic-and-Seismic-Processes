@@ -129,6 +129,32 @@ def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
 
     return np.log(x.clip(lower=0) + eps)
 
+def positive_past_log_anomaly(
+    s: pd.Series,
+    *,
+    baseline_window: int = 24,
+    min_periods: int = 12,
+) -> pd.Series:
+    """
+    Convert a positive amplitude series into a positive past-baseline anomaly.
+
+    The value at time t is:
+        max(log(x_t + eps) - median(log(x_{t-24:t-1} + eps)), 0)
+
+    This is used for effect proxies where the target should represent
+    a positive response anomaly rather than raw absolute amplitude.
+    """
+    log_s = safe_log_positive(s)
+
+    past_baseline = (
+        log_s
+        .rolling(window=baseline_window, min_periods=min_periods)
+        .median()
+        .shift(1)
+    )
+
+    return (log_s - past_baseline).clip(lower=0)
+
 def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     """
     Apply family-aware transformations before StandardScaler.
@@ -143,7 +169,6 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     log_positive_cols = [
         "teleseismic",
         "background_seismic",
-        "effect_seismic",
     ]
 
     # Positive accumulation / gas variables.
@@ -270,8 +295,18 @@ def create_etna_final_dataset(
         min_periods=3,
     )
 
-    # Drop only the first few rows where the past-only state proxy is undefined.
-    base = base.dropna(subset=["background_seismic"]).reset_index(drop=True)
+    # Replace raw high-frequency RMS with a positive local response anomaly.
+    # This is the Etna effect proxy used by the Cause--Trigger analysis.
+    base["effect_seismic"] = positive_past_log_anomaly(
+        base["effect_seismic"],
+        baseline_window=24,
+        min_periods=12,
+    )
+
+    # Drop only the first rows where past-only state/anomaly construction is undefined.
+    base = base.dropna(
+        subset=["background_seismic", "effect_seismic"]
+    ).reset_index(drop=True)
 
     base["station"] = station_name
     base = base[["station", *base_cols]]

@@ -78,7 +78,7 @@ def etna_observable_metadata():
             "source_id": "ESLN",
             "source_label": "ESLN seismic station (HHZ)",
             "observable": "effect_seismic",
-            "observable_label": "High-frequency seismic response, 4–8 Hz",
+            "observable_label": "Positive high-frequency seismic-response anomaly, 4–8 Hz",
             "family": "seismic",
             "spatial_type": "point_station",
             "lat": 37.6934,

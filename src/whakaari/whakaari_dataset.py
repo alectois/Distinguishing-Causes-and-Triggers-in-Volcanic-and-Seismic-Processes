@@ -48,6 +48,31 @@ def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
 
     return np.log(x.clip(lower=0) + eps)
 
+def positive_past_log_anomaly(
+    s: pd.Series,
+    *,
+    baseline_window: int = 24,
+    min_periods: int = 12,
+) -> pd.Series:
+    """
+    Convert a positive amplitude series into a positive past-baseline anomaly.
+
+    The value at time t is:
+        max(log(x_t + eps) - median(log(x_{t-24:t-1} + eps)), 0)
+
+    This is used for effect proxies where the target should represent
+    a positive response anomaly rather than raw absolute amplitude.
+    """
+    log_s = safe_log_positive(s)
+
+    past_baseline = (
+        log_s
+        .rolling(window=baseline_window, min_periods=min_periods)
+        .median()
+        .shift(1)
+    )
+
+    return (log_s - past_baseline).clip(lower=0)
 
 def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     """
@@ -63,7 +88,6 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     # Use log, not log1p, because waveform RMS values are often << 1.
     log_positive_cols = [
         "hydro_2_5",
-        "effect_tremor_5_15",
         "ratio_4p5_8_over_8_16",
     ]
 
@@ -162,8 +186,7 @@ def build_master_dataframe(
     wave_1h = wave.resample(master_freq).mean()
 
     # Replace the immediate spectral ratio with a past-only smoothed
-    # spectral-state proxy. The column name is kept unchanged so the final
-    # model still uses ratio_4p5_8_over_8_16_scaled.
+    # spectral-state proxy. 
     if "ratio_4p5_8_over_8_16" in wave_1h.columns:
         wave_1h["ratio_4p5_8_over_8_16"] = past_rolling_median_state(
             wave_1h["ratio_4p5_8_over_8_16"],
@@ -179,6 +202,16 @@ def build_master_dataframe(
         .resample(master_freq)
         .ffill()
     )
+
+    # Replace raw 5--15 Hz RMS with a positive tremor-response anomaly.
+    # positive values represent eruption-response
+    # excess above the recent past baseline.
+    if "effect_tremor_5_15" in wave_1h.columns:
+        wave_1h["effect_tremor_5_15"] = positive_past_log_anomaly(
+            wave_1h["effect_tremor_5_15"],
+            baseline_window=24,
+            min_periods=12,
+        )
 
     wave_1h = wave_1h.reindex(master_index)
     weather_1h = weather_1h.reindex(master_index)
