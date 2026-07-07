@@ -102,13 +102,40 @@ WHAKAARI_EXTERNAL_COLS = [
 
 WHAKAARI_AXIS_LABELS = {
     "hydro_2_5": ("Hydrothermal tremor RMS, 2–5 Hz", "RMS velocity"),
-    "ratio_4p5_8_over_8_16": ("Spectral ratio, 4.5–8 / 8–16 Hz", "Ratio"),
+    "ratio_4p5_8_over_8_16": (
+        "Past-smoothed spectral-ratio state, 4.5–8 / 8–16 Hz",
+        "Rolling-median ratio"
+    ),
     "event_rate_2_5": ("STA/LTA event-rate proxy, 2–5 Hz", "Events per hour"),
-    "effect_tremor_5_15": ("Tremor response RMS (Effect), 5–15 Hz", "RMS velocity"),
+    "effect_tremor_5_15": (
+        "Positive tremor-response anomaly (Effect), 5–15 Hz",
+        "Positive log-RMS anomaly"
+    ),
     "API": ("Antecedent precipitation index", "mm"),
     "pressure_drop": ("Atmospheric pressure drop", "hPa"),
     "SO2_flux": ("SO₂ flux", "t d⁻¹"),
     "GNSS_deformation": ("GNSS deformation", "m"),
+
+    "hydro_2_5_scaled": (
+        "Hydrothermal tremor RMS, 2–5 Hz",
+        "Standardized log RMS"
+    ),
+    "ratio_4p5_8_over_8_16_scaled": (
+        "Past-smoothed spectral-ratio state, 4.5–8 / 8–16 Hz",
+        "Standardized log ratio"
+    ),
+    "event_rate_2_5_scaled": (
+        "STA/LTA event-rate proxy, 2–5 Hz",
+        "Standardized transformed value"
+    ),
+    "effect_tremor_5_15_scaled": (
+        "Positive tremor-response anomaly (Effect), 5–15 Hz",
+        "Standardized positive anomaly"
+    ),
+    "API_scaled": ("Antecedent precipitation index", "Standardized transformed value"),
+    "pressure_drop_scaled": ("Atmospheric pressure drop", "Standardized transformed value"),
+    "SO2_flux_scaled": ("SO₂ flux", "Standardized transformed value"),
+    "GNSS_deformation_scaled": ("GNSS deformation", "Standardized value"),
 }
 
 

@@ -42,39 +42,36 @@ ETNA_AXIS_LABELS = {
         "RMS velocity"
     ),
     "background_seismic": (
-        "Etna tremor/state energy, 0.80–2.30 Hz",
-        "RMS velocity"
+        "Past-smoothed seismic background state, 0.80–2.30 Hz",
+        "Rolling-median RMS velocity"
     ),
     "effect_seismic": (
-        "High-frequency seismic response (Effect), 4–8 Hz",
-        "RMS velocity"
+        "Positive high-frequency response anomaly (Effect), 4–8 Hz",
+        "Positive log-RMS anomaly"
     ),
     "CO2_3": ("Soil CO₂ concentration", "%"),
-    "AirTemp_3": ("Air temperature", "°C"),
     "API": ("Antecedent precipitation index", "mm"),
     "pressure_drop": ("Atmospheric pressure drop", "hPa"),
     "WindSpeed": ("Wind speed", "m s⁻¹"),
     "CO2_SO2": ("Plume CO₂/SO₂ ratio", "Molar ratio"),
-    
+
     "teleseismic_scaled": (
         "Teleseismic energy, 0.03–0.30 Hz",
         "Standardized log RMS"
     ),
     "background_seismic_scaled": (
-        "Etna tremor/state energy, 0.80–2.30 Hz",
-        "Standardized log RMS"
+        "Past-smoothed seismic background state, 0.80–2.30 Hz",
+        "Standardized log state"
     ),
     "effect_seismic_scaled": (
-        "High-frequency seismic response (Effect), 4–8 Hz",
-        "Standardized log RMS"
+        "Positive high-frequency response anomaly (Effect), 4–8 Hz",
+        "Standardized positive anomaly"
     ),
     "CO2_3_scaled": ("Soil CO₂ concentration", "Standardized transformed value"),
-    "AirTemp_3_scaled": ("Air temperature", "Standardized value"),
     "API_scaled": ("Antecedent precipitation index", "Standardized transformed value"),
     "pressure_drop_scaled": ("Atmospheric pressure drop", "Standardized transformed value"),
     "WindSpeed_scaled": ("Wind speed", "Standardized value"),
     "CO2_SO2_scaled": ("Plume CO₂/SO₂ ratio", "Standardized transformed value"),
-    
 }
 
 ETNA_RAW_ORDER = [
@@ -82,7 +79,6 @@ ETNA_RAW_ORDER = [
     "background_seismic",
     "effect_seismic",
     "CO2_3",
-    "AirTemp_3",
     "API",
     "pressure_drop",
     "WindSpeed",
@@ -97,7 +93,6 @@ ETNA_SEISMIC_COLS = [
 
 ETNA_EXTERNAL_COLS = [
     "CO2_3",
-    "AirTemp_3",
     "API",
     "pressure_drop",
     "WindSpeed",
@@ -109,7 +104,6 @@ ETNA_SCALED_ORDER = [
     "background_seismic_scaled",
     "effect_seismic_scaled",
     "CO2_3_scaled",
-    "AirTemp_3_scaled",
     "API_scaled",
     "pressure_drop_scaled",
     "WindSpeed_scaled",
@@ -738,8 +732,8 @@ def plot_etna_thesis_figures(
         panel_height=1.38,
         tick_interval_days=4,
         line_width=0.70,
-        shared_y=True,   # shared label only
-        common_y_label="RMS velocity",
+        shared_y=False,   # shared label only
+        common_y_label=None,
     )
 
     external = _plot_etna_group(
