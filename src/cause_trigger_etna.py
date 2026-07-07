@@ -37,8 +37,8 @@ class EtnaWorkflowConfig:
     alpha: float = 0.05
     selected_lag: int = 1
     max_lags: int = 12
-    min_I1_length = 48
-    min_I2_length = 48
+    min_I1_length: int = 48
+    min_I2_length: int = 48
     distribution: str = "gaussian"
     parameter_source: str = "automatic"
 
