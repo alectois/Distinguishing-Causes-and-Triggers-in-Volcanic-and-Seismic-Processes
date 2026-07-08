@@ -12,7 +12,6 @@ from cause_trigger import (
     CauseTriggerConfig,
     diagnostics_to_dataframe,
     find_effect_split,
-    find_increase_split,
     run_cause_trigger,
 )
 from parameter_extraction import find_parameters
@@ -24,6 +23,16 @@ DEFAULT_RUN_SPECS = (
     {"run": "hmml_backend_beta", "backend": "hmml"},
     {"run": "pcmci_ridge", "backend": "pcmci"},
     {"run": "pcmci_plus_ridge", "backend": "pcmci_plus"},
+)
+
+COMPACT_RUN_SPECS = (
+    {"run": "hmml_backend_beta", "backend": "hmml"},
+    {"run": "pcmci_ridge", "backend": "pcmci"},
+    {
+        "run": "pcmci_plus_tau0_ridge",
+        "backend": "pcmci_plus",
+        "use_contemporaneous_triggers": True,
+    },
 )
 
 
@@ -138,6 +147,17 @@ def load_model_frame(
 
     return model
 
+def case_study_interval(
+    df_full: pd.DataFrame,
+    event_time: pd.Timestamp,
+    *,
+    pre_days: int,
+    post_hours: int,
+) -> pd.DataFrame:
+    event_time = pd.Timestamp(event_time)
+    case_start = event_time - pd.Timedelta(days=int(pre_days))
+    case_end = event_time + pd.Timedelta(hours=int(post_hours))
+    return df_full.loc[case_start:case_end].copy()
 
 def model_overview(df: pd.DataFrame, effect: str) -> dict:
     """Return compact dataframe/target diagnostics for notebook display."""
@@ -211,6 +231,33 @@ def select_parameters(
         "fallback_distribution": fallback_distribution,
     }
 
+def reference_parameter_table(
+    df: pd.DataFrame,
+    effect: str,
+    *,
+    max_lags: int = 12,
+    criteria: Sequence[str] = ("aic", "bic"),
+    fallback_lag: int = 1,
+    fallback_distribution: str = "gaussian",
+) -> pd.DataFrame:
+    """
+    Return VAR-AIC/VAR-BIC lag references and distribution metadata.
+
+    These values are reported as metadata only. The final interpretation should
+    come from the physically defined case window and the lag grid.
+    """
+    rows = [
+        select_parameters(
+            df,
+            effect,
+            max_lags=max_lags,
+            criterion=criterion,
+            fallback_lag=fallback_lag,
+            fallback_distribution=fallback_distribution,
+        )
+        for criterion in criteria
+    ]
+    return pd.DataFrame(rows)
 
 def select_lag_by_var(
     df: pd.DataFrame,
@@ -464,6 +511,8 @@ def run_suite(
     for spec in run_specs:
         run_name = str(spec["run"])
         backend = str(spec["backend"])
+        spec_cond_ind_test = spec.get("cond_ind_test", cond_ind_test)
+        spec_use_contemporaneous = spec.get("use_contemporaneous_triggers", None)
 
         result, diag, row = run_one(
             df,
@@ -472,7 +521,8 @@ def run_suite(
             backend=backend,
             lag=lag,
             distribution=distribution,
-            cond_ind_test=cond_ind_test,
+            cond_ind_test=spec_cond_ind_test,
+            use_contemporaneous_triggers=spec_use_contemporaneous,
         )
         results[run_name] = result
         comparison_rows.append(row)
@@ -507,6 +557,11 @@ def run_sensitivity_grid(
     for spec in run_specs:
         run_name = str(spec["run"])
         backend = str(spec["backend"])
+        spec_cond_ind_test = spec.get("cond_ind_test", cond_ind_test)
+        spec_use_contemporaneous = spec.get(
+            "use_contemporaneous_triggers",
+            use_contemporaneous_triggers,
+        )
 
         for lag in lags:
             for distribution in distributions:
@@ -515,7 +570,7 @@ def run_sensitivity_grid(
                     "backend": backend,
                     "lag": int(lag),
                     "distribution": distribution,
-                    "cond_ind_test": cond_ind_test if backend in {"pcmci", "pcmci_plus"} else None,
+                    "cond_ind_test": spec_cond_ind_test if backend in {"pcmci", "pcmci_plus"} else None,
                     "run": run_name,
                 }
                 try:
@@ -526,9 +581,9 @@ def run_sensitivity_grid(
                         backend=backend,
                         lag=int(lag),
                         distribution=distribution,
-                        cond_ind_test=cond_ind_test,
+                        cond_ind_test=spec_cond_ind_test,
                         parameter_source=f"{run_name}_sensitivity_grid",
-                        use_contemporaneous_triggers=use_contemporaneous_triggers,
+                        use_contemporaneous_triggers=spec_use_contemporaneous,
                     )
                     row = {
                         **base_row,
@@ -653,131 +708,198 @@ def accepted_sensitivity_rows(sensitivity: pd.DataFrame) -> pd.DataFrame:
     )
     return compact_sensitivity(sensitivity.loc[mask])
 
-def summarise_lag_stability(
+def _has_nonempty_output(value) -> bool:
+    """True for non-empty list-like/dict outputs and non-empty scalar strings."""
+    if isinstance(value, (list, tuple, set, dict)):
+        return len(value) > 0
+
+    if value is None:
+        return False
+
+    try:
+        if pd.isna(value):
+            return False
+    except Exception:
+        pass
+
+    return str(value) not in {"", "[]", "{}", "nan", "None"}
+
+
+def compact_grid_outputs(
     sensitivity: pd.DataFrame,
     *,
-    backend: str = "hmml",
-    reference_lag: Optional[int] = None,
-    min_adjacent: int = 2,
+    mode: str = "pairs",
+    include_errors: bool = False,
 ) -> pd.DataFrame:
     """
-    Summarise accepted cause-trigger pairs across lag sensitivity runs.
+    Return compact sensitivity rows with actual output.
 
-    A pair is considered stable if it appears in at least `min_adjacent`
-    adjacent lags. If the VAR reference lag lies inside a stable cluster,
-    it is kept as the recommended lag; otherwise the first lag of the first
-    stable cluster is used.
+    mode:
+        "pairs"    = only rows with accepted cause-trigger pairs.
+        "accepted" = rows with accepted triggers or pairs.
+        "signals"  = rows with B2, trigger candidates, accepted triggers,
+                     pairs, or contemporaneous links.
+
+    This replaces notebook-side stability/cluster filtering. It does not decide
+    which outputs are scientifically acceptable; it only removes empty rows.
+    """
+    if sensitivity is None or sensitivity.empty:
+        return pd.DataFrame()
+
+    out = compact_sensitivity(sensitivity).copy()
+
+    if mode == "pairs":
+        mask = out["pairs"].apply(_has_nonempty_output)
+    elif mode == "accepted":
+        mask = (
+            out["accepted_triggers"].apply(_has_nonempty_output)
+            | out["pairs"].apply(_has_nonempty_output)
+        )
+    elif mode == "signals":
+        mask = (
+            out["B_2"].apply(_has_nonempty_output)
+            | out["trigger_candidates"].apply(_has_nonempty_output)
+            | out["accepted_triggers"].apply(_has_nonempty_output)
+            | out["pairs"].apply(_has_nonempty_output)
+            | (out["n_contemporaneous_links"].fillna(0) > 0)
+        )
+    else:
+        raise ValueError("mode must be 'pairs', 'accepted', or 'signals'.")
+
+    if include_errors and "error" in out.columns:
+        mask = mask | out["error"].apply(
+            lambda x: isinstance(x, str) and len(x) > 0
+        )
+
+    return out.loc[mask].reset_index(drop=True)
+
+def compact_grid_errors(sensitivity: pd.DataFrame) -> pd.DataFrame:
+    """Return only backend/lag rows that raised an error."""
+    if sensitivity is None or sensitivity.empty or "error" not in sensitivity.columns:
+        return pd.DataFrame()
+
+    out = compact_sensitivity(sensitivity).copy()
+    mask = out["error"].apply(lambda x: isinstance(x, str) and len(x) > 0)
+    return out.loc[mask].reset_index(drop=True)
+
+def expand_pair_outputs(sensitivity: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert grid output into one row per accepted cause-trigger pair.
+
+    This is the cleanest table for thesis interpretation because it removes
+    empty lag rows and avoids treating lag stability as an automatic criterion.
     """
     if sensitivity is None or sensitivity.empty:
         return pd.DataFrame()
 
     rows = []
 
-    sub = sensitivity[
-        (sensitivity["backend"] == backend)
-        & sensitivity["pairs"].notna()
-        & (sensitivity["pairs"].astype(str) != "[]")
-    ].copy()
+    for _, row in sensitivity.iterrows():
+        pairs = row.get("pairs", [])
 
-    if sub.empty:
-        return pd.DataFrame()
-
-    for _, row in sub.iterrows():
-        lag = int(row["lag"])
-        pairs = row["pairs"]
-
-        if isinstance(pairs, str):
-            try:
-                import ast
-                pairs = ast.literal_eval(pairs)
-            except Exception:
-                continue
+        if not _has_nonempty_output(pairs):
+            continue
 
         for pair in pairs:
             if not isinstance(pair, (tuple, list)) or len(pair) != 2:
                 continue
 
             cause, trigger = pair
-
             rows.append({
-                "backend": row["backend"],
-                "lag": lag,
+                "backend": row.get("backend"),
+                "run": row.get("run"),
+                "lag": row.get("lag"),
+                "distribution": row.get("distribution"),
                 "cause": cause,
                 "trigger": trigger,
-                "pair": (cause, trigger),
+                "split_timestamp": row.get("split_timestamp"),
+                "I1_length": row.get("I1_length"),
+                "I2_length": row.get("I2_length"),
                 "min_p_value": row.get("min_p_value"),
                 "max_rss_reduction_ratio": row.get("max_rss_reduction_ratio"),
+                "n_contemporaneous_links": row.get("n_contemporaneous_links"),
             })
 
     if len(rows) == 0:
         return pd.DataFrame()
 
-    expanded = pd.DataFrame(rows)
-    summary_rows = []
-
-    for pair, g in expanded.groupby("pair"):
-        lags = sorted(g["lag"].unique())
-
-        clusters = []
-        current = [lags[0]]
-
-        for lag in lags[1:]:
-            if lag == current[-1] + 1:
-                current.append(lag)
-            else:
-                clusters.append(current)
-                current = [lag]
-
-        clusters.append(current)
-
-        stable_clusters = [
-            cluster for cluster in clusters
-            if len(cluster) >= min_adjacent
-        ]
-
-        first_stable_cluster = stable_clusters[0] if stable_clusters else []
-
-        reference_in_stable_cluster = False
-        if reference_lag is not None:
-            reference_in_stable_cluster = any(
-                int(reference_lag) in cluster
-                for cluster in stable_clusters
-            )
-
-        if reference_in_stable_cluster:
-            recommended_lag = int(reference_lag)
-            recommendation_source = "reference_lag_inside_stable_cluster"
-        elif first_stable_cluster:
-            recommended_lag = int(first_stable_cluster[0])
-            recommendation_source = "first_stable_cluster"
-        else:
-            recommended_lag = None
-            recommendation_source = "not_stable"
-
-        summary_rows.append({
-            "pair": pair,
-            "cause": pair[0],
-            "trigger": pair[1],
-            "lags": lags,
-            "n_lags": len(lags),
-            "stable": bool(first_stable_cluster),
-            "stable_clusters": stable_clusters,
-            "reference_lag": reference_lag,
-            "reference_lag_in_stable_cluster": bool(reference_in_stable_cluster),
-            "recommended_lag": recommended_lag,
-            "recommendation_source": recommendation_source,
-            "min_p_value": g["min_p_value"].min(),
-            "max_rss_reduction_ratio": g["max_rss_reduction_ratio"].max(),
-        })
-
     return (
-        pd.DataFrame(summary_rows)
-        .sort_values(
-            ["stable", "n_lags", "min_p_value"],
-            ascending=[False, False, True],
-        )
+        pd.DataFrame(rows)
+        .sort_values(["backend", "lag", "min_p_value"], ascending=[True, True, True])
         .reset_index(drop=True)
     )
+
+
+def split_parameter_grid(
+    df_full: pd.DataFrame,
+    effect: str,
+    *,
+    event_time: pd.Timestamp,
+    pre_days: Iterable[int],
+    post_hours: Iterable[int],
+    min_I1_lengths: Iterable[int] = (48,),
+    min_I2_lengths: Iterable[int] = (30,),
+) -> pd.DataFrame:
+    """
+    Audit split sensitivity to case window and minimum interval lengths.
+
+    This should be used before backend runs. It reports where the automatic
+    Cause--Trigger split falls under physically motivated window choices.
+    """
+    event_time = pd.Timestamp(event_time)
+    rows = []
+
+    for pre in pre_days:
+        for post in post_hours:
+            case_start = event_time - pd.Timedelta(days=int(pre))
+            case_end = event_time + pd.Timedelta(hours=int(post))
+            df = df_full.loc[case_start:case_end].copy()
+
+            for min_I1 in min_I1_lengths:
+                for min_I2 in min_I2_lengths:
+                    enough_rows = len(df) >= int(min_I1) + int(min_I2)
+
+                    if not enough_rows:
+                        rows.append({
+                            "pre_days": int(pre),
+                            "post_hours": int(post),
+                            "n_rows": int(len(df)),
+                            "min_I1_length": int(min_I1),
+                            "min_I2_length": int(min_I2),
+                            "split_time": None,
+                            "distance_to_event": None,
+                            "I1_length": None,
+                            "I2_length": None,
+                            "abs_mean_difference": None,
+                            "boundary_split": None,
+                            "reason": "not_enough_rows",
+                        })
+                        continue
+
+                    split = split_diagnostics(
+                        df,
+                        effect,
+                        event_time=event_time,
+                        min_I1_length=int(min_I1),
+                        min_I2_length=int(min_I2),
+                    )
+
+                    rows.append({
+                        "pre_days": int(pre),
+                        "post_hours": int(post),
+                        "n_rows": int(len(df)),
+                        "min_I1_length": int(min_I1),
+                        "min_I2_length": int(min_I2),
+                        "split_time": split.get("split_time"),
+                        "distance_to_event": split.get("distance_to_event"),
+                        "I1_length": split.get("I1_length"),
+                        "I2_length": split.get("I2_length"),
+                        "abs_mean_difference": split.get("abs_mean_difference"),
+                        "boundary_split": split.get("boundary_split"),
+                        "reason": None if split.get("split_time") is not None else "no_valid_split",
+                    })
+
+    return pd.DataFrame(rows)
 
 # ---------------------------------------------------------------------------
 # Plot helpers
