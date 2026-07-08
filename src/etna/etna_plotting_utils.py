@@ -45,9 +45,9 @@ ETNA_AXIS_LABELS = {
         "Past-smoothed seismic background state, 0.80–2.30 Hz",
         "Rolling-median RMS velocity"
     ),
-    "effect_seismic": (
-        "Positive high-frequency response anomaly (Effect), 4–8 Hz",
-        "Positive log-RMS anomaly"
+    "local_event_rate_anomaly": (
+        "Catalogue local event-rate anomaly (Effect)",
+        "Positive log1p-count anomaly"
     ),
     "CO2_3": ("Soil CO₂ concentration", "%"),
     "API": ("Antecedent precipitation index", "mm"),
@@ -63,9 +63,9 @@ ETNA_AXIS_LABELS = {
         "Past-smoothed seismic background state, 0.80–2.30 Hz",
         "Standardized log state"
     ),
-    "effect_seismic_scaled": (
-        "Positive high-frequency response anomaly (Effect), 4–8 Hz",
-        "Standardized positive anomaly"
+    "local_event_rate_anomaly_scaled": (
+        "Catalogue local event-rate anomaly (Effect)",
+        "Standardized positive log1p-count anomaly"
     ),
     "CO2_3_scaled": ("Soil CO₂ concentration", "Standardized transformed value"),
     "API_scaled": ("Antecedent precipitation index", "Standardized transformed value"),
@@ -77,7 +77,7 @@ ETNA_AXIS_LABELS = {
 ETNA_RAW_ORDER = [
     "teleseismic",
     "background_seismic",
-    "effect_seismic",
+    "local_event_rate_anomaly",
     "CO2_3",
     "API",
     "pressure_drop",
@@ -88,7 +88,10 @@ ETNA_RAW_ORDER = [
 ETNA_SEISMIC_COLS = [
     "teleseismic",
     "background_seismic",
-    "effect_seismic",
+]
+
+ETNA_EFFECT_COLS = [
+    "local_event_rate_anomaly",
 ]
 
 ETNA_EXTERNAL_COLS = [
@@ -102,7 +105,7 @@ ETNA_EXTERNAL_COLS = [
 ETNA_SCALED_ORDER = [
     "teleseismic_scaled",
     "background_seismic_scaled",
-    "effect_seismic_scaled",
+    "local_event_rate_anomaly_scaled",
     "CO2_3_scaled",
     "API_scaled",
     "pressure_drop_scaled",
@@ -437,8 +440,6 @@ def run_teleseismic_checks(
         (0.30, "0.30 Hz"),
         (0.80, "0.80 Hz"),
         (2.30, "2.30 Hz"),
-        (4.00, "4 Hz"),
-        (8.00, "8 Hz"),
     ]
 
     for freq, label in band_guides:
@@ -497,7 +498,7 @@ def run_teleseismic_checks(
             color="black",
             linestyle="--",
             linewidth=1.15,
-            label="Frequency-band boundaries",
+            label="Waveform proxy band boundaries",
         ),
     ]
 
@@ -523,6 +524,102 @@ def run_teleseismic_checks(
         "t_peak_hourly": t_peak_hourly,
         "peak_diff": t_peak_1m - t_peak_hourly,
     }
+
+def plot_etna_catalogue_counts(
+    catalog_df,
+    event_time,
+    *,
+    time_window=None,
+    filename="etna_catalogue_hourly_counts",
+    save_dir="figures",
+    fig_width=8.0,
+    fig_height=2.6,
+):
+    """
+    Plot raw hourly catalogue event counts around the Etna case window.
+    This is a diagnostic figure for the catalogue-derived effect target.
+    """
+    set_thesis_style()
+
+    events = catalog_df.copy()
+
+    if "timestamp" not in events.columns:
+        if "time" in events.columns:
+            events = events.rename(columns={"time": "timestamp"})
+        else:
+            raise ValueError("catalog_df must contain 'timestamp' or 'time'.")
+
+    events["timestamp"] = pd.to_datetime(events["timestamp"], utc=True, errors="coerce")
+    events = events.dropna(subset=["timestamp"]).sort_values("timestamp")
+
+    if isinstance(event_time, UTCDateTime):
+        event_time = pd.Timestamp(event_time.datetime, tz="UTC")
+    else:
+        event_time = pd.to_datetime(event_time, utc=True)
+
+    if time_window is None:
+        start = event_time - pd.Timedelta(days=3)
+        end = event_time + pd.Timedelta(hours=36)
+    else:
+        start = pd.to_datetime(time_window[0], utc=True)
+        end = pd.to_datetime(time_window[1], utc=True)
+
+    hourly = (
+        events
+        .set_index("timestamp")
+        .assign(count=1)
+        ["count"]
+        .resample("1h")
+        .sum()
+        .loc[start:end]
+    )
+
+    full_index = pd.date_range(start=start, end=end, freq="1h", tz="UTC")
+    hourly = hourly.reindex(full_index, fill_value=0)
+
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    ax.bar(
+        hourly.index,
+        hourly.values,
+        width=0.035,
+        color=THESIS_COLORS["series"],
+        edgecolor="black",
+        linewidth=0.35,
+        alpha=0.85,
+    )
+
+    ax.axvline(
+        event_time,
+        color=THESIS_COLORS["event"],
+        linestyle="--",
+        linewidth=0.85,
+        alpha=0.90,
+        label="Wenchuan earthquake",
+    )
+
+    locator = mdates.AutoDateLocator(minticks=4, maxticks=7)
+    formatter = mdates.ConciseDateFormatter(locator, tz=mdates.UTC)
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(formatter)
+
+    ax.set_title("Catalogue local Etna events", loc="left", pad=5)
+    ax.set_ylabel("Events per hour")
+    ax.set_xlabel("Time (UTC)")
+    ax.legend(loc="upper left", frameon=False)
+    ax.grid(True, alpha=0.14, linewidth=0.42)
+
+    fig.tight_layout()
+
+    _save_current_figure(
+        fig,
+        filename=filename,
+        save_dir=save_dir,
+        formats=("pdf", "png"),
+    )
+
+    plt.show()
+    return fig, ax, hourly
 
 # -----------------------------------------------------------------------------
 # Clean thesis overview plots
@@ -710,29 +807,46 @@ def plot_etna_thesis_figures(
     include_titles=False,
 ):
     """
-    Create the two final thesis overview figures:
-    1. seismic variables
-    2. external variables
+    Create final thesis overview figures:
+    1. waveform-derived Etna variables
+    2. catalogue-derived local seismicity effect
+    3. external variables
 
     Both PDF and PNG are saved under figures/ by default.
     Use PDF in the thesis; PNG is only for checking.
     """
 
-    seismic_title = "Seismic variables" if include_titles else None
+    waveform_title = "Waveform-derived variables" if include_titles else None
+    effect_title = "Catalogue-derived effect variable" if include_titles else None
     external_title = "External variables" if include_titles else None
 
-    seismic = _plot_etna_group(
+    waveform = _plot_etna_group(
         csv_path=csv_path,
         event_time=event_time,
         cols=ETNA_SEISMIC_COLS,
-        filename="etna_seismic_variables",
+        filename="etna_waveform_variables",
         save_dir=save_dir,
-        title=seismic_title,
+        title=waveform_title,
         fig_width=8.0,
         panel_height=1.38,
         tick_interval_days=4,
         line_width=0.70,
-        shared_y=False,   # shared label only
+        shared_y=False,
+        common_y_label=None,
+    )
+
+    effect = _plot_etna_group(
+        csv_path=csv_path,
+        event_time=event_time,
+        cols=ETNA_EFFECT_COLS,
+        filename="etna_catalogue_effect",
+        save_dir=save_dir,
+        title=effect_title,
+        fig_width=8.0,
+        panel_height=1.65,
+        tick_interval_days=4,
+        line_width=0.85,
+        shared_y=False,
         common_y_label=None,
     )
 
@@ -749,7 +863,7 @@ def plot_etna_thesis_figures(
         line_width=0.70,
     )
 
-    return seismic, external
+    return waveform, effect, external
 
 # -----------------------------------------------------------------------------
 # Etna map / geographic plotting utilities
@@ -761,6 +875,13 @@ FAMILY_STYLE = {
         "color": "#1f77b4",
         "label": "Seismic variables",
     },
+
+    "catalogue_seismicity": {
+        "marker": "*",
+        "color": "#d62728",
+        "label": "Catalogue seismicity",
+    },
+
     "gas": {
         "marker": "o",
         "color": "#2ca02c",
@@ -795,6 +916,7 @@ SOURCE_LABELS = {
     "ETNA_SUMMIT_PLUME": "INGV-PA, Multi-GAS",
     "ETNA_OPENMETEO_PROXY": "Open-Meteo",
     "Etna summit": "Etna summit",
+    "EtnaSC_2000_2010": "EtnaSC catalogue",
 }
 
 DEFAULT_LABEL_OFFSETS = {
@@ -808,12 +930,14 @@ DEFAULT_LABEL_OFFSETS = {
 
     # Gas/meteo station
     "ETNAGAS_3": (0, 40),
+
+    "EtnaSC_2000_2010": (24, 18),
 }
 
 SOURCE_DISPLAY_NUDGES_M = {
     "ETNA_OPENMETEO_PROXY": (0, 0),
     "ETNA_SUMMIT_PLUME": (0, 0),
-
+    "EtnaSC_2000_2010": (0, 0),
     # Keep summit at the actual summit reference point.
     "Etna summit": (0, 0),
 
@@ -981,6 +1105,7 @@ def _clean_legend(ax):
     preferred_order = [
         "Source centre",
         "Seismic variables",
+        "Catalogue seismicity",
         "Soil CO₂ concentration",
         "Meteorological variables",
         "API",
@@ -1096,6 +1221,7 @@ def _assign_observable_numbers(df):
 
     source_order = [
         "ESLN",
+        "EtnaSC_2000_2010",
         "ETNAGAS_3",
         "ETNA_OPENMETEO_PROXY",
         "ETNA_SUMMIT_PLUME",

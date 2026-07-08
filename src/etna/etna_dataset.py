@@ -85,6 +85,134 @@ def merge_data(base, ext, base_time, ext_time, value_cols, tolerance_hours):
 
     return merged
 
+def load_etna_event_catalog_xls(
+    path: str | Path,
+    *,
+    sheet_name=0,
+    quality_filter: bool = False,
+) -> pd.DataFrame:
+    """
+    Load the EtnaSC 2000--2010 catalogue and construct UTC timestamps.
+
+    Expected columns:
+        YE, MO, DA, HR, MI, SE, MD, ML, LAT, LON,
+        DEPSL, DEPGL, N.O., RMS, GAP, ERZ, ERH
+
+    The returned dataframe contains a 'timestamp' column.
+    """
+    path = Path(path)
+    df = pd.read_excel(path, sheet_name=sheet_name)
+
+    required = ["YE", "MO", "DA", "HR", "MI", "SE"]
+    missing = sorted(set(required) - set(df.columns))
+    if missing:
+        raise ValueError(f"Missing catalogue time columns: {missing}")
+
+    for col in required:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    base_time = pd.to_datetime(
+        {
+            "year": df["YE"],
+            "month": df["MO"],
+            "day": df["DA"],
+            "hour": df["HR"],
+            "minute": df["MI"],
+        },
+        utc=True,
+        errors="coerce",
+    )
+
+    df["timestamp"] = base_time + pd.to_timedelta(df["SE"], unit="s")
+    df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+
+    numeric_cols = [
+        "MD",
+        "LAT",
+        "LON",
+        "DEPSL",
+        "DEPGL",
+        "N.O.",
+        "RMS",
+        "GAP",
+        "ERZ",
+        "ERH",
+    ]
+
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    if quality_filter:
+        required_quality = ["N.O.", "RMS", "GAP"]
+        missing_quality = [c for c in required_quality if c not in df.columns]
+        if missing_quality:
+            raise ValueError(f"Cannot quality-filter catalogue; missing: {missing_quality}")
+
+        df = df[
+            (df["N.O."] >= 8)
+            & (df["RMS"] <= 0.30)
+            & (df["GAP"] <= 250)
+        ].copy()
+
+    return df
+
+def catalogue_event_rate_anomaly(
+    catalog_df: pd.DataFrame,
+    master_index: pd.DatetimeIndex,
+    *,
+    baseline_window: int = 24,
+    min_periods: int = 12,
+) -> pd.Series:
+    """
+    Build the Etna effect target from located local catalogue events.
+
+    Steps:
+        hourly event count
+        -> log1p(count)
+        -> positive anomaly above past 24 h rolling median
+
+    Output:
+        local_event_rate_anomaly
+    """
+    events = catalog_df.copy()
+
+    if "timestamp" not in events.columns:
+        if "time" in events.columns:
+            events = events.rename(columns={"time": "timestamp"})
+        else:
+            raise ValueError("Catalogue dataframe must contain 'timestamp' or 'time'.")
+
+    events["timestamp"] = pd.to_datetime(events["timestamp"], utc=True, errors="coerce")
+    events = events.dropna(subset=["timestamp"]).sort_values("timestamp")
+
+    master_index = pd.DatetimeIndex(pd.to_datetime(master_index, utc=True))
+
+    hourly_count = (
+        events
+        .set_index("timestamp")
+        .assign(count=1)
+        ["count"]
+        .resample("1h")
+        .sum()
+        .reindex(master_index, fill_value=0)
+        .astype(float)
+    )
+
+    log_count = np.log1p(hourly_count)
+
+    past_baseline = (
+        log_count
+        .rolling(window=baseline_window, min_periods=min_periods)
+        .median()
+        .shift(1)
+    )
+
+    anomaly = (log_count - past_baseline).clip(lower=0)
+    anomaly.name = "local_event_rate_anomaly"
+
+    return anomaly
+
 def _numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce")
 
@@ -129,31 +257,6 @@ def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
 
     return np.log(x.clip(lower=0) + eps)
 
-def positive_past_log_anomaly(
-    s: pd.Series,
-    *,
-    baseline_window: int = 24,
-    min_periods: int = 12,
-) -> pd.Series:
-    """
-    Convert a positive amplitude series into a positive past-baseline anomaly.
-
-    The value at time t is:
-        max(log(x_t + eps) - median(log(x_{t-24:t-1} + eps)), 0)
-
-    This is used for effect proxies where the target should represent
-    a positive response anomaly rather than raw absolute amplitude.
-    """
-    log_s = safe_log_positive(s)
-
-    past_baseline = (
-        log_s
-        .rolling(window=baseline_window, min_periods=min_periods)
-        .median()
-        .shift(1)
-    )
-
-    return (log_s - past_baseline).clip(lower=0)
 
 def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     """
@@ -239,6 +342,7 @@ def create_etna_final_dataset(
     *,
     start_time: str | None = None,
     end_time: str | None = None,
+    catalog_df: pd.DataFrame | None = None,
     etnagas_df: pd.DataFrame | None = None,
     etnagas_cols: list[str] | None = None,
     etnagas_buffer_hours: int = 6,
@@ -267,7 +371,6 @@ def create_etna_final_dataset(
     seismic_cols = [
         "teleseismic",
         "background_seismic",
-        "effect_seismic",
     ]
 
     for c in seismic_cols:
@@ -295,21 +398,33 @@ def create_etna_final_dataset(
         min_periods=3,
     )
 
-    # Replace raw high-frequency RMS with a positive local response anomaly.
-    # This is the Etna effect proxy used by the Cause--Trigger analysis.
-    base["effect_seismic"] = positive_past_log_anomaly(
-        base["effect_seismic"],
+    if catalog_df is None:
+        raise ValueError(
+            "catalog_df is required because the final Etna effect is "
+            "local_event_rate_anomaly from the Etna event catalogue."
+        )
+
+    base["local_event_rate_anomaly"] = catalogue_event_rate_anomaly(
+        catalog_df,
+        pd.DatetimeIndex(base["time"]),
         baseline_window=24,
         min_periods=12,
-    )
+    ).to_numpy()
 
     # Drop only the first rows where past-only state/anomaly construction is undefined.
     base = base.dropna(
-        subset=["background_seismic", "effect_seismic"]
+        subset=["background_seismic", "local_event_rate_anomaly"]
     ).reset_index(drop=True)
 
+    model_cols = [
+        "time",
+        "teleseismic",
+        "background_seismic",
+        "local_event_rate_anomaly",
+    ]
+
     base["station"] = station_name
-    base = base[["station", *base_cols]]
+    base = base[["station", *model_cols]]
 
     # ---- ETNAGAS ----
     if etnagas_df is not None and etnagas_cols:

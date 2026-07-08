@@ -157,18 +157,7 @@ def extract_etna_features_for_chunk(client, station: str, day_start: UTCDateTime
         agg="mean",
     ).rename("background_seismic")
 
-    # Y: HF response / effect band
-    Y = windowed_metric(
-        tr,
-        fmin=cfg["bands"]["effect_seismic"][0],
-        fmax=cfg["bands"]["effect_seismic"][1],
-        window_sec=cfg["windows_sec"]["effect_seismic"],
-        out_freq=cfg["base_freq"],
-        metric="rms",
-        agg="max",
-    ).rename("effect_seismic")
-
-    df = pd.concat([T, S, Y], axis=1)
+    df = pd.concat([T, S], axis=1)
 
     left = pd.Timestamp(day_start.datetime, tz="UTC")
     right = left + pd.Timedelta(seconds=cfg["chunk_sec"])
@@ -178,7 +167,6 @@ def extract_etna_features_for_chunk(client, station: str, day_start: UTCDateTime
         [
             "teleseismic",
             "background_seismic",
-            "effect_seismic",
         ]
     ]
 

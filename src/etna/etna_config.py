@@ -20,14 +20,12 @@ ETNA_WAVEFORM_CONFIG = {
     "bands": {
         "teleseismic": (0.03, 0.30),          # teleseismic / Wenchuan wavefield
         "background_seismic": (0.80, 2.30),   # Etna tremor/state band
-        "effect_seismic": (4.00, 8.00),       # HF local response/effect
     },
 
     # metric windows in seconds
     "windows_sec": {
         "teleseismic": 120,
         "background_seismic": 600,   # slower state
-        "effect_seismic": 60,    # response
     },
 
     # remove response to velocity
@@ -44,6 +42,7 @@ ETNA_GAS_METEO_COLS = [
 ]
 ETNA_WEATHER_COLS = ["API"]
 ETNA_EVENT_TIME = UTCDateTime("2008-05-12T06:28:00")
+ETNA_CATALOGUE_FILENAME = "Etna catalogue_2000-2010.xls"
 
 # etna geo-metadata:
 def etna_observable_metadata():
@@ -75,14 +74,14 @@ def etna_observable_metadata():
         },
         {
             "case": "Etna",
-            "source_id": "ESLN",
-            "source_label": "ESLN seismic station (HHZ)",
-            "observable": "effect_seismic",
-            "observable_label": "Positive high-frequency seismic-response anomaly, 4–8 Hz",
-            "family": "seismic",
-            "spatial_type": "point_station",
-            "lat": 37.6934,
-            "lon": 14.9744,
+            "source_id": "EtnaSC_2000_2010",
+            "source_label": "INGV-OE Mt. Etna seismic event catalogue, 2000–2010",
+            "observable": "local_event_rate_anomaly",
+            "observable_label": "Positive local event-rate anomaly",
+            "family": "catalogue_seismicity",
+            "spatial_type": "event_catalogue",
+            "lat": 37.75,
+            "lon": 14.99,
             "plot_role": "effect",
         },
 

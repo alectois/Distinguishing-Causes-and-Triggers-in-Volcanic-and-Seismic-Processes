@@ -17,7 +17,7 @@ from cause_trigger import (
 from parameter_extraction import find_parameters
 
 
-EFFECT = "effect_seismic_scaled"
+EFFECT = "local_event_rate_anomaly_scaled"
 
 DEFAULT_RUN_SPECS = (
     {"run": "hmml_backend_beta", "backend": "hmml"},
