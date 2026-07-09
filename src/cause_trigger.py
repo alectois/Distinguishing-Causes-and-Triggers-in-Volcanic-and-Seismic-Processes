@@ -156,7 +156,7 @@ def find_effect_split(
     return_info: bool = False,
 ):
     """
-    Original Cause--Trigger split.
+    Cause--Trigger split.
     Finds I1=(start, split_index) and I2=[split_index, end)
     such that abs(E[y]_I2) > abs(E[y]_I1), selecting the split
     that maximizes the absolute-mean difference.
@@ -240,7 +240,7 @@ def residual_sum_of_squares(y_true, X_features, model):
 
 def build_lagged_design_matrix_for_V(X_values, beta_values, lags, beta_is_ones=False):
     """
-    May 16 paper-compatible construction of V.
+    construction of V.
 
     X_without-trigger has dimension:
         (n - d) x ((m - 1) * d)

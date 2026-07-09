@@ -18,10 +18,6 @@ class PCMCIBackend:
     """
     PCMCI / PCMCI+ backend for paper Step 8:
         Find causal variables B2 for target y_t on interval I2.
-
-    For the May-paper Cause–Trigger algorithm, only lagged tau>=1 links are used
-    as B2 parents. If method='pcmci_plus', contemporaneous tau=0 links are stored
-    in scores['_contemporaneous_links'] for diagnostics, but are not used in B2.
     """
 
     def __init__(
