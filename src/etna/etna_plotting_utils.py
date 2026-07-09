@@ -920,25 +920,28 @@ SOURCE_LABELS = {
 }
 
 DEFAULT_LABEL_OFFSETS = {
-    "ESLN": (0, -18),
+    # Seismic stations
+    "ESLN": (0, -20),
 
-    "ETNA_OPENMETEO_PROXY": (-18, -10),
-    "ETNA_SUMMIT_PLUME": (0, 30),
-    "Etna summit": (26, -20),
-    "EtnaSC_2000_2010": (12, 18),
+    # Summit/proxy cluster
+    "EtnaSC_2000_2010": (-8, 18),
+    "ETNA_OPENMETEO_PROXY": (-22, -18),
+    "ETNA_SUMMIT_PLUME": (8, 24),
+    "Etna summit": (24, -20),
 
-    "ETNAGAS_3": (0, 40),
+    # Gas/meteo station
+    "ETNAGAS_3": (0, 42),
 }
 
 SOURCE_DISPLAY_NUDGES_M = {
-    # Separate overlapping summit/proxy/catalogue markers visually.
-    # Coordinates remain documented in the metadata; only displayed marker
-    # positions are nudged for map readability.
-    "EtnaSC_2000_2010": (-900, 550),
-    "ETNA_OPENMETEO_PROXY": (-900, -550),
-    "ETNA_SUMMIT_PLUME": (650, 550),
-    "Etna summit": (650, -550),
+    # Visual-only nudges for overlapping summit/proxy/catalogue sources.
+    # True coordinates remain in x/y; only displayed marker positions move.
+    "EtnaSC_2000_2010": (-1450, 900),
+    "ETNA_OPENMETEO_PROXY": (-1500, -1050),
+    "ETNA_SUMMIT_PLUME": (950, 850),
+    "Etna summit": (1150, -900),
 
+    # Other sources remain fixed.
     "ESLN": (0, 0),
     "ETNAGAS_3": (0, 0),
 }
@@ -1163,8 +1166,16 @@ def _annotate_sources(ax, centres, summit_df, satellite=False):
         label = SOURCE_LABELS.get(source_id, source_id)
         dx, dy = DEFAULT_LABEL_OFFSETS.get(source_id, (12, 12))
 
-        x_anchor = row["x"]
-        y_anchor = row["y"]
+        x_anchor = (
+            row["x_plot"]
+            if "x_plot" in row.index and pd.notna(row["x_plot"])
+            else row["x"]
+        )
+        y_anchor = (
+            row["y_plot"]
+            if "y_plot" in row.index and pd.notna(row["y_plot"])
+            else row["y"]
+        )
 
         ax.annotate(
             label,
@@ -1305,8 +1316,8 @@ def plot_etna_all_variables_map(
                 [row["x"], row["x_plot"]],
                 [row["y"], row["y_plot"]],
                 color="white" if satellite else "black",
-                linewidth=0.45,
-                alpha=0.48,
+                linewidth=0.35,
+                alpha=0.30,
                 zorder=6,
             )
 
@@ -1336,12 +1347,14 @@ def plot_etna_all_variables_map(
             {"marker": "o", "color": "0.5", "label": family},
         )
 
-        if family == "summit":
-            size = 130
-        elif family == "catalogue_seismicity":
-            size = 150
-        else:
-            size = 88
+        size_by_family = {
+            "summit": 140,
+            "catalogue_seismicity": 150,
+            "weather_proxy": 125,
+            "gas_plume": 115,
+        }
+
+        size = size_by_family.get(family, 88)
 
         ax.scatter(
             row["x_plot"],
@@ -1360,7 +1373,7 @@ def plot_etna_all_variables_map(
         ax.annotate(
             row["map_id"],
             xy=(row["x_plot"], row["y_plot"]),
-            xytext=(0, 9),
+            xytext=(0, 11),
             textcoords="offset points",
             fontsize=7.3,
             fontweight="bold",
