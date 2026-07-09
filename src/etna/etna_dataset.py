@@ -256,7 +256,6 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     ]
 
     log1p_cols = [
-        "local_event_rate_state",
         "rain_6h_sum",
         "CO2_3",
     ]

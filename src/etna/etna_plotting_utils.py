@@ -43,12 +43,12 @@ ETNA_AXIS_LABELS = {
     ),
     "local_event_rate_state": (
         "Past 48-hour local event-rate state",
-        "log1p past 48 h event count"
+        "log1p count"
     ),
 
     "local_event_rate_anomaly": (
         "Catalogue local event-rate anomaly (Effect)",
-        "Positive log1p-count anomaly"
+        "log1p-count excess"
     ),
     "CO2_3": ("Soil CO₂ concentration", "%"),
     "rain_6h_sum": ("6-hour rainfall sum", "mm"),
@@ -57,22 +57,21 @@ ETNA_AXIS_LABELS = {
 
     "teleseismic_scaled": (
         "Teleseismic energy, 0.03–0.30 Hz",
-        "Standardized log RMS"
+        "Std. value"
     ),
-
     "local_event_rate_state_scaled": (
         "Past 48-hour local event-rate state",
-        "Standardized log1p past-count state"
+        "Std. value"
     ),
 
     "local_event_rate_anomaly_scaled": (
         "Catalogue local event-rate anomaly (Effect)",
-        "Standardized positive log1p-count anomaly"
+        "Std. value"
     ),
-    "CO2_3_scaled": ("Soil CO₂ concentration", "Standardized transformed value"),
-    "rain_6h_sum_scaled": ("6-hour rainfall sum", "Standardized transformed value"),
-    "pressure_drop_scaled": ("Atmospheric pressure drop", "Standardized transformed value"),
-    "WindSpeed_scaled": ("Wind speed", "Standardized value"),
+    "CO2_3_scaled": ("Soil CO₂ concentration", "Std. value"),
+    "rain_6h_sum_scaled": ("6-hour rainfall sum", "Std. value"),
+    "pressure_drop_scaled": ("Atmospheric pressure drop", "Std. value"),
+    "WindSpeed_scaled": ("Wind speed", "Std. value"),
 }
 
 ETNA_RAW_ORDER = [
@@ -96,16 +95,6 @@ ETNA_TRIGGER_STATE_EFFECT_COLS = [
     "teleseismic",
     "local_event_rate_state",
     "local_event_rate_anomaly",
-]
-
-ETNA_SCALED_ORDER = [
-    "teleseismic_scaled",
-    "local_event_rate_state_scaled",
-    "local_event_rate_anomaly_scaled",
-    "CO2_3_scaled",
-    "rain_6h_sum_scaled",
-    "pressure_drop_scaled",
-    "WindSpeed_scaled",
 ]
 
 
@@ -691,11 +680,10 @@ def _plot_etna_group(
     line_width=0.70,
     formats=("pdf", "png"),
     time_window=None,
-    shared_y=False,
-    common_y_label=None,
 ):
     """Internal helper used by plot_etna_thesis_figures()."""
     set_thesis_style()
+
     df, event_time = _prepare_etna_dataframe(
         csv_path,
         event_time,
@@ -713,7 +701,7 @@ def _plot_etna_group(
         1,
         figsize=(fig_width, fig_height),
         sharex=True,
-        sharey=False,   # do NOT force same numeric y-axis
+        sharey=False,
     )
 
     if len(cols) == 1:
@@ -721,6 +709,7 @@ def _plot_etna_group(
 
     for ax, col in zip(axes, cols):
         y = pd.to_numeric(df[col], errors="coerce")
+        panel_title, ylabel = ETNA_AXIS_LABELS.get(col, (col, "Value"))
 
         ax.plot(
             df.index,
@@ -740,28 +729,17 @@ def _plot_etna_group(
             zorder=5,
         )
 
-        panel_title, ylabel = ETNA_AXIS_LABELS.get(col, (col, "Value"))
-
         ax.set_title(panel_title, loc="left", pad=4.5)
-
-        if shared_y:
-            ax.set_ylabel("")
-        else:
-            ax.set_ylabel(ylabel, labelpad=8)
+        ax.set_ylabel(ylabel, labelpad=7, fontsize=8.8)
+        ax.yaxis.set_label_coords(-0.060, 0.5)
 
         ax.grid(True, alpha=0.14, linewidth=0.42)
         ax.tick_params(axis="both", which="major", length=2.8, width=0.55, pad=3)
         ax.margins(x=0.01)
 
-        if np.nanmin(y.values) <= 0 <= np.nanmax(y.values):
+        y_values = y.to_numpy(dtype=float)
+        if np.isfinite(y_values).any() and np.nanmin(y_values) <= 0 <= np.nanmax(y_values):
             ax.axhline(0, color="0.25", linewidth=0.35, alpha=0.12, zorder=0)
-
-    if shared_y and common_y_label is not None:
-        fig.supylabel(
-            common_y_label,
-            x=0.010,
-            fontsize=plt.rcParams["axes.labelsize"],
-        )
 
     if title is not None:
         fig.suptitle(title, fontsize=11.0, fontweight="bold", y=0.995)
@@ -780,14 +758,14 @@ def _plot_etna_group(
     axes[-1].xaxis.set_major_formatter(formatter)
     axes[-1].set_xlabel("Time (UTC)", labelpad=6)
 
-    left_margin = 0.092 if shared_y else 0.105
+    fig.align_ylabels(axes)
 
     fig.subplots_adjust(
-        left=left_margin,
+        left=0.112,
         right=0.992,
-        bottom=0.090,
+        bottom=0.095,
         top=top,
-        hspace=0.46,
+        hspace=0.64,
     )
 
     _save_current_figure(
@@ -829,11 +807,9 @@ def plot_etna_thesis_figures(
         save_dir=save_dir,
         title=trigger_state_effect_title,
         fig_width=8.0,
-        panel_height=1.28,
+        panel_height=1.42,
         tick_interval_days=4,
         line_width=0.75,
-        shared_y=False,
-        common_y_label=None,
     )
 
     external = _plot_etna_group(
@@ -844,7 +820,7 @@ def plot_etna_thesis_figures(
         save_dir=save_dir,
         title=external_title,
         fig_width=8.0,
-        panel_height=1.08,
+        panel_height=1.18,
         tick_interval_days=4,
         line_width=0.70,
     )
