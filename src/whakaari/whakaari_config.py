@@ -4,8 +4,6 @@ WHAKAARI_START = "2019-10-01"
 WHAKAARI_END = "2019-12-12"
 
 WHAKAARI_ERUPTION_TIME = pd.Timestamp("2019-12-09 01:11", tz="UTC")
-
-TILDE_SUMMARY_URL = "https://tilde.geonet.org.nz/v4/dataSummary/"
 TILDE_DATA_URL = "https://tilde.geonet.org.nz/v4/data/"
 
 WHAKAARI_LAT = -37.52
@@ -23,8 +21,6 @@ WHAKAARI_WAVEFORM_CONFIG = {
     "max_interp_gap_sec": 2.0,
     "pad_sec": 3600,
 }
-
-MASTER_FREQ = "1h"
 
 #whakaari geo-metadata
 def whakaari_observable_metadata():

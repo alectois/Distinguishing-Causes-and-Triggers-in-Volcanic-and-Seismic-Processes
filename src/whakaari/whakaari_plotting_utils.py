@@ -99,39 +99,63 @@ WHAKAARI_EXTERNAL_COLS = [
 ]
 
 WHAKAARI_AXIS_LABELS = {
-    "hydro_2_5": ("Hydrothermal tremor RMS, 2–5 Hz", "RMS velocity"),
+    "hydro_2_5": (
+        "Hydrothermal tremor RMS, 2–5 Hz",
+        "RMS velocity"
+    ),
     "ratio_4p5_8_over_8_16": (
         "Past-smoothed spectral-ratio state, 4.5–8 / 8–16 Hz",
-        "Rolling-median ratio"
+        "Ratio"
     ),
-    "event_rate_2_5": ("STA/LTA event-rate proxy, 2–5 Hz", "Events per hour"),
+    "event_rate_2_5": (
+        "STA/LTA event-rate proxy, 2–5 Hz",
+        "Events h⁻¹"
+    ),
     "effect_tremor_5_15": (
         "Positive tremor-response anomaly (Effect), 5–15 Hz",
-        "Positive log-RMS anomaly"
+        "log-RMS excess"
     ),
-    "rain_12h_sum": ("12-hour rainfall sum", "mm"),
-    "pressure_drop": ("Atmospheric pressure drop", "hPa"),
-    "GNSS_deformation": ("GNSS deformation", "m"),
+    "rain_12h_sum": (
+        "12-hour rainfall sum",
+        "mm"
+    ),
+    "pressure_drop": (
+        "Atmospheric pressure drop",
+        "hPa"
+    ),
+    "GNSS_deformation": (
+        "GNSS deformation",
+        "m"
+    ),
 
     "hydro_2_5_scaled": (
         "Hydrothermal tremor RMS, 2–5 Hz",
-        "Standardized log RMS"
+        "Std. value"
     ),
     "ratio_4p5_8_over_8_16_scaled": (
         "Past-smoothed spectral-ratio state, 4.5–8 / 8–16 Hz",
-        "Standardized log ratio"
+        "Std. value"
     ),
     "event_rate_2_5_scaled": (
         "STA/LTA event-rate proxy, 2–5 Hz",
-        "Standardized transformed value"
+        "Std. value"
     ),
     "effect_tremor_5_15_scaled": (
         "Positive tremor-response anomaly (Effect), 5–15 Hz",
-        "Standardized positive anomaly"
+        "Std. value"
     ),
-    "rain_12h_sum_scaled": ("12-hour rainfall sum", "Standardized transformed value"),
-    "pressure_drop_scaled": ("Atmospheric pressure drop", "Standardized transformed value"),
-    "GNSS_deformation_scaled": ("GNSS deformation", "Standardized value"),
+    "rain_12h_sum_scaled": (
+        "12-hour rainfall sum",
+        "Std. value"
+    ),
+    "pressure_drop_scaled": (
+        "Atmospheric pressure drop",
+        "Std. value"
+    ),
+    "GNSS_deformation_scaled": (
+        "GNSS deformation",
+        "Std. value"
+    ),
 }
 
 
@@ -183,22 +207,6 @@ def _prepare_whakaari_dataframe(csv_path, eruption_time, time_window=None):
     return df, eruption_time
 
 
-def _transform_series(y, ylabel, transform):
-    y = pd.to_numeric(y, errors="coerce")
-
-    if transform == "log10":
-        positive = y[y > 0]
-        eps = positive.min() / 10 if len(positive) else 1e-12
-        y = np.log10(y.clip(lower=0) + eps)
-        ylabel = f"log10 {ylabel}"
-
-    elif transform == "log1p":
-        y = np.log1p(y.clip(lower=0))
-        ylabel = f"log1p {ylabel}"
-
-    return y, ylabel
-
-
 def _plot_whakaari_group(
     csv_path,
     eruption_time,
@@ -207,15 +215,15 @@ def _plot_whakaari_group(
     save_dir="figures",
     title=None,
     fig_width=8.0,
-    panel_height=1.25,
+    panel_height=1.30,
     tick_interval_days=7,
     line_width=0.70,
     formats=("pdf", "png"),
     time_window=None,
-    display_transform=None,
 ):
     """Internal helper used by plot_whakaari_thesis_figures()."""
     set_thesis_style()
+
     df, eruption_time = _prepare_whakaari_dataframe(
         csv_path,
         eruption_time,
@@ -226,9 +234,6 @@ def _plot_whakaari_group(
     if len(cols) == 0:
         raise ValueError("None of the requested columns are present in the dataframe.")
 
-    if display_transform is None:
-        display_transform = {}
-
     fig_height = panel_height * len(cols) + (0.50 if title is None else 0.82)
 
     fig, axes = plt.subplots(
@@ -238,33 +243,25 @@ def _plot_whakaari_group(
         sharex=True,
         sharey=False,
     )
+
     if len(cols) == 1:
         axes = [axes]
 
     for ax, col in zip(axes, cols):
+        y = pd.to_numeric(df[col], errors="coerce")
         panel_title, ylabel = WHAKAARI_AXIS_LABELS.get(col, (col, "Value"))
-        y, ylabel = _transform_series(df[col], ylabel, display_transform.get(col))
 
-        if col == "GNSS_deformation":
-            ax.plot(
-                df.index,
-                y,
-                color=THESIS_COLORS["series"],
-                linewidth=max(line_width, 0.72),
-                drawstyle="steps-post",
-                alpha=0.98,
-                antialiased=True,
-            )
+        drawstyle = "steps-post" if col == "GNSS_deformation" else "default"
 
-        else:
-            ax.plot(
-                df.index,
-                y,
-                color=THESIS_COLORS["series"],
-                linewidth=line_width,
-                alpha=0.98,
-                antialiased=True,
-            )
+        ax.plot(
+            df.index,
+            y,
+            color=THESIS_COLORS["series"],
+            linewidth=max(line_width, 0.72) if col == "GNSS_deformation" else line_width,
+            drawstyle=drawstyle,
+            alpha=0.98,
+            antialiased=True,
+        )
 
         ax.axvline(
             eruption_time,
@@ -276,12 +273,14 @@ def _plot_whakaari_group(
         )
 
         ax.set_title(panel_title, loc="left", pad=4.5)
-        ax.set_ylabel(ylabel, labelpad=8)
+        ax.set_ylabel(ylabel, labelpad=7, fontsize=8.8)
+        ax.yaxis.set_label_coords(-0.060, 0.5)
+
         ax.grid(True, alpha=0.14, linewidth=0.42)
         ax.tick_params(axis="both", which="major", length=2.8, width=0.55, pad=3)
         ax.margins(x=0.01)
 
-        y_values = y.values.astype(float)
+        y_values = y.to_numpy(dtype=float)
         if np.isfinite(y_values).any() and np.nanmin(y_values) <= 0 <= np.nanmax(y_values):
             ax.axhline(0, color="0.25", linewidth=0.35, alpha=0.12, zorder=0)
 
@@ -291,21 +290,34 @@ def _plot_whakaari_group(
     else:
         top = 0.985
 
-    locator = mdates.DayLocator(interval=tick_interval_days)
-    formatter = mdates.DateFormatter("%b %d", tz=mdates.UTC)
+    if time_window is None:
+        locator = mdates.DayLocator(interval=tick_interval_days)
+        formatter = mdates.DateFormatter("%b %d", tz=mdates.UTC)
+    else:
+        locator = mdates.AutoDateLocator(minticks=4, maxticks=7)
+        formatter = mdates.ConciseDateFormatter(locator, tz=mdates.UTC)
+
     axes[-1].xaxis.set_major_locator(locator)
     axes[-1].xaxis.set_major_formatter(formatter)
     axes[-1].set_xlabel("Time (UTC)", labelpad=6)
 
+    fig.align_ylabels(axes)
+
     fig.subplots_adjust(
-        left=0.110,
+        left=0.112,
         right=0.992,
-        bottom=0.090,
+        bottom=0.095,
         top=top,
-        hspace=0.46,
+        hspace=0.64,
     )
 
-    _save_current_figure(fig, filename=filename, save_dir=save_dir, formats=formats)
+    _save_current_figure(
+        fig,
+        filename=filename,
+        save_dir=save_dir,
+        formats=formats,
+    )
+
     plt.show()
     return fig, axes
 
@@ -316,86 +328,45 @@ def plot_whakaari_thesis_figures(
     save_dir="figures",
     include_titles=False,
     tick_interval_days=7,
-    display_transform=None,
 ):
     """
-    Create the two final thesis overview figures:
-    1. seismic variables
-    2. external / environmental variables
-
-    Both PDF and PNG are saved under figures/ by default.
+    Create final thesis overview figures:
+    1. seismic / hydrothermal variables
+    2. external / deformation variables
     """
-    seismic_title = "Seismic variables" if include_titles else None
-    external_title = "External variables" if include_titles else None
+    seismic_title = "Seismic and hydrothermal variables" if include_titles else None
+    external_title = "External and deformation variables" if include_titles else None
 
     seismic = _plot_whakaari_group(
         csv_path=csv_path,
         eruption_time=eruption_time,
         cols=WHAKAARI_SEISMIC_COLS,
-        filename="whakaari_seismic_variables",
+        filename="whakaari_seismic_hydrothermal_variables",
         save_dir=save_dir,
         title=seismic_title,
         fig_width=8.0,
-        panel_height=1.22,
+        panel_height=1.34,
         tick_interval_days=tick_interval_days,
         line_width=0.70,
-        display_transform=display_transform,
     )
 
     external = _plot_whakaari_group(
         csv_path=csv_path,
         eruption_time=eruption_time,
         cols=WHAKAARI_EXTERNAL_COLS,
-        filename="whakaari_external_variables",
+        filename="whakaari_external_deformation_variables",
         save_dir=save_dir,
         title=external_title,
         fig_width=8.0,
-        panel_height=1.12,
+        panel_height=1.22,
         tick_interval_days=tick_interval_days,
         line_width=0.70,
-        display_transform=display_transform,
     )
 
     return seismic, external
 
 
-def plot_with_eruption_time(
-    csv_path,
-    cols,
-    eruption_time,
-    title=None,
-    figsize=None,
-    tick_interval_days=7,
-    save_dir="figures",
-    filename=None,
-    display_transform=None,
-):
-    """Backward-compatible general plotting function."""
-    if filename is None:
-        filename = "whakaari_variables"
-
-    if figsize is None:
-        fig_width = 8.0
-        panel_height = 1.20
-    else:
-        fig_width = figsize[0]
-        panel_height = max(0.95, (figsize[1] - 0.50) / max(len(cols), 1))
-
-    return _plot_whakaari_group(
-        csv_path=csv_path,
-        eruption_time=eruption_time,
-        cols=cols,
-        filename=filename,
-        save_dir=save_dir,
-        title=title,
-        fig_width=fig_width,
-        panel_height=panel_height,
-        tick_interval_days=tick_interval_days,
-        display_transform=display_transform,
-    )
-
-
-def plot_variable_pdfs(df, name, cols=None, bins=40, filename=None, save_dir="figures"):
+def plot_variable_pdfs(df, name=None, cols=None, bins=40, filename=None, save_dir="figures"):
     """
     Plot empirical probability density functions for numeric Whakaari variables.
     Uses density-normalized histograms.
@@ -412,16 +383,23 @@ def plot_variable_pdfs(df, name, cols=None, bins=40, filename=None, save_dir="fi
     cols = [c for c in cols if c in df.columns]
 
     if len(cols) == 0:
-        print(f"No numeric columns to plot for {name}.")
+        print("No numeric columns to plot.")
         return None
 
-    ncols = 3
-    nrows = int(np.ceil(len(cols) / ncols))
+    n = len(cols)
+    if n <= 4:
+        ncols = n
+    elif n <= 8:
+        ncols = 4
+    else:
+        ncols = 3
+
+    nrows = int(np.ceil(n / ncols))
 
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(4.7 * ncols, 3.0 * nrows),
+        figsize=(3.8 * ncols, 2.85 * nrows),
         squeeze=False,
     )
 
@@ -434,15 +412,16 @@ def plot_variable_pdfs(df, name, cols=None, bins=40, filename=None, save_dir="fi
             x,
             bins=bins,
             density=True,
-            alpha=0.72,
+            alpha=0.75,
             edgecolor="black",
-            linewidth=0.35,
+            linewidth=0.4,
         )
 
-        ax.axvline(x.mean(), linestyle="--", linewidth=1.1, label="mean")
-        ax.axvline(x.median(), linestyle=":", linewidth=1.1, label="median")
+        ax.axvline(x.mean(), linestyle="--", linewidth=1.2, label="mean")
+        ax.axvline(x.median(), linestyle=":", linewidth=1.2, label="median")
 
-        ax.set_title(col, loc="left")
+        panel_title, _ = WHAKAARI_AXIS_LABELS.get(col, (col, "Value"))
+        ax.set_title(panel_title, loc="left")
         ax.set_ylabel("Density")
         ax.grid(True, alpha=0.14, linewidth=0.42)
         ax.legend(fontsize=8, frameon=False)
@@ -450,15 +429,17 @@ def plot_variable_pdfs(df, name, cols=None, bins=40, filename=None, save_dir="fi
     for ax in axes[len(cols):]:
         ax.axis("off")
 
-    if name is not None:
-        fig.suptitle(f"{name}", y=1.01)
+    if name:
+        fig.suptitle(str(name), y=1.01)
 
     plt.tight_layout()
+
     if filename is None:
-        filename = f"{name}_variable_pdfs"
+        filename = "whakaari_variable_pdfs"
+
     _save_current_figure(fig, filename, save_dir)
     plt.show()
-    return fig, axes
+    return fig, axes[:len(cols)]
 
 
 def distribution_summary(df, name=None):
@@ -496,25 +477,19 @@ WHAKAARI_FAMILY_STYLE = {
     "seismic": {
         "marker": "^",
         "color": "#1f77b4",
-        "label": "Seismic variables",
+        "label": "WSRZ seismic station",
     },
     "deformation": {
         "marker": "*",
         "color": "#ff7f0e",
         "label": "GNSS deformation",
     },
-    "meteorology": {
-        "marker": "s",
-        "color": "#9467bd",
-        "label": "Atmospheric pressure drop",
-    },
-    "weather_proxy": {
+    "weather_meteo": {
         "marker": "P",
         "color": "#bcbd22",
-        "label": "Rainfall (12h sum)",
+        "label": "Open-Meteo weather",
     },
 }
-
 
 WHAKAARI_SOURCE_LABELS = {
     "WSRZ": "WSRZ",
@@ -522,18 +497,16 @@ WHAKAARI_SOURCE_LABELS = {
     "WHAKAARI_OPENMETEO_PROXY": "Open-Meteo",
 }
 
-
 WHAKAARI_DEFAULT_LABEL_OFFSETS = {
-    "WSRZ": (-20, -14),
-    "RGWC_RGWI": (16, 10),
-    "WHAKAARI_OPENMETEO_PROXY": (12, 16),
+    "WSRZ": (-16, -14),
+    "RGWC_RGWI": (14, 12),
+    "WHAKAARI_OPENMETEO_PROXY": (12, -16),
 }
 
-
 WHAKAARI_SOURCE_DISPLAY_NUDGES_M = {
-    "WHAKAARI_OPENMETEO_PROXY": (45, 90),
-    "WSRZ": (0, 0),
-    "RGWC_RGWI": (0, 0),
+    "WHAKAARI_OPENMETEO_PROXY": (60, -70),
+    "WSRZ": (-55, -35),
+    "RGWC_RGWI": (65, 55),
 }
 
 
@@ -585,52 +558,6 @@ def _add_basemap(ax, satellite=False):
         warnings.warn(f"Could not add basemap: {exc}")
 
 
-def _offset_observables(df, spacing_m=350):
-    df = df.copy()
-    df["x_plot"] = df["x"]
-    df["y_plot"] = df["y"]
-
-    is_projected = bool(df["is_projected"].iloc[0])
-
-    for source_id, idx in df.groupby("source_id").groups.items():
-        idx = list(idx)
-        n = len(idx)
-
-        if n <= 1:
-            continue
-
-        if n == 2:
-            offsets = [(-0.8, 0.0), (0.8, 0.0)]
-        elif n == 3:
-            offsets = [(-0.85, -0.50), (0.85, -0.50), (0.00, 0.75)]
-        elif n == 4:
-            offsets = [(-0.85, -0.85), (0.85, -0.85), (-0.85, 0.85), (0.85, 0.85)]
-        else:
-            ncols = int(np.ceil(np.sqrt(n)))
-            nrows = int(np.ceil(n / ncols))
-            offsets = []
-            for i in range(n):
-                r = i // ncols
-                c = i % ncols
-                offsets.append((
-                    1.05 * (c - (ncols - 1) / 2),
-                    1.05 * ((nrows - 1) / 2 - r),
-                ))
-
-        for row_idx, (ox, oy) in zip(idx, offsets):
-            if is_projected:
-                dx = ox * spacing_m
-                dy = oy * spacing_m
-            else:
-                dx = ox * spacing_m / 111_200
-                dy = oy * spacing_m / 111_200
-
-            df.loc[row_idx, "x_plot"] = df.loc[row_idx, "x"] + dx
-            df.loc[row_idx, "y_plot"] = df.loc[row_idx, "y"] + dy
-
-    return df
-
-
 def _nudge_overlapping_sources(df, source_nudges_m=None):
     if source_nudges_m is None:
         source_nudges_m = WHAKAARI_SOURCE_DISPLAY_NUDGES_M
@@ -657,29 +584,12 @@ def _nudge_overlapping_sources(df, source_nudges_m=None):
     return df
 
 
-def _set_extent(
-    ax,
-    df,
-    *,
-    include_eq_radius=False,
-    pad_fraction=0.08,
-    min_pad_m=650,
-):
-    xmin, xmax = df["x_plot"].min(), df["x_plot"].max()
-    ymin, ymax = df["y_plot"].min(), df["y_plot"].max()
+def _set_extent(ax, df, *, pad_fraction=0.12, min_pad_m=260):
+    xs = pd.concat([df["x"], df["x_plot"]])
+    ys = pd.concat([df["y"], df["y_plot"]])
 
-    if include_eq_radius and "radius_km" in df.columns:
-        eq = df[df["spatial_type"] == "search_radius"]
-
-        if not eq.empty:
-            r_m = float(eq["radius_km"].iloc[0]) * 1000
-            cx = float(eq["x"].iloc[0])
-            cy = float(eq["y"].iloc[0])
-
-            xmin = min(xmin, cx - r_m)
-            xmax = max(xmax, cx + r_m)
-            ymin = min(ymin, cy - r_m)
-            ymax = max(ymax, cy + r_m)
+    xmin, xmax = xs.min(), xs.max()
+    ymin, ymax = ys.min(), ys.max()
 
     xpad = max((xmax - xmin) * pad_fraction, min_pad_m)
     ypad = max((ymax - ymin) * pad_fraction, min_pad_m)
@@ -697,12 +607,9 @@ def _clean_legend(ax):
             unique[label] = handle
 
     preferred_order = [
-        "Source centre",
-        "Seismic variables",
+        "WSRZ seismic station",
         "GNSS deformation",
-        "Meteorological variables",
-        "Rainfall (12h sum)",
-        "Local earthquake count",
+        "Open-Meteo weather",
     ]
 
     ordered_labels = [label for label in preferred_order if label in unique]
@@ -714,51 +621,30 @@ def _clean_legend(ax):
         final_handles,
         final_labels,
         loc="upper center",
-        bbox_to_anchor=(0.5, -0.040),
-        ncol=4,
+        bbox_to_anchor=(0.5, -0.045),
+        ncol=3,
         frameon=True,
         framealpha=0.97,
         fontsize=8.0,
         handletextpad=0.85,
-        columnspacing=2.2,
-        borderpad=0.85,
-        labelspacing=0.85,
+        columnspacing=1.8,
+        borderpad=0.75,
+        labelspacing=0.75,
         markerscale=1.0,
     )
 
-
-def _source_centres(df):
-    rows = []
-
-    for source_id, g in df[df["source_id"] != "Whakaari reference"].groupby("source_id"):
-        rows.append({
-            "source_id": source_id,
-            "x": g["x"].iloc[0],
-            "y": g["y"].iloc[0],
-            "x_plot": g["x_plot"].mean(),
-            "y_plot": g["y_plot"].mean(),
-        })
-
-    return pd.DataFrame(rows)
-
-
-def _annotate_sources(ax, centres, reference_df, satellite=False):
-    label_rows = pd.concat([centres, reference_df], ignore_index=True)
-
+def _annotate_sources(ax, df, satellite=False):
     line_color = "white" if satellite else "black"
     line_alpha = 0.95 if satellite else 0.80
 
-    for _, row in label_rows.iterrows():
+    for _, row in df.iterrows():
         source_id = row["source_id"]
         label = WHAKAARI_SOURCE_LABELS.get(source_id, source_id)
         dx, dy = WHAKAARI_DEFAULT_LABEL_OFFSETS.get(source_id, (12, 12))
 
-        x_anchor = row["x_plot"] if "x_plot" in row else row["x"]
-        y_anchor = row["y_plot"] if "y_plot" in row else row["y"]
-
         ax.annotate(
             label,
-            xy=(x_anchor, y_anchor),
+            xy=(row["x_plot"], row["y_plot"]),
             xytext=(dx, dy),
             textcoords="offset points",
             fontsize=8.2,
@@ -775,7 +661,7 @@ def _annotate_sources(ax, centres, reference_df, satellite=False):
             arrowprops={
                 "arrowstyle": "-",
                 "color": line_color,
-                "linewidth": 0.85,
+                "linewidth": 0.80,
                 "alpha": line_alpha,
                 "shrinkA": 2,
                 "shrinkB": 4,
@@ -783,7 +669,6 @@ def _annotate_sources(ax, centres, reference_df, satellite=False):
             },
             zorder=45,
         )
-
 
 def _make_source_variable_table(df):
     rows = []
@@ -804,36 +689,63 @@ def _make_source_variable_table(df):
 
     return pd.DataFrame(rows).sort_values("Source").reset_index(drop=True)
 
+def _collapse_to_source_markers(df):
+    """
+    Collapse observable-level metadata to one displayed marker per source.
 
-def _assign_observable_numbers(df):
-    df = df.copy()
+    The returned variable table still lists all observables at each source, but
+    the map itself shows source locations rather than one symbol per variable.
+    """
+    rows = []
 
+    family_by_source = {
+        "WSRZ": "seismic",
+        "RGWC_RGWI": "deformation",
+        "WHAKAARI_OPENMETEO_PROXY": "weather_meteo",
+    }
+
+    for source_id, g in df.groupby("source_id", sort=False):
+        row = g.iloc[0].copy()
+
+        observables = list(dict.fromkeys(g["observable"].astype(str).tolist()))
+        observable_labels = list(dict.fromkeys(g["observable_label"].astype(str).tolist()))
+
+        row["observable"] = ", ".join(observables)
+        row["observable_label"] = "; ".join(observable_labels)
+        row["family"] = family_by_source.get(source_id, row["family"])
+
+        rows.append(row)
+
+    return pd.DataFrame(rows).reset_index(drop=True)
+
+
+def _sort_sources_for_map(df):
+    """Order final Whakaari map sources without adding map IDs."""
     source_order = [
         "WSRZ",
         "RGWC_RGWI",
         "WHAKAARI_OPENMETEO_PROXY",
     ]
 
+    df = df.copy()
     df["source_order"] = df["source_id"].apply(
         lambda x: source_order.index(x) if x in source_order else 999
     )
 
-    df = df.sort_values(["source_order", "source_id", "observable"]).reset_index(drop=True)
-    df["map_id"] = [f"{i + 1}" for i in range(len(df))]
-
-    return df.drop(columns=["source_order"])
-
+    return (
+        df.sort_values(["source_order", "source_id"])
+        .drop(columns="source_order")
+        .reset_index(drop=True)
+    )
 
 def plot_whakaari_all_variables_map(
     metadata,
     *,
     satellite=True,
     title=None,
-    offset_radius_m=55,
-    figsize=(9.2, 8.0),
+    figsize=(8.4, 7.4),
     filename=None,
     save_dir="figures",
-    include_eq_radius=False,
 ):
     df = metadata.copy()
 
@@ -851,23 +763,22 @@ def plot_whakaari_all_variables_map(
 
     df = df.dropna(subset=["lat", "lon"]).copy()
 
-    df = _assign_observable_numbers(df)
+    df = _collapse_to_source_markers(df)
+    df = _sort_sources_for_map(df)
     df = _project_to_web_mercator(df)
-    df = _offset_observables(df, spacing_m=offset_radius_m)
+
+    df["x_plot"] = df["x"]
+    df["y_plot"] = df["y"]
     df = _nudge_overlapping_sources(df)
 
     fig, ax = plt.subplots(figsize=figsize)
-    ax_panel = None
 
-    _set_extent(ax, df, include_eq_radius=include_eq_radius)
+    _set_extent(ax, df)
 
     if bool(df["is_projected"].iloc[0]):
         _add_basemap(ax, satellite=satellite)
 
     for _, row in df.iterrows():
-        if row["source_id"] == "Whakaari reference":
-            continue
-
         if row["x_plot"] != row["x"] or row["y_plot"] != row["y"]:
             ax.plot(
                 [row["x"], row["x_plot"]],
@@ -878,22 +789,11 @@ def plot_whakaari_all_variables_map(
                 zorder=6,
             )
 
-    centres = _source_centres(df)
-
-    ax.scatter(
-        centres["x"],
-        centres["y"],
-        s=36,
-        marker="o",
-        facecolor="white",
-        edgecolor="black",
-        linewidth=1.15,
-        alpha=0.98,
-        zorder=10,
-        label="Source centre",
-    )
-
-    reference_df = pd.DataFrame(columns=df.columns)
+    size_by_family = {
+        "seismic": 115,
+        "deformation": 140,
+        "weather_meteo": 125,
+    }
 
     for _, row in df.iterrows():
         family = row["family"]
@@ -902,52 +802,24 @@ def plot_whakaari_all_variables_map(
             {"marker": "o", "color": "0.5", "label": family},
         )
 
-        size = 90
-
         ax.scatter(
             row["x_plot"],
             row["y_plot"],
-            s=size,
+            s=size_by_family.get(family, 105),
             marker=style["marker"],
             color=style["color"],
             edgecolor="black",
-            linewidth=0.70,
+            linewidth=0.85,
             alpha=0.96,
             zorder=12,
             label=style["label"],
         )
 
-        ax.annotate(
-            row["map_id"],
-            xy=(row["x_plot"], row["y_plot"]),
-            xytext=(0, 7),
-            textcoords="offset points",
-            fontsize=7.0,
-            fontweight="bold",
-            color="black",
-            ha="center",
-            va="center",
-            bbox={
-                "boxstyle": "circle,pad=0.15",
-                "facecolor": "white",
-                "edgecolor": "black",
-                "linewidth": 0.55,
-                "alpha": 0.95,
-            },
-            zorder=35,
-        )
-
-    _annotate_sources(
-        ax,
-        centres,
-        reference_df,
-        satellite=satellite,
-    )
-
+    _annotate_sources(ax, df, satellite=satellite)
     _clean_legend(ax)
 
     if title is not None:
-        ax.set_title(title, fontsize=14, pad=10)
+        ax.set_title(title, fontsize=12, pad=8)
 
     ax.set_xlabel("")
     ax.set_ylabel("")
@@ -958,7 +830,8 @@ def plot_whakaari_all_variables_map(
     fig.tight_layout(rect=[0, 0.085, 1, 1])
 
     if filename is None:
-        filename = "whakaari_all_variables_map"
+        filename = "whakaari_map"
+
     _save_current_figure(fig, filename, save_dir)
 
     variable_table = _make_source_variable_table(df)
@@ -975,9 +848,9 @@ def plot_loglog_distributions(
     save_dir="figures",
     formats=("pdf", "png"),
     title=None,
-    ncols=3,
-    fig_width_per_col=4.7,
-    panel_height=3.0,
+    ncols=None,
+    fig_width_per_col=3.9,
+    panel_height=2.85,
     min_positive_count=5,
 ):
     """
@@ -1004,6 +877,14 @@ def plot_loglog_distributions(
     if len(cols) == 0:
         print("No requested numeric columns available for log-log plotting.")
         return None, None, pd.DataFrame()
+    
+    if ncols is None:
+        if len(cols) <= 4:
+            ncols = len(cols)
+        elif len(cols) <= 8:
+            ncols = 4
+        else:
+            ncols = 3
 
     nrows = int(np.ceil(len(cols) / ncols))
 
@@ -1150,5 +1031,5 @@ def plot_whakaari_loglog_distributions(
         bins=bins,
         filename=filename,
         save_dir=save_dir,
-        title="",
+        title=None,
     )

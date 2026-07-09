@@ -91,7 +91,7 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
         "ratio_4p5_8_over_8_16",
     ]
 
-    # Positive count / accumulation / flux variables.
+    # Positive count / accumulation variables.
     log1p_cols = [
         "event_rate_2_5",
         "rain_12h_sum",
