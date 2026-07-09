@@ -79,20 +79,6 @@ def whakaari_observable_metadata():
             "plot_role": "effect",
         },
 
-        # SO2
-        {
-            "case": "Whakaari",
-            "source_id": "WID01",
-            "source_label": "WID01 scanning DOAS station",
-            "observable": "SO2_flux",
-            "observable_label": "SO₂ flux",
-            "family": "gas",
-            "spatial_type": "point_or_path_measurement",
-            "lat": -37.517,
-            "lon": 177.193,
-            "plot_role": "direct_or_path_measurement",
-        },
-
         # GNSS pair
         {
             "case": "Whakaari",
@@ -121,8 +107,8 @@ def whakaari_observable_metadata():
             "case": "Whakaari",
             "source_id": "WHAKAARI_OPENMETEO_PROXY",
             "source_label": "Whakaari Open-Meteo proxy point",
-            "observable": "API",
-            "observable_label": "Antecedent precipitation index",
+            "observable": "rain_12h_sum",
+            "observable_label": "12-hour rainfall sum",
             "family": "weather_proxy",
             "spatial_type": "proxy_point",
             "lat": WHAKAARI_LAT,

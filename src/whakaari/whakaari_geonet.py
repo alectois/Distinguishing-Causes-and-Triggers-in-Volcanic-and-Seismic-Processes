@@ -105,7 +105,6 @@ def load_weather_vars(
     lon,
     start,
     end,
-    api_alpha=0.05,
     *,
     timeout=60,
     cache_path=None,
@@ -115,7 +114,7 @@ def load_weather_vars(
     Load Open-Meteo weather variables for Whakaari.
 
     Returns:
-        API
+        rain_12h_sum
         pressure_drop
 
     Uses a local cache when available so the notebook is reproducible and does
@@ -201,14 +200,14 @@ def load_weather_vars(
     # Keep first row instead of dropping it only because diff() creates one NaN.
     weather["pressure_drop"] = weather["pressure_drop"].fillna(0)
 
-    weather["API"] = (
+    weather["rain_12h_sum"] = (
         weather["rainfall_mm"]
         .fillna(0)
-        .ewm(alpha=api_alpha, adjust=False)
-        .mean()
+        .rolling(window=12, min_periods=1)
+        .sum()
     )
 
-    weather_out = weather[["API", "pressure_drop"]].copy()
+    weather_out = weather[["rain_12h_sum", "pressure_drop"]].copy()
 
     if weather_out.isna().any().any():
         missing = weather_out.isna().sum()

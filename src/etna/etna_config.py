@@ -40,7 +40,7 @@ ETNA_GAS_METEO_COLS = [
     "pressure_drop",
     "WindSpeed",
 ]
-ETNA_WEATHER_COLS = ["API"]
+ETNA_WEATHER_COLS = ["rain_6h_sum"]
 ETNA_EVENT_TIME = UTCDateTime("2008-05-12T06:28:00")
 ETNA_CATALOGUE_FILENAME = "Etna catalogue_2000-2010.xls"
 
@@ -128,8 +128,8 @@ def etna_observable_metadata():
             "case": "Etna",
             "source_id": "ETNA_OPENMETEO_PROXY",
             "source_label": "Open-Meteo Etna proxy point",
-            "observable": "API",
-            "observable_label": "Antecedent precipitation index",
+            "observable": "rain_6h_sum",
+            "observable_label": "6-hour rainfall sum",
             "family": "weather_proxy",
             "spatial_type": "proxy_point",
             "lat": 37.75,

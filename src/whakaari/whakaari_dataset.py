@@ -94,8 +94,7 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     # Positive count / accumulation / flux variables.
     log1p_cols = [
         "event_rate_2_5",
-        "SO2_flux",
-        "API",
+        "rain_12h_sum",
     ]
 
     # Signed burst-like variables.
@@ -238,31 +237,6 @@ def build_master_dataframe(
 
 def prepare_raw_analysis_dataframe(whakaari_master):
     whakaari_raw = whakaari_master.copy()
-
-    if "SO2_flux" in whakaari_raw.columns:
-        # SO2 is sparse and slow-changing.
-        # Prepare it as a past-only step function:
-        # each observed value is carried forward until the next observation.
-        whakaari_raw["SO2_flux"] = (
-            pd.to_numeric(whakaari_raw["SO2_flux"], errors="coerce")
-            .clip(lower=0)
-            .ffill()
-        )
-
-        # Remove only the part before the first real SO2 observation.
-        whakaari_raw = whakaari_raw.dropna(subset=["SO2_flux"])
-
-    if "API" in whakaari_raw.columns:
-        whakaari_raw["API"] = (
-            pd.to_numeric(whakaari_raw["API"], errors="coerce")
-            .ffill(limit=1)
-        )
-
-    if "pressure_drop" in whakaari_raw.columns:
-        whakaari_raw["pressure_drop"] = (
-            pd.to_numeric(whakaari_raw["pressure_drop"], errors="coerce")
-            .ffill(limit=1)
-        )
 
     if "GNSS_deformation" in whakaari_raw.columns:
         whakaari_raw["GNSS_deformation"] = (

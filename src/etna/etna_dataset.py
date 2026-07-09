@@ -276,7 +276,7 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
 
     # Positive accumulation / gas variables.
     log1p_cols = [
-        "API",
+        "rain_6h_sum",
         "CO2_3",
         "CO2_SO2",
     ]
@@ -581,7 +581,6 @@ def load_openmeteo_etna_weather(
     end_date: str,
     latitude: float = 37.75,
     longitude: float = 14.99,
-    api_alpha: float = 0.05,
 ):
     url = (
         "https://archive-api.open-meteo.com/v1/archive?"
@@ -602,11 +601,11 @@ def load_openmeteo_etna_weather(
 
     weather["rainfall_mm"] = pd.to_numeric(weather["rainfall_mm"], errors="coerce")
 
-    weather["API"] = (
+    weather["rain_6h_sum"] = (
         weather["rainfall_mm"]
         .fillna(0)
-        .ewm(alpha=api_alpha, adjust=False)
-        .mean()
+        .rolling(window=6, min_periods=1)
+        .sum()
     )
 
-    return weather[["timestamp", "API"]]
+    return weather[["timestamp", "rain_6h_sum"]]
