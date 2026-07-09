@@ -58,8 +58,8 @@ def set_thesis_style():
         "ytick.labelsize": 9.2,
         "legend.fontsize": 9.0,
         "axes.linewidth": 0.60,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
+        "axes.spines.top": True,
+        "axes.spines.right": True,
         "axes.grid": True,
         "grid.alpha": 0.14,
         "grid.linewidth": 0.42,
@@ -98,21 +98,25 @@ WHAKAARI_EXTERNAL_COLS = [
     "GNSS_deformation",
 ]
 
+WHAKAARI_LOG_Y_COLS = {
+    "hydro_2_5",
+}
+
 WHAKAARI_AXIS_LABELS = {
     "hydro_2_5": (
-        "Hydrothermal tremor RMS, 2–5 Hz",
+        "Hydrothermal RMS, 2–5 Hz",
         "RMS velocity"
     ),
     "ratio_4p5_8_over_8_16": (
-        "Past-smoothed spectral-ratio state, 4.5–8 / 8–16 Hz",
+        "Spectral ratio",
         "Ratio"
     ),
     "event_rate_2_5": (
-        "STA/LTA event-rate proxy, 2–5 Hz",
+        "STA/LTA event rate, 2–5 Hz",
         "Events h⁻¹"
     ),
     "effect_tremor_5_15": (
-        "Positive tremor-response anomaly (Effect), 5–15 Hz",
+        "Tremor anomaly (Effect), 5–15 Hz",
         "log-RMS excess"
     ),
     "rain_12h_sum": (
@@ -129,19 +133,19 @@ WHAKAARI_AXIS_LABELS = {
     ),
 
     "hydro_2_5_scaled": (
-        "Hydrothermal tremor RMS, 2–5 Hz",
+        "Hydrothermal RMS, 2–5 Hz",
         "Std. value"
     ),
     "ratio_4p5_8_over_8_16_scaled": (
-        "Past-smoothed spectral-ratio state, 4.5–8 / 8–16 Hz",
+        "Spectral ratio",
         "Std. value"
     ),
     "event_rate_2_5_scaled": (
-        "STA/LTA event-rate proxy, 2–5 Hz",
+        "STA/LTA event rate, 2–5 Hz",
         "Std. value"
     ),
     "effect_tremor_5_15_scaled": (
-        "Positive tremor-response anomaly (Effect), 5–15 Hz",
+        "Tremor anomaly (Effect), 5–15 Hz",
         "Std. value"
     ),
     "rain_12h_sum_scaled": (
@@ -251,6 +255,9 @@ def _plot_whakaari_group(
         y = pd.to_numeric(df[col], errors="coerce")
         panel_title, ylabel = WHAKAARI_AXIS_LABELS.get(col, (col, "Value"))
 
+        if col in WHAKAARI_LOG_Y_COLS:
+            y = y.where(y > 0)
+
         drawstyle = "steps-post" if col == "GNSS_deformation" else "default"
 
         ax.plot(
@@ -272,8 +279,11 @@ def _plot_whakaari_group(
             zorder=5,
         )
 
+        if col in WHAKAARI_LOG_Y_COLS:
+            ax.set_yscale("log")
+
         ax.set_title(panel_title, loc="left", pad=4.5)
-        ax.set_ylabel(ylabel, labelpad=7, fontsize=8.8)
+        ax.set_ylabel(ylabel, labelpad=7)
         ax.yaxis.set_label_coords(-0.060, 0.5)
 
         ax.grid(True, alpha=0.14, linewidth=0.42)
@@ -304,7 +314,7 @@ def _plot_whakaari_group(
     fig.align_ylabels(axes)
 
     fig.subplots_adjust(
-        left=0.112,
+        left=0.120,
         right=0.992,
         bottom=0.095,
         top=top,
@@ -345,7 +355,7 @@ def plot_whakaari_thesis_figures(
         save_dir=save_dir,
         title=seismic_title,
         fig_width=8.0,
-        panel_height=1.34,
+        panel_height=1.42,
         tick_interval_days=tick_interval_days,
         line_width=0.70,
     )
@@ -358,7 +368,7 @@ def plot_whakaari_thesis_figures(
         save_dir=save_dir,
         title=external_title,
         fig_width=8.0,
-        panel_height=1.22,
+        panel_height=1.18,
         tick_interval_days=tick_interval_days,
         line_width=0.70,
     )
@@ -417,14 +427,14 @@ def plot_variable_pdfs(df, name=None, cols=None, bins=40, filename=None, save_di
             linewidth=0.4,
         )
 
-        ax.axvline(x.mean(), linestyle="--", linewidth=1.2, label="mean")
-        ax.axvline(x.median(), linestyle=":", linewidth=1.2, label="median")
+        ax.axvline(x.mean(), linestyle="--", linewidth=1.5, label="mean")
+        ax.axvline(x.median(), linestyle=":", linewidth=1.5, label="median")
 
         panel_title, _ = WHAKAARI_AXIS_LABELS.get(col, (col, "Value"))
         ax.set_title(panel_title, loc="left")
         ax.set_ylabel("Density")
         ax.grid(True, alpha=0.14, linewidth=0.42)
-        ax.legend(fontsize=8, frameon=False)
+        ax.legend(fontsize=8)
 
     for ax in axes[len(cols):]:
         ax.axis("off")
@@ -963,27 +973,38 @@ def plot_loglog_distributions(
             centres[mask],
             counts[mask],
             marker="o",
-            markersize=3.0,
-            linewidth=0.85,
+            markersize=2.8,
+            linewidth=0.80,
             color=THESIS_COLORS["series"],
         )
 
         ax.set_xscale("log")
         ax.set_yscale("log")
-        ax.set_title(panel_title, loc="left")
+        ax.set_title(panel_title, loc="left", pad=4)
         ax.set_xlabel(unit_label)
         ax.set_ylabel("Density")
         ax.grid(True, which="both", alpha=0.14, linewidth=0.42)
 
+        if col in {"ratio_4p5_8_over_8_16", "GNSS_deformation"}:
+            text_x, text_y, text_ha, text_va = 0.04, 0.06, "left", "bottom"
+        else:
+            text_x, text_y, text_ha, text_va = 0.98, 0.95, "right", "top"
+
         ax.text(
-            0.98,
-            0.95,
+            text_x,
+            text_y,
             f"positive n={n_positive}\n≤0 dropped={n_nonpositive}",
             transform=ax.transAxes,
-            ha="right",
-            va="top",
+            ha=text_ha,
+            va=text_va,
             fontsize=7.6,
             color="0.30",
+            bbox={
+                "facecolor": "white",
+                "edgecolor": "none",
+                "alpha": 0.72,
+                "pad": 1.4,
+            },
         )
 
     for ax in axes[len(cols):]:

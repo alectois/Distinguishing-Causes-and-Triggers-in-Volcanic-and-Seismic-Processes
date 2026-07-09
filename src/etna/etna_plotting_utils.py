@@ -117,6 +117,8 @@ def plot_variable_pdfs(df, cols=None, bins=40, save_dir="figures", filename=None
     Plot empirical probability density functions for numeric variables.
     Uses histograms normalized to density.
     """
+    set_thesis_style()
+    
     if cols is None:
         cols = [
             c for c in df.columns
@@ -630,8 +632,8 @@ def set_thesis_style():
         "ytick.labelsize": 9.2,
         "legend.fontsize": 9.0,
         "axes.linewidth": 0.60,
-        "axes.spines.top": False,
-        "axes.spines.right": False,
+        "axes.spines.top": True,
+        "axes.spines.right": True,
         "axes.grid": True,
         "grid.alpha": 0.14,
         "grid.linewidth": 0.42,
