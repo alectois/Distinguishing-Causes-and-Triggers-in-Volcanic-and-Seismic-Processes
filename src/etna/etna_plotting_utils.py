@@ -85,20 +85,17 @@ ETNA_RAW_ORDER = [
     "WindSpeed",
 ]
 
-ETNA_SEISMIC_COLS = [
-    "teleseismic",
-    "local_event_rate_state",
-]
-
-ETNA_EFFECT_COLS = [
-    "local_event_rate_anomaly",
-]
-
 ETNA_EXTERNAL_COLS = [
     "CO2_3",
     "rain_6h_sum",
     "pressure_drop",
     "WindSpeed",
+]
+
+ETNA_TRIGGER_STATE_EFFECT_COLS = [
+    "teleseismic",
+    "local_event_rate_state",
+    "local_event_rate_anomaly",
 ]
 
 ETNA_SCALED_ORDER = [
@@ -139,13 +136,19 @@ def plot_variable_pdfs(df, cols=None, bins=40, save_dir="figures", filename=None
         ]
 
     n = len(cols)
-    ncols = 3
+    if n <= 4:
+        ncols = n
+    elif n <= 8:
+        ncols = 4
+    else:
+        ncols = 3
+
     nrows = int(np.ceil(n / ncols))
 
     fig, axes = plt.subplots(
         nrows,
         ncols,
-        figsize=(5 * ncols, 3.5 * nrows),
+        figsize=(3.8 * ncols, 2.85 * nrows),
         squeeze=False,
     )
 
@@ -166,7 +169,8 @@ def plot_variable_pdfs(df, cols=None, bins=40, save_dir="figures", filename=None
         ax.axvline(x.mean(), linestyle="--", linewidth=1.5, label="mean")
         ax.axvline(x.median(), linestyle=":", linewidth=1.5, label="median")
 
-        ax.set_title(col)
+        panel_title, _ = ETNA_AXIS_LABELS.get(col, (col, "Value"))
+        ax.set_title(panel_title, loc="left")
         ax.set_ylabel("Density")
         ax.legend(fontsize=8)
 
@@ -434,46 +438,46 @@ def run_teleseismic_checks(
 
     _format_timestamp_axis(ax)
 
-    band_guides = [
-        (0.03, "0.03 Hz"),
-        (0.30, "0.30 Hz"),
-    ]
+    band_low, band_high = cfg["bands"]["teleseismic"]
 
-    for freq, label in band_guides:
-        ax.axhline(
-            freq,
-            color="white",
-            linestyle="-",
-            linewidth=2.8,
-            alpha=0.95,
-            zorder=8,
-        )
+    # Lightly shade the final teleseismic proxy band instead of writing tiny
+    # labels at the bottom of the spectrogram.
+    ax.axhspan(
+        band_low,
+        band_high,
+        color="white",
+        alpha=0.16,
+        zorder=7,
+    )
+
+    for freq in (band_low, band_high):
         ax.axhline(
             freq,
             color="black",
             linestyle="--",
-            linewidth=1.15,
+            linewidth=1.05,
             alpha=0.95,
             zorder=9,
         )
 
-        ax.text(
-            0.985,
-            freq,
-            label,
-            transform=ax.get_yaxis_transform(),
-            ha="right",
-            va="bottom",
-            fontsize=8,
-            color="black",
-            bbox={
-                "facecolor": "white",
-                "edgecolor": "none",
-                "alpha": 0.75,
-                "pad": 1.8,
-            },
-            zorder=10,
-        )
+    ax.text(
+        0.015,
+        0.055,
+        f"Teleseismic proxy band: {band_low:.2f}–{band_high:.2f} Hz",
+        transform=ax.transAxes,
+        ha="left",
+        va="bottom",
+        fontsize=8.5,
+        color="black",
+        bbox={
+            "facecolor": "white",
+            "edgecolor": "0.35",
+            "linewidth": 0.35,
+            "alpha": 0.88,
+            "pad": 2.2,
+        },
+        zorder=20,
+    )
 
     ax.set_ylim(0, 15)
     ax.set_ylabel("Frequency (Hz)")
@@ -495,7 +499,7 @@ def run_teleseismic_checks(
             color="black",
             linestyle="--",
             linewidth=1.15,
-            label="Teleseismic proxy band boundaries",
+            label="Teleseismic proxy band",
         ),
     ]
 
@@ -805,44 +809,29 @@ def plot_etna_thesis_figures(
 ):
     """
     Create final thesis overview figures:
-    1. waveform-derived Etna variables
-    2. catalogue-derived local seismicity effect
-    3. external variables
+    1. trigger/state/effect variables
+    2. external variables
 
     Both PDF and PNG are saved under figures/ by default.
-    Use PDF in the thesis; PNG is only for checking.
     """
 
-    waveform_title = "Waveform-derived variables" if include_titles else None
-    effect_title = "Catalogue-derived effect variable" if include_titles else None
+    trigger_state_effect_title = (
+        "Teleseismic trigger and catalogue seismicity variables"
+        if include_titles else None
+    )
     external_title = "External variables" if include_titles else None
 
-    waveform = _plot_etna_group(
+    trigger_state_effect = _plot_etna_group(
         csv_path=csv_path,
         event_time=event_time,
-        cols=ETNA_SEISMIC_COLS,
-        filename="etna_waveform_variables",
+        cols=ETNA_TRIGGER_STATE_EFFECT_COLS,
+        filename="etna_trigger_state_effect_variables",
         save_dir=save_dir,
-        title=waveform_title,
+        title=trigger_state_effect_title,
         fig_width=8.0,
-        panel_height=1.38,
+        panel_height=1.28,
         tick_interval_days=4,
-        line_width=0.70,
-        shared_y=False,
-        common_y_label=None,
-    )
-
-    effect = _plot_etna_group(
-        csv_path=csv_path,
-        event_time=event_time,
-        cols=ETNA_EFFECT_COLS,
-        filename="etna_catalogue_effect",
-        save_dir=save_dir,
-        title=effect_title,
-        fig_width=8.0,
-        panel_height=1.65,
-        tick_interval_days=4,
-        line_width=0.85,
+        line_width=0.75,
         shared_y=False,
         common_y_label=None,
     )
@@ -855,12 +844,12 @@ def plot_etna_thesis_figures(
         save_dir=save_dir,
         title=external_title,
         fig_width=8.0,
-        panel_height=1.12,
+        panel_height=1.08,
         tick_interval_days=4,
         line_width=0.70,
     )
 
-    return waveform, effect, external
+    return trigger_state_effect, external
 
 # -----------------------------------------------------------------------------
 # Etna map / geographic plotting utilities
@@ -870,29 +859,17 @@ FAMILY_STYLE = {
     "seismic": {
         "marker": "^",
         "color": "#1f77b4",
-        "label": "Seismic variables",
+        "label": "Teleseismic station",
     },
-
     "catalogue_seismicity": {
         "marker": "*",
         "color": "#d62728",
         "label": "Catalogue seismicity",
     },
-
-    "gas": {
+    "gas_meteo": {
         "marker": "o",
         "color": "#2ca02c",
-        "label": "Soil CO₂ concentration",
-    },
-    "meteorology": {
-        "marker": "s",
-        "color": "#9467bd",
-        "label": "Meteorological variables",
-    },
-    "gas_plume": {
-        "marker": "D",
-        "color": "#17becf",
-        "label": "Plume CO₂/SO₂ ratio",
+        "label": "ETNAGAS gas/meteo",
     },
     "weather_proxy": {
         "marker": "P",
@@ -910,33 +887,25 @@ FAMILY_STYLE = {
 SOURCE_LABELS = {
     "ESLN": "ESLN",
     "ETNAGAS_3": "ETNAGAS network",
-    "ETNA_SUMMIT_PLUME": "INGV-PA, Multi-GAS",
     "ETNA_OPENMETEO_PROXY": "Open-Meteo",
     "Etna summit": "Etna summit",
     "EtnaSC_2000_2010": "EtnaSC catalogue",
 }
 
 DEFAULT_LABEL_OFFSETS = {
-    # Seismic stations
-    "ESLN": (0, -20),
-
-    # Summit/proxy cluster
+    "ESLN": (0, -18),
     "EtnaSC_2000_2010": (-8, 18),
-    "ETNA_OPENMETEO_PROXY": (-22, -18),
-    "ETNA_SUMMIT_PLUME": (8, 24),
-    "Etna summit": (24, -20),
-
-    # Gas/meteo station
-    "ETNAGAS_3": (0, 42),
+    "ETNA_OPENMETEO_PROXY": (-12, -18),
+    "Etna summit": (16, -12),
+    "ETNAGAS_3": (0, 34),
 }
 
 SOURCE_DISPLAY_NUDGES_M = {
-    # Visual-only nudges for overlapping summit/proxy/catalogue sources.
-    # True coordinates remain in x/y; only displayed marker positions move.
-    "EtnaSC_2000_2010": (-1450, 900),
-    "ETNA_OPENMETEO_PROXY": (-1500, -1050),
-    "ETNA_SUMMIT_PLUME": (950, 850),
-    "Etna summit": (1150, -900),
+    # Visual-only nudges for the summit/proxy/catalogue cluster.
+    # True coordinates remain in x/y; displayed marker positions use x_plot/y_plot.
+    "EtnaSC_2000_2010": (-650, 430),
+    "ETNA_OPENMETEO_PROXY": (-650, -430),
+    "Etna summit": (520, -260),
 
     # Other sources remain fixed.
     "ESLN": (0, 0),
@@ -991,66 +960,6 @@ def _add_basemap(ax, satellite=False):
         warnings.warn(f"Could not add basemap: {exc}")
 
 
-def _offset_observables(df, spacing_m=2300):
-    df = df.copy()
-    df["x_plot"] = df["x"]
-    df["y_plot"] = df["y"]
-
-    is_projected = bool(df["is_projected"].iloc[0])
-
-    for source_id, idx in df.groupby("source_id").groups.items():
-        idx = list(idx)
-        n = len(idx)
-
-        if n <= 1:
-            continue
-
-        # Wider, readable layouts by group size.
-        if n == 2:
-            offsets = [(-0.8, 0.0), (0.8, 0.0)]
-
-        elif n == 3:
-            offsets = [
-                (-0.85, -0.50),
-                (0.85, -0.50),
-                (0.00, 0.75),
-            ]
-
-        elif n == 4:
-            offsets = [
-                (-0.85, -0.85),
-                (0.85, -0.85),
-                (-0.85, 0.85),
-                (0.85, 0.85),
-            ]
-
-        else:
-            ncols = int(np.ceil(np.sqrt(n)))
-            nrows = int(np.ceil(n / ncols))
-
-            offsets = []
-            for i in range(n):
-                r = i // ncols
-                c = i % ncols
-
-                offsets.append((
-                    1.05 * (c - (ncols - 1) / 2),
-                    1.05 * ((nrows - 1) / 2 - r),
-                ))
-
-        for row_idx, (ox, oy) in zip(idx, offsets):
-            if is_projected:
-                dx = ox * spacing_m
-                dy = oy * spacing_m
-            else:
-                dx = ox * spacing_m / 111_200
-                dy = oy * spacing_m / 111_200
-
-            df.loc[row_idx, "x_plot"] = df.loc[row_idx, "x"] + dx
-            df.loc[row_idx, "y_plot"] = df.loc[row_idx, "y"] + dy
-
-    return df
-
 def _nudge_overlapping_sources(df, source_nudges_m=None):
     """
     Move displayed marker positions for sources that share nearly the same
@@ -1081,9 +990,12 @@ def _nudge_overlapping_sources(df, source_nudges_m=None):
 
     return df
 
-def _set_extent(ax, df, pad_fraction=0.055, min_pad_m=1800):
-    xmin, xmax = df["x_plot"].min(), df["x_plot"].max()
-    ymin, ymax = df["y_plot"].min(), df["y_plot"].max()
+def _set_extent(ax, df, pad_fraction=0.065, min_pad_m=1200):
+    xs = pd.concat([df["x"], df["x_plot"]])
+    ys = pd.concat([df["y"], df["y_plot"]])
+
+    xmin, xmax = xs.min(), xs.max()
+    ymin, ymax = ys.min(), ys.max()
 
     xpad = max((xmax - xmin) * pad_fraction, min_pad_m)
     ypad = max((ymax - ymin) * pad_fraction, min_pad_m)
@@ -1101,13 +1013,10 @@ def _clean_legend(ax):
             unique[label] = handle
 
     preferred_order = [
-        "Source centre",
-        "Seismic variables",
+        "Teleseismic station",
         "Catalogue seismicity",
-        "Soil CO₂ concentration",
-        "Meteorological variables",
+        "ETNAGAS gas/meteo",
         "Rainfall (6h sum)",
-        "Plume CO₂/SO₂ ratio",
         "Etna summit",
     ]
 
@@ -1119,7 +1028,7 @@ def _clean_legend(ax):
         ordered_labels,
         loc="upper center",
         bbox_to_anchor=(0.5, -0.035),
-        ncol=4,
+        ncol=3,
         frameon=True,
         framealpha=0.97,
         fontsize=8.0,
@@ -1217,35 +1126,57 @@ def _make_source_variable_table(df):
 
     return pd.DataFrame(rows).sort_values("Source").reset_index(drop=True)
 
-
-def _assign_observable_numbers(df):
+def _collapse_to_source_markers(df):
     """
-    Give each observable a short map ID.
-    Full readable labels are shown in the side panel.
-    """
-    df = df.copy()
+    Collapse observable-level metadata to one displayed marker per source.
 
+    The variable table still lists all observables at the source, but the map
+    shows source locations rather than one symbol per variable.
+    """
+    rows = []
+
+    family_by_source = {
+        "ESLN": "seismic",
+        "EtnaSC_2000_2010": "catalogue_seismicity",
+        "ETNAGAS_3": "gas_meteo",
+        "ETNA_OPENMETEO_PROXY": "weather_proxy",
+        "Etna summit": "summit",
+    }
+
+    for source_id, g in df.groupby("source_id", sort=False):
+        row = g.iloc[0].copy()
+
+        observables = list(dict.fromkeys(g["observable"].astype(str).tolist()))
+        observable_labels = list(dict.fromkeys(g["observable_label"].astype(str).tolist()))
+
+        row["observable"] = ", ".join(observables)
+        row["observable_label"] = "; ".join(observable_labels)
+        row["family"] = family_by_source.get(source_id, row["family"])
+
+        rows.append(row)
+
+    return pd.DataFrame(rows).reset_index(drop=True)
+
+def _sort_sources_for_map(df):
+    """Order final Etna map sources without adding map IDs."""
     source_order = [
         "ESLN",
         "EtnaSC_2000_2010",
         "ETNAGAS_3",
         "ETNA_OPENMETEO_PROXY",
-        "ETNA_SUMMIT_PLUME",
         "Etna summit",
     ]
 
+    df = df.copy()
     df["source_order"] = df["source_id"].apply(
         lambda x: source_order.index(x) if x in source_order else 999
     )
 
-    df = df.sort_values(["source_order", "source_id", "observable"]).reset_index(drop=True)
-
-    df["map_id"] = [
-        f"{i + 1}" if sid != "Etna summit" else "S"
-        for i, sid in enumerate(df["source_id"])
-    ]
-
-    return df.drop(columns=["source_order"])
+    return (
+        df.sort_values(["source_order", "source_id", "observable"])
+        .drop(columns="source_order")
+        .reset_index(drop=True)
+    )
 
 def plot_etna_all_variables_map(
     metadata,
@@ -1254,8 +1185,7 @@ def plot_etna_all_variables_map(
     summit_lon=14.999,
     satellite=True,
     title=None,
-    offset_radius_m=1650,
-    figsize=(10.5, 8.0),
+    figsize=(9.4, 7.2),
     filename=None,
     save_dir="figures",
 ):
@@ -1289,10 +1219,11 @@ def plot_etna_all_variables_map(
     }])
 
     df = pd.concat([df, summit_row], ignore_index=True)
-
-    df = _assign_observable_numbers(df)
+    df = _collapse_to_source_markers(df)
+    df = _sort_sources_for_map(df)
     df = _project_to_web_mercator(df)
-    df = _offset_observables(df, spacing_m=offset_radius_m)
+    df["x_plot"] = df["x"]
+    df["y_plot"] = df["y"]
     df = _nudge_overlapping_sources(df)
 
     
@@ -1320,20 +1251,6 @@ def plot_etna_all_variables_map(
 
     centres = _source_centres(df)
 
-    # True measurement source centres.
-    ax.scatter(
-        centres["x"],
-        centres["y"],
-        s=46,
-        marker="o",
-        facecolor="white",
-        edgecolor="black",
-        linewidth=1.15,
-        alpha=0.98,
-        zorder=10,
-        label="Source centre",
-    )
-
     summit_df = df[df["source_id"] == "Etna summit"].drop_duplicates("source_id")
 
     # Plot all observable markers.
@@ -1345,13 +1262,14 @@ def plot_etna_all_variables_map(
         )
 
         size_by_family = {
-            "summit": 140,
-            "catalogue_seismicity": 150,
-            "weather_proxy": 125,
-            "gas_plume": 115,
+            "summit": 135,
+            "catalogue_seismicity": 190,
+            "weather_proxy": 135,
+            "gas_meteo": 120,
+            "seismic": 115,
         }
 
-        size = size_by_family.get(family, 88)
+        size = size_by_family.get(family, 105)
 
         ax.scatter(
             row["x_plot"],
@@ -1360,31 +1278,10 @@ def plot_etna_all_variables_map(
             marker=style["marker"],
             color=style["color"],
             edgecolor="black",
-            linewidth=0.70,
+            linewidth=0.85,
             alpha=0.96,
             zorder=12,
             label=style["label"],
-        )
-
-        # Short readable numbered label on top of marker.
-        ax.annotate(
-            row["map_id"],
-            xy=(row["x_plot"], row["y_plot"]),
-            xytext=(0, 11),
-            textcoords="offset points",
-            fontsize=7.3,
-            fontweight="bold",
-            color="black",
-            ha="center",
-            va="center",
-            bbox={
-                "boxstyle": "circle,pad=0.20",
-                "facecolor": "white",
-                "edgecolor": "black",
-                "linewidth": 0.6,
-                "alpha": 0.95,
-            },
-            zorder=35,
         )
 
     # Source names only.
@@ -1426,9 +1323,9 @@ def plot_loglog_distributions(
     save_dir="figures",
     formats=("pdf", "png"),
     title=None,
-    ncols=3,
-    fig_width_per_col=4.7,
-    panel_height=3.0,
+    ncols=None,
+    fig_width_per_col=3.9,
+    panel_height=2.85,
     min_positive_count=5,
 ):
     """
@@ -1455,6 +1352,14 @@ def plot_loglog_distributions(
     if len(cols) == 0:
         print("No requested numeric columns available for log-log plotting.")
         return None, None, pd.DataFrame()
+    
+    if ncols is None:
+        if len(cols) <= 4:
+            ncols = len(cols)
+        elif len(cols) <= 8:
+            ncols = 4
+        else:
+            ncols = 3
 
     nrows = int(np.ceil(len(cols) / ncols))
 
