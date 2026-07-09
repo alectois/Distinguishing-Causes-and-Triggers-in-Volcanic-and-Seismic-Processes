@@ -91,7 +91,7 @@ ETNA_EXTERNAL_COLS = [
     "WindSpeed",
 ]
 
-ETNA_TRIGGER_STATE_EFFECT_COLS = [
+ETNA_SEISMIC_COLS = [
     "teleseismic",
     "local_event_rate_state",
     "local_event_rate_anomaly",
@@ -795,19 +795,19 @@ def plot_etna_thesis_figures(
     Both PDF and PNG are saved under figures/ by default.
     """
 
-    trigger_state_effect_title = (
+    etna_seismic_title = (
         "Teleseismic trigger and catalogue seismicity variables"
         if include_titles else None
     )
     external_title = "External variables" if include_titles else None
 
-    trigger_state_effect = _plot_etna_group(
+    etna_seismic = _plot_etna_group(
         csv_path=csv_path,
         event_time=event_time,
-        cols=ETNA_TRIGGER_STATE_EFFECT_COLS,
-        filename="etna_trigger_state_effect_variables",
+        cols=ETNA_SEISMIC_COLS,
+        filename="etna_seismic_variables",
         save_dir=save_dir,
-        title=trigger_state_effect_title,
+        title=etna_seismic_title,
         fig_width=8.0,
         panel_height=1.42,
         tick_interval_days=4,
@@ -827,7 +827,7 @@ def plot_etna_thesis_figures(
         line_width=0.70,
     )
 
-    return trigger_state_effect, external
+    return etna_seismic, external
 
 # -----------------------------------------------------------------------------
 # Etna map / geographic plotting utilities
