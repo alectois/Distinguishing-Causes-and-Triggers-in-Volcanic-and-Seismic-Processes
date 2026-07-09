@@ -41,10 +41,11 @@ ETNA_AXIS_LABELS = {
         "Teleseismic energy, 0.03–0.30 Hz",
         "RMS velocity"
     ),
-    "background_seismic": (
-        "Past-smoothed seismic background state, 0.80–2.30 Hz",
-        "Rolling-median RMS velocity"
+    "local_event_rate_state": (
+        "Past 48-hour local event-rate state",
+        "log1p past 48 h event count"
     ),
+
     "local_event_rate_anomaly": (
         "Catalogue local event-rate anomaly (Effect)",
         "Positive log1p-count anomaly"
@@ -53,16 +54,17 @@ ETNA_AXIS_LABELS = {
     "rain_6h_sum": ("6-hour rainfall sum", "mm"),
     "pressure_drop": ("Atmospheric pressure drop", "hPa"),
     "WindSpeed": ("Wind speed", "m s⁻¹"),
-    "CO2_SO2": ("Plume CO₂/SO₂ ratio", "Molar ratio"),
 
     "teleseismic_scaled": (
         "Teleseismic energy, 0.03–0.30 Hz",
         "Standardized log RMS"
     ),
-    "background_seismic_scaled": (
-        "Past-smoothed seismic background state, 0.80–2.30 Hz",
-        "Standardized log state"
+
+    "local_event_rate_state_scaled": (
+        "Past 48-hour local event-rate state",
+        "Standardized log1p past-count state"
     ),
+
     "local_event_rate_anomaly_scaled": (
         "Catalogue local event-rate anomaly (Effect)",
         "Standardized positive log1p-count anomaly"
@@ -71,23 +73,21 @@ ETNA_AXIS_LABELS = {
     "rain_6h_sum_scaled": ("6-hour rainfall sum", "Standardized transformed value"),
     "pressure_drop_scaled": ("Atmospheric pressure drop", "Standardized transformed value"),
     "WindSpeed_scaled": ("Wind speed", "Standardized value"),
-    "CO2_SO2_scaled": ("Plume CO₂/SO₂ ratio", "Standardized transformed value"),
 }
 
 ETNA_RAW_ORDER = [
     "teleseismic",
-    "background_seismic",
+    "local_event_rate_state",
     "local_event_rate_anomaly",
     "CO2_3",
     "rain_6h_sum",
     "pressure_drop",
     "WindSpeed",
-    "CO2_SO2",
 ]
 
 ETNA_SEISMIC_COLS = [
     "teleseismic",
-    "background_seismic",
+    "local_event_rate_state",
 ]
 
 ETNA_EFFECT_COLS = [
@@ -99,18 +99,16 @@ ETNA_EXTERNAL_COLS = [
     "rain_6h_sum",
     "pressure_drop",
     "WindSpeed",
-    "CO2_SO2",
 ]
 
 ETNA_SCALED_ORDER = [
     "teleseismic_scaled",
-    "background_seismic_scaled",
+    "local_event_rate_state_scaled",
     "local_event_rate_anomaly_scaled",
     "CO2_3_scaled",
     "rain_6h_sum_scaled",
     "pressure_drop_scaled",
     "WindSpeed_scaled",
-    "CO2_SO2_scaled",
 ]
 
 

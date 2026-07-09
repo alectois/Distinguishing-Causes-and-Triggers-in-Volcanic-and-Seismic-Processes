@@ -213,6 +213,63 @@ def catalogue_event_rate_anomaly(
 
     return anomaly
 
+def catalogue_event_rate_state(
+    catalog_df: pd.DataFrame,
+    master_index: pd.DatetimeIndex,
+    *,
+    state_window: int = 48,
+    min_periods: int = 12,
+) -> pd.Series:
+    """
+    Build a past-only Etna catalogue seismicity state.
+
+    Steps:
+        hourly event count
+        -> past-only rolling 48 h event-count sum
+        -> log1p
+
+    The value at time t uses only previous hours:
+        count_{t-48}, ..., count_{t-1}
+
+    Output:
+        local_event_rate_state
+    """
+    events = catalog_df.copy()
+
+    if "timestamp" not in events.columns:
+        if "time" in events.columns:
+            events = events.rename(columns={"time": "timestamp"})
+        else:
+            raise ValueError("Catalogue dataframe must contain 'timestamp' or 'time'.")
+
+    events["timestamp"] = pd.to_datetime(events["timestamp"], utc=True, errors="coerce")
+    events = events.dropna(subset=["timestamp"]).sort_values("timestamp")
+
+    master_index = pd.DatetimeIndex(pd.to_datetime(master_index, utc=True))
+
+    hourly_count = (
+        events
+        .set_index("timestamp")
+        .assign(count=1)
+        ["count"]
+        .resample("1h")
+        .sum()
+        .reindex(master_index, fill_value=0)
+        .astype(float)
+    )
+
+    past_count_sum = (
+        hourly_count
+        .rolling(window=state_window, min_periods=min_periods)
+        .sum()
+        .shift(1)
+    )
+
+    state = np.log1p(past_count_sum)
+    state.name = "local_event_rate_state"
+
+    return state
+
 def _numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce")
 
@@ -271,16 +328,13 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     # Use log, not log1p, because RMS velocities can be much smaller than 1.
     log_positive_cols = [
         "teleseismic",
-        "background_seismic",
     ]
 
-    # Positive accumulation / gas variables.
     log1p_cols = [
+        "local_event_rate_state",
         "rain_6h_sum",
         "CO2_3",
-        "CO2_SO2",
     ]
-
     # Signed burst-like variables.
     asinh_cols = [
         "pressure_drop",
@@ -370,7 +424,6 @@ def create_etna_final_dataset(
 
     seismic_cols = [
         "teleseismic",
-        "background_seismic",
     ]
 
     for c in seismic_cols:
@@ -390,19 +443,18 @@ def create_etna_final_dataset(
 
     base = df[base_cols].copy()
 
-    # Replace immediate low-frequency RMS with a past-only smoothed
-    # seismic background-state proxy for causal analysis.
-    base["background_seismic"] = past_rolling_median_state(
-        base["background_seismic"],
-        window=6,
-        min_periods=3,
-    )
-
     if catalog_df is None:
         raise ValueError(
             "catalog_df is required because the final Etna effect is "
             "local_event_rate_anomaly from the Etna event catalogue."
         )
+
+    base["local_event_rate_state"] = catalogue_event_rate_state(
+        catalog_df,
+        pd.DatetimeIndex(base["time"]),
+        state_window=48,
+        min_periods=12,
+    ).to_numpy()
 
     base["local_event_rate_anomaly"] = catalogue_event_rate_anomaly(
         catalog_df,
@@ -413,13 +465,13 @@ def create_etna_final_dataset(
 
     # Drop only the first rows where past-only state/anomaly construction is undefined.
     base = base.dropna(
-        subset=["background_seismic", "local_event_rate_anomaly"]
+        subset=["local_event_rate_state", "local_event_rate_anomaly"]
     ).reset_index(drop=True)
 
     model_cols = [
         "time",
         "teleseismic",
-        "background_seismic",
+        "local_event_rate_state",
         "local_event_rate_anomaly",
     ]
 
@@ -460,23 +512,6 @@ def create_etna_final_dataset(
             ext_time="timestamp",
             value_cols=weather_cols,
             tolerance_hours=weather_tolerance_hours,
-        )
-
-    # ---- plume ----
-    if plume_df is not None:
-        gpl = plume_df.copy()
-
-        tmin = base["time"].iloc[0] - pd.Timedelta(hours=plume_buffer_hours)
-        tmax = base["time"].iloc[-1] + pd.Timedelta(hours=plume_buffer_hours)
-        gpl = gpl[(gpl["timestamp"] >= tmin) & (gpl["timestamp"] <= tmax)].copy()
-
-        base = merge_data(
-            base=base,
-            ext=gpl,
-            base_time="time",
-            ext_time="timestamp",
-            value_cols=["CO2_SO2"],
-            tolerance_hours=plume_tolerance_hours,
         )
 
     # final sorted dataframe
