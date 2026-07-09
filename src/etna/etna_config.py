@@ -16,16 +16,12 @@ ETNA_WAVEFORM_CONFIG = {
     "pad_sec": 3600,
     "base_freq": "1h",
 
-    # physical bands
     "bands": {
-        "teleseismic": (0.03, 0.30),          # teleseismic / Wenchuan wavefield
-        "background_seismic": (0.80, 2.30),   # Etna tremor/state band
+        "teleseismic": (0.03, 0.30),
     },
 
-    # metric windows in seconds
     "windows_sec": {
         "teleseismic": 120,
-        "background_seismic": 600,   # slower state
     },
 
     # remove response to velocity

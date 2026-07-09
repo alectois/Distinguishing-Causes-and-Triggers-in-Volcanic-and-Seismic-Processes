@@ -1,62 +1,8 @@
-import xlrd
 import pandas as pd
 import numpy as np
 from pathlib import Path
 import requests
 from sklearn.preprocessing import StandardScaler
-
-def extract_plume_co2so2_xls(xls_path, sheet_index=2, time_col=1, ratio_col=10):
-    wb = xlrd.open_workbook(xls_path)
-    sh = wb.sheet_by_index(sheet_index)
-
-    first_data_row = None
-    for r in range(sh.nrows):
-        v = sh.cell_value(r, time_col)
-        # Check type BEFORE comparison
-        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 1000:
-            first_data_row = r
-            break
-    if first_data_row is None:
-        raise RuntimeError("Could not find numeric Excel time serials in the time column.")
-
-    times = []
-    ratios = []
-    datemode = wb.datemode
-
-    for r in range(first_data_row, sh.nrows):
-        t_val = sh.cell_value(r, time_col)
-        y_val = sh.cell_value(r, ratio_col)
-
-        # Type guard with explicit conversion
-        if not isinstance(t_val, (int, float)) or isinstance(t_val, bool):
-            continue
-        
-        # Explicitly cast to float to satisfy type checker
-        t_val = float(t_val)
-        
-        if t_val <= 0:
-            continue
-
-        try:
-            t_dt = xlrd.xldate_as_datetime(t_val, datemode)
-        except Exception:
-            continue
-
-        try:
-            y = float(y_val)
-        except Exception:
-            y = np.nan
-
-        times.append(t_dt)
-        ratios.append(y)
-
-    g = pd.DataFrame({
-        "timestamp": pd.to_datetime(times, utc=True),
-        "CO2_SO2": pd.to_numeric(ratios, errors="coerce")
-    })
-
-    g = g.sort_values("timestamp").dropna(subset=["CO2_SO2"]).reset_index(drop=True)
-    return g
 
 def merge_data(base, ext, base_time, ext_time, value_cols, tolerance_hours):
     base = base.copy()
@@ -273,25 +219,6 @@ def catalogue_event_rate_state(
 def _numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce")
 
-def past_rolling_median_state(
-    s: pd.Series,
-    *,
-    window: int = 6,
-    min_periods: int = 3,
-) -> pd.Series:
-    """
-    Convert an immediate hourly variable into a past-only state proxy.
-
-    The value at time t depends only on observations before t:
-    a rolling median is computed and shifted by one sample.
-    """
-    return (
-        pd.to_numeric(s, errors="coerce")
-        .rolling(window=window, min_periods=min_periods)
-        .median()
-        .shift(1)
-    )
-
 def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
     """
     Log-transform strictly non-negative physical amplitudes.
@@ -324,8 +251,6 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     """
     transformed = final.copy()
 
-    # Positive waveform-amplitude variables.
-    # Use log, not log1p, because RMS velocities can be much smaller than 1.
     log_positive_cols = [
         "teleseismic",
     ]
@@ -335,7 +260,7 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
         "rain_6h_sum",
         "CO2_3",
     ]
-    # Signed burst-like variables.
+
     asinh_cols = [
         "pressure_drop",
     ]
@@ -357,7 +282,6 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
             )
 
     return transformed
-
 
 def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -401,9 +325,6 @@ def create_etna_final_dataset(
     etnagas_cols: list[str] | None = None,
     etnagas_buffer_hours: int = 6,
     etnagas_tolerance_hours: int = 6,
-    plume_df: pd.DataFrame | None = None,
-    plume_buffer_hours: int = 12,
-    plume_tolerance_hours: int = 6,
     weather_df: pd.DataFrame | None = None,
     weather_cols: list[str] | None = None,
     weather_buffer_hours: int = 6,

@@ -435,9 +435,8 @@ def run_teleseismic_checks(
     _format_timestamp_axis(ax)
 
     band_guides = [
+        (0.03, "0.03 Hz"),
         (0.30, "0.30 Hz"),
-        (0.80, "0.80 Hz"),
-        (2.30, "2.30 Hz"),
     ]
 
     for freq, label in band_guides:
@@ -496,7 +495,7 @@ def run_teleseismic_checks(
             color="black",
             linestyle="--",
             linewidth=1.15,
-            label="Waveform proxy band boundaries",
+            label="Teleseismic proxy band boundaries",
         ),
     ]
 

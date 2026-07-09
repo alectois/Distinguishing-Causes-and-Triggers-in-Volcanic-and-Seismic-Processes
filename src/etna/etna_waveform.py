@@ -146,29 +146,13 @@ def extract_etna_features_for_chunk(client, station: str, day_start: UTCDateTime
         agg="max",
     ).rename("teleseismic")
 
-    # S: background / state band
-    S = windowed_metric(
-        tr,
-        fmin=cfg["bands"]["background_seismic"][0],
-        fmax=cfg["bands"]["background_seismic"][1],
-        window_sec=cfg["windows_sec"]["background_seismic"],
-        out_freq=cfg["base_freq"],
-        metric="rms",
-        agg="mean",
-    ).rename("background_seismic")
-
-    df = pd.concat([T, S], axis=1)
+    df = T.to_frame()
 
     left = pd.Timestamp(day_start.datetime, tz="UTC")
     right = left + pd.Timedelta(seconds=cfg["chunk_sec"])
     df = df.loc[(df.index >= left) & (df.index < right)].copy()
 
-    return df[
-        [
-            "teleseismic",
-            "background_seismic",
-        ]
-    ]
+    return df[["teleseismic"]]
 
 def build_station_waveform_dataset(
     client,
