@@ -169,7 +169,6 @@ def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 def build_master_dataframe(
     wave,
     weather_vars,
-    so2,
     gnss,
     start,
     end,
@@ -193,7 +192,6 @@ def build_master_dataframe(
             min_periods=3,
         )
     weather_1h = weather_vars.resample(master_freq).mean()
-    so2_1h = so2.resample(master_freq).mean()
     gnss_1h = (
         gnss
         .resample("1D")
@@ -214,21 +212,13 @@ def build_master_dataframe(
 
     wave_1h = wave_1h.reindex(master_index)
     weather_1h = weather_1h.reindex(master_index)
-    # Carry the last pre-window SO2 observation into the modelling window.
-    so2_1h = (
-        so2_1h
-        .reindex(so2_1h.index.union(master_index))
-        .sort_index()
-        .ffill()
-        .reindex(master_index)
-    )
     gnss_1h = (
         gnss_1h
         .reindex(master_index)
         .ffill()
     )
 
-    frames = [wave_1h, weather_1h, so2_1h, gnss_1h]
+    frames = [wave_1h, weather_1h, gnss_1h]
 
     whakaari_master = pd.concat(frames, axis=1)
     whakaari_master.index.name = "timestamp"

@@ -50,7 +50,7 @@ ETNA_AXIS_LABELS = {
         "Positive log1p-count anomaly"
     ),
     "CO2_3": ("Soil CO₂ concentration", "%"),
-    "API": ("Antecedent precipitation index", "mm"),
+    "rain_6h_sum": ("6-hour rainfall sum", "mm"),
     "pressure_drop": ("Atmospheric pressure drop", "hPa"),
     "WindSpeed": ("Wind speed", "m s⁻¹"),
     "CO2_SO2": ("Plume CO₂/SO₂ ratio", "Molar ratio"),
@@ -68,7 +68,7 @@ ETNA_AXIS_LABELS = {
         "Standardized positive log1p-count anomaly"
     ),
     "CO2_3_scaled": ("Soil CO₂ concentration", "Standardized transformed value"),
-    "API_scaled": ("Antecedent precipitation index", "Standardized transformed value"),
+    "rain_6h_sum_scaled": ("6-hour rainfall sum", "Standardized transformed value"),
     "pressure_drop_scaled": ("Atmospheric pressure drop", "Standardized transformed value"),
     "WindSpeed_scaled": ("Wind speed", "Standardized value"),
     "CO2_SO2_scaled": ("Plume CO₂/SO₂ ratio", "Standardized transformed value"),
@@ -79,7 +79,7 @@ ETNA_RAW_ORDER = [
     "background_seismic",
     "local_event_rate_anomaly",
     "CO2_3",
-    "API",
+    "rain_6h_sum",
     "pressure_drop",
     "WindSpeed",
     "CO2_SO2",
@@ -96,7 +96,7 @@ ETNA_EFFECT_COLS = [
 
 ETNA_EXTERNAL_COLS = [
     "CO2_3",
-    "API",
+    "rain_6h_sum",
     "pressure_drop",
     "WindSpeed",
     "CO2_SO2",
@@ -107,7 +107,7 @@ ETNA_SCALED_ORDER = [
     "background_seismic_scaled",
     "local_event_rate_anomaly_scaled",
     "CO2_3_scaled",
-    "API_scaled",
+    "rain_6h_sum_scaled",
     "pressure_drop_scaled",
     "WindSpeed_scaled",
     "CO2_SO2_scaled",
@@ -900,7 +900,7 @@ FAMILY_STYLE = {
     "weather_proxy": {
         "marker": "P",
         "color": "#bcbd22",
-        "label": "API",
+        "label": "Rainfall (6h sum)",
     },
     "summit": {
         "marker": "X",
@@ -920,26 +920,24 @@ SOURCE_LABELS = {
 }
 
 DEFAULT_LABEL_OFFSETS = {
-    # Seismic stations
     "ESLN": (0, -18),
 
-    # Summit/proxy area
-    "ETNA_OPENMETEO_PROXY": (-10, -4),   
-    "ETNA_SUMMIT_PLUME": (0, 28),       
-    "Etna summit": (24, -18),
+    "ETNA_OPENMETEO_PROXY": (-18, -10),
+    "ETNA_SUMMIT_PLUME": (0, 30),
+    "Etna summit": (26, -20),
+    "EtnaSC_2000_2010": (12, 18),
 
-    # Gas/meteo station
     "ETNAGAS_3": (0, 40),
-
-    "EtnaSC_2000_2010": (24, 18),
 }
 
 SOURCE_DISPLAY_NUDGES_M = {
-    "ETNA_OPENMETEO_PROXY": (0, 0),
-    "ETNA_SUMMIT_PLUME": (0, 0),
-    "EtnaSC_2000_2010": (0, 0),
-    # Keep summit at the actual summit reference point.
-    "Etna summit": (0, 0),
+    # Separate overlapping summit/proxy/catalogue markers visually.
+    # Coordinates remain documented in the metadata; only displayed marker
+    # positions are nudged for map readability.
+    "EtnaSC_2000_2010": (-900, 550),
+    "ETNA_OPENMETEO_PROXY": (-900, -550),
+    "ETNA_SUMMIT_PLUME": (650, 550),
+    "Etna summit": (650, -550),
 
     "ESLN": (0, 0),
     "ETNAGAS_3": (0, 0),
@@ -1108,7 +1106,7 @@ def _clean_legend(ax):
         "Catalogue seismicity",
         "Soil CO₂ concentration",
         "Meteorological variables",
-        "API",
+        "Rainfall (6h sum)",
         "Plume CO₂/SO₂ ratio",
         "Etna summit",
     ]
@@ -1338,7 +1336,12 @@ def plot_etna_all_variables_map(
             {"marker": "o", "color": "0.5", "label": family},
         )
 
-        size = 130 if family == "summit" else 88
+        if family == "summit":
+            size = 130
+        elif family == "catalogue_seismicity":
+            size = 150
+        else:
+            size = 88
 
         ax.scatter(
             row["x_plot"],

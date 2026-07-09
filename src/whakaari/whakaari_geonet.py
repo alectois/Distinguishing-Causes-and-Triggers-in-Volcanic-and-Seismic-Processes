@@ -15,24 +15,6 @@ def get_csv_df(url, timeout=120):
 def tilde_data_url(base_url, domain, station, name, sensor, method, aspect, start, end):
     return f"{base_url}{domain}/{station}/{name}/{sensor}/{method}/{aspect}/{start}/{end}"
 
-def load_so2_flux(tilde_data_base_url, start, end):
-    url = tilde_data_url(
-        base_url=tilde_data_base_url,
-        domain="scandoas",
-        station="WID01",
-        name="gasflux",
-        sensor="01",
-        method="reviewed",
-        aspect="SO2",
-        start=start,
-        end=end,
-    )
-
-    so2_wid01 = get_csv_df(url)
-
-    so2 = so2_wid01[["value"]].rename(columns={"value": "SO2_flux"})
-    so2.index = pd.to_datetime(so2.index, utc=True)
-    return so2.sort_index()
 
 def load_gnss_deformation(tilde_data_base_url, start, end):
     rgwc_url = tilde_data_url(

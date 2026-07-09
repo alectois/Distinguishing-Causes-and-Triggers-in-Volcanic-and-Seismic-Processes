@@ -80,9 +80,8 @@ WHAKAARI_ALL_COLS = [
     "ratio_4p5_8_over_8_16",
     "event_rate_2_5",
     "effect_tremor_5_15",
-    "API",
+    "rain_12h_sum",
     "pressure_drop",
-    "SO2_flux",
     "GNSS_deformation",
 ]
 
@@ -94,9 +93,8 @@ WHAKAARI_SEISMIC_COLS = [
 ]
 
 WHAKAARI_EXTERNAL_COLS = [
-    "API",
+    "rain_12h_sum",
     "pressure_drop",
-    "SO2_flux",
     "GNSS_deformation",
 ]
 
@@ -111,9 +109,8 @@ WHAKAARI_AXIS_LABELS = {
         "Positive tremor-response anomaly (Effect), 5–15 Hz",
         "Positive log-RMS anomaly"
     ),
-    "API": ("Antecedent precipitation index", "mm"),
+    "rain_12h_sum": ("12-hour rainfall sum", "mm"),
     "pressure_drop": ("Atmospheric pressure drop", "hPa"),
-    "SO2_flux": ("SO₂ flux", "t d⁻¹"),
     "GNSS_deformation": ("GNSS deformation", "m"),
 
     "hydro_2_5_scaled": (
@@ -132,9 +129,8 @@ WHAKAARI_AXIS_LABELS = {
         "Positive tremor-response anomaly (Effect), 5–15 Hz",
         "Standardized positive anomaly"
     ),
-    "API_scaled": ("Antecedent precipitation index", "Standardized transformed value"),
+    "rain_12h_sum_scaled": ("12-hour rainfall sum", "Standardized transformed value"),
     "pressure_drop_scaled": ("Atmospheric pressure drop", "Standardized transformed value"),
-    "SO2_flux_scaled": ("SO₂ flux", "Standardized transformed value"),
     "GNSS_deformation_scaled": ("GNSS deformation", "Standardized value"),
 }
 
@@ -249,18 +245,7 @@ def _plot_whakaari_group(
         panel_title, ylabel = WHAKAARI_AXIS_LABELS.get(col, (col, "Value"))
         y, ylabel = _transform_series(df[col], ylabel, display_transform.get(col))
 
-        if col == "SO2_flux":
-            ax.scatter(
-                df.index,
-                y,
-                s=10,
-                color=THESIS_COLORS["series"],
-                alpha=0.72,
-                linewidths=0,
-                rasterized=False,
-            )
-
-        elif col == "GNSS_deformation":
+        if col == "GNSS_deformation":
             ax.plot(
                 df.index,
                 y,
@@ -518,11 +503,6 @@ WHAKAARI_FAMILY_STYLE = {
         "color": "#ff7f0e",
         "label": "GNSS deformation",
     },
-    "gas": {
-        "marker": "o",
-        "color": "#2ca02c",
-        "label": "SO₂ flux",
-    },
     "meteorology": {
         "marker": "s",
         "color": "#9467bd",
@@ -531,14 +511,13 @@ WHAKAARI_FAMILY_STYLE = {
     "weather_proxy": {
         "marker": "P",
         "color": "#bcbd22",
-        "label": "API",
+        "label": "Rainfall (12h sum)",
     },
 }
 
 
 WHAKAARI_SOURCE_LABELS = {
     "WSRZ": "WSRZ",
-    "WID01": "WID01 SO₂",
     "RGWC_RGWI": "RGWC–RGWI GNSS",
     "WHAKAARI_OPENMETEO_PROXY": "Open-Meteo",
 }
@@ -546,7 +525,6 @@ WHAKAARI_SOURCE_LABELS = {
 
 WHAKAARI_DEFAULT_LABEL_OFFSETS = {
     "WSRZ": (-20, -14),
-    "WID01": (-18, 14),
     "RGWC_RGWI": (16, 10),
     "WHAKAARI_OPENMETEO_PROXY": (12, 16),
 }
@@ -555,7 +533,6 @@ WHAKAARI_DEFAULT_LABEL_OFFSETS = {
 WHAKAARI_SOURCE_DISPLAY_NUDGES_M = {
     "WHAKAARI_OPENMETEO_PROXY": (45, 90),
     "WSRZ": (0, 0),
-    "WID01": (0, 0),
     "RGWC_RGWI": (0, 0),
 }
 
@@ -722,10 +699,9 @@ def _clean_legend(ax):
     preferred_order = [
         "Source centre",
         "Seismic variables",
-        "SO₂ flux",
         "GNSS deformation",
         "Meteorological variables",
-        "API",
+        "Rainfall (12h sum)",
         "Local earthquake count",
     ]
 
@@ -834,7 +810,6 @@ def _assign_observable_numbers(df):
 
     source_order = [
         "WSRZ",
-        "WID01",
         "RGWC_RGWI",
         "WHAKAARI_OPENMETEO_PROXY",
     ]
