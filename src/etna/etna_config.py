@@ -41,7 +41,7 @@ def etna_observable_metadata() -> pd.DataFrame:
             "source_id": "ESLN",
             "source_label": "ESLN seismic station (HHZ)",
             "observable": "teleseismic",
-            "observable_label": "Teleseismic energy, 0.03–0.30 Hz",
+            "observable_label": "Teleseismic-band RMS velocity, 0.03–0.30 Hz",
             "family": "seismic",
             "spatial_type": "point_station",
             "lat": 37.6934,

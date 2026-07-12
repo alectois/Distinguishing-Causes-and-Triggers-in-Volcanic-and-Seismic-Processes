@@ -1,10 +1,6 @@
 """
 Parameter extraction for Cause–Trigger thesis experiments.
 
-Selects:
-1. VAR lag order using an information criterion.
-2. Target distribution for HMML using distfit.
-
 This file is adapted from the Cause–Trigger algorithm code accompanying:
 Hlaváčková-Schindler, K., Wöß, R., Pecorino, V., & Schindler, P. (2025).
 "Cause or Trigger? From Philosophy to Causal Modeling."

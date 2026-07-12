@@ -22,7 +22,7 @@ THESIS_COLORS = {
 
 ETNA_AXIS_LABELS = {
     "teleseismic": (
-        "Teleseismic energy, 0.03–0.30 Hz",
+        "Teleseismic-band, 0.03–0.30 Hz",
         "RMS velocity",
     ),
     "local_event_rate_state": (
