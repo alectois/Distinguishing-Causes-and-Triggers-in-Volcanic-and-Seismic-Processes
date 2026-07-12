@@ -54,24 +54,6 @@ ETNA_AXIS_LABELS = {
     "rainfall_mm": ("Hourly precipitation", "mm"),
     "pressure_drop": ("Atmospheric pressure drop", "hPa"),
     "WindSpeed": ("Wind speed", "m s⁻¹"),
-
-    "teleseismic_scaled": (
-        "Teleseismic energy, 0.03–0.30 Hz",
-        "Std. value"
-    ),
-    "local_event_rate_state_scaled": (
-        "Past 48-hour local event-rate state",
-        "Std. value"
-    ),
-
-    "local_event_rate_response_scaled": (
-        "Catalogue local event-rate response (Effect)",
-        "Std. value"
-    ),
-    "CO2_3_scaled": ("Soil CO₂ concentration", "Std. value"),
-    "rainfall_mm_scaled": ("Hourly precipitation", "Std. value"),
-    "pressure_drop_scaled": ("Atmospheric pressure drop", "Std. value"),
-    "WindSpeed_scaled": ("Wind speed", "Std. value"),
 }
 
 ETNA_RAW_ORDER = [

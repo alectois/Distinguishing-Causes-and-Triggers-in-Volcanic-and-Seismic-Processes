@@ -122,36 +122,7 @@ WHAKAARI_AXIS_LABELS = {
     ),
     "GNSS_deformation_rate": (
         "Lagged daily GNSS deformation change",
-        "m day⁻¹",
-    ),
-
-    "hydro_2_5_scaled": (
-        "Hydrothermal RMS, 2–5 Hz",
-        "Std. value"
-    ),
-    "spectral_log_ratio_4p5_8_over_8_16_scaled": (
-        "Past-smoothed spectral contrast, 4.5–8 / 8–16 Hz",
-        "Std. value"
-    ),
-    "event_rate_2_5_scaled": (
-        "STA/LTA event rate, 2–5 Hz",
-        "Std. value"
-    ),
-    "effect_tremor_5_15_scaled": (
-        "Tremor anomaly (Effect), 5–15 Hz",
-        "Std. value"
-    ),
-    "rainfall_mm_scaled": (
-        "Hourly precipitation",
-        "Std. value"
-    ),
-    "pressure_drop_scaled": (
-        "Atmospheric pressure drop",
-        "Std. value"
-    ),
-    "GNSS_deformation_rate_scaled": (
-        "Lagged daily GNSS deformation change",
-        "Std. value"
+        "m d⁻¹",
     ),
 }
 
@@ -276,8 +247,8 @@ def _plot_whakaari_group(
             ax.set_yscale("log")
 
         ax.set_title(panel_title, loc="left", pad=4.5)
-        ax.set_ylabel(ylabel, labelpad=7)
-        ax.yaxis.set_label_coords(-0.060, 0.5)
+        ax.set_ylabel(ylabel, labelpad=7, fontsize=8.8)
+        ax.yaxis.set_label_coords(-0.072, 0.5)
 
         ax.grid(True, alpha=0.14, linewidth=0.42)
         ax.tick_params(axis="both", which="major", length=2.8, width=0.55, pad=3)
@@ -307,7 +278,7 @@ def _plot_whakaari_group(
     fig.align_ylabels(axes)
 
     fig.subplots_adjust(
-        left=0.120,
+        left=0.112,
         right=0.992,
         bottom=0.095,
         top=top,

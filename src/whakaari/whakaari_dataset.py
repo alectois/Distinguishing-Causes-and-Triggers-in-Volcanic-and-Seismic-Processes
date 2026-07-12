@@ -223,7 +223,7 @@ def build_master_dataframe(
     frames = [wave_1h, weather_1h, gnss_1h]
 
     whakaari_master = pd.concat(frames, axis=1)
-    whakaari_master.index.name = "timestamp"
+    whakaari_master.index.name = "time"
     return whakaari_master
 
 
@@ -276,10 +276,10 @@ def preprocessing_report(rawest_df, prepared_df):
     rawest = rawest_df.copy()
     prepared = prepared_df.copy()
 
-    if "timestamp" in rawest.columns:
-        rawest = rawest.set_index("timestamp")
-    if "timestamp" in prepared.columns:
-        prepared = prepared.set_index("timestamp")
+    if "time" in rawest.columns:
+        rawest = rawest.set_index("time")
+    if "time" in prepared.columns:
+        prepared = prepared.set_index("time")
 
     rawest.index = pd.to_datetime(rawest.index, utc=True)
     prepared.index = pd.to_datetime(prepared.index, utc=True)
@@ -406,5 +406,5 @@ def save_whakaari_analysis_dataset(
         )
 
     output_path = output_dir / "whakaari_dataset.csv"
-    analysis.to_csv(output_path, index_label="timestamp")
+    analysis.to_csv(output_path, index_label="time")
     return output_path

@@ -327,7 +327,6 @@ def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 def create_etna_dataset(
     wave_df: pd.DataFrame,
-    station_name: str,
     *,
     start_time: str | None = None,
     end_time: str | None = None,
@@ -432,8 +431,7 @@ def create_etna_dataset(
         "local_event_rate_response",
     ]
 
-    base["station"] = station_name
-    base = base[["station", *model_cols]]
+    base = base[model_cols]
 
     # ---- ETNAGAS ----
     if etnagas_df is not None and etnagas_cols:
