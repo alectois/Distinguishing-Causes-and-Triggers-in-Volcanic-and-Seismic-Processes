@@ -126,11 +126,13 @@ def transform_for_cause_trigger_scaling(
             eps=float(log_positive_eps["hydro_2_5"]),
         )
 
-    for column in ("event_rate_2_5", "rainfall_mm"):
-        if column in transformed.columns:
-            transformed[column] = np.log1p(
-                _numeric_series(transformed, column).clip(lower=0)
-            )
+    if "rainfall_mm" in transformed.columns:
+        transformed["rainfall_mm"] = np.log1p(
+            _numeric_series(
+                transformed,
+                "rainfall_mm",
+            ).clip(lower=0)
+        )
 
     for column in ("pressure_drop", "GNSS_deformation_rate"):
         if column in transformed.columns:
@@ -280,7 +282,6 @@ def prepare_analysis_dataframe(
         required_columns = [
             "hydro_2_5",
             "spectral_log_ratio_4p5_8_over_8_16",
-            "event_rate_2_5",
             "effect_tremor_5_15",
             "rainfall_mm",
             "pressure_drop",

@@ -70,7 +70,6 @@ def set_thesis_style():
 WHAKAARI_SEISMIC_COLS = [
     "hydro_2_5",
     "spectral_log_ratio_4p5_8_over_8_16",
-    "event_rate_2_5",
     "effect_tremor_5_15",
 ]
 
@@ -92,10 +91,6 @@ WHAKAARI_AXIS_LABELS = {
     "spectral_log_ratio_4p5_8_over_8_16": (
         "Past-smoothed spectral contrast, 4.5–8 / 8–16 Hz",
         "Log amplitude ratio",
-    ),
-    "event_rate_2_5": (
-        "STA/LTA event rate, 2–5 Hz",
-        "Events h⁻¹"
     ),
     "effect_tremor_5_15": (
         "Tremor anomaly (Effect), 5–15 Hz",
@@ -156,7 +151,6 @@ def dataset_health_report(df: pd.DataFrame, name: str = "Whakaari dataset") -> p
 WHAKAARI_LOGLOG_COLS = [
     "hydro_2_5",
     "spectral_log_ratio_4p5_8_over_8_16",
-    "event_rate_2_5",
     "effect_tremor_5_15",
     "rainfall_mm",
     "pressure_drop",
@@ -200,7 +194,7 @@ def plot_loglog_distributions(
         raise ValueError("No requested numeric columns are available for log-log plotting.")
 
     if ncols is None:
-        ncols = len(columns) if len(columns) <= 4 else 4
+        ncols = len(columns) if len(columns) <= 3 else 3
     nrows = int(np.ceil(len(columns) / ncols))
 
     figure, axes = plt.subplots(

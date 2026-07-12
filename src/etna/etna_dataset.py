@@ -455,6 +455,38 @@ def validate_etna_dataset(dataframe: pd.DataFrame) -> None:
             f"Found scaled columns: {scaled_columns}"
         )
 
+def fill_isolated_teleseismic_hours(
+    series: pd.Series,
+) -> pd.Series:
+    """
+    Fill only isolated one-hour gaps in the positive teleseismic proxy.
+
+    The replacement is the geometric mean of the immediately preceding
+    and following valid hourly values. Consecutive missing hours and gaps
+    at the boundaries remain missing.
+    """
+    values = pd.to_numeric(
+        series,
+        errors="coerce",
+    ).astype(float).copy()
+
+    previous = values.shift(1)
+    following = values.shift(-1)
+
+    fillable = (
+        values.isna()
+        & previous.notna()
+        & following.notna()
+        & previous.gt(0)
+        & following.gt(0)
+    )
+
+    values.loc[fillable] = np.sqrt(
+        previous.loc[fillable]
+        * following.loc[fillable]
+    )
+
+    return values
 
 def _waveform_frame(waveform: pd.DataFrame) -> pd.DataFrame:
     frame = waveform.copy()
@@ -513,11 +545,21 @@ def create_etna_dataset(
 
     waveform = _waveform_frame(wave_df)
 
-    base = (
+    waveform_hourly = (
         waveform
         .resample("1h")
         .mean()
         .reindex(master_index)
+    )
+
+    waveform_hourly["teleseismic"] = (
+        fill_isolated_teleseismic_hours(
+            waveform_hourly["teleseismic"]
+        )
+    )
+
+    base = (
+        waveform_hourly
         .rename_axis("time")
         .reset_index()
     )

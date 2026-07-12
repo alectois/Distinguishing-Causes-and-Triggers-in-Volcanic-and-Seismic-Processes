@@ -233,7 +233,7 @@ def plot_loglog_distributions(
         raise ValueError("No requested numeric columns are available for log-log plotting.")
 
     if ncols is None:
-        ncols = len(columns) if len(columns) <= 4 else 4
+        ncols = len(columns) if len(columns) <= 3 else 3
     nrows = int(np.ceil(len(columns) / ncols))
 
     figure, axes = plt.subplots(

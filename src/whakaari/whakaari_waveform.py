@@ -5,10 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from obspy import Stream, UTCDateTime
-from obspy.signal.trigger import classic_sta_lta, trigger_onset
 
-
-WAVEFORM_CACHE_VERSION = 2
 
 
 def _nan_groups(values: np.ndarray) -> list[tuple[int, int]]:
@@ -233,71 +230,12 @@ def _band_rms_series(
 
     return pd.concat(parts).sort_index()
 
-
-def _event_rate_2_5(
-    stream: Stream,
-    *,
-    output_index: pd.DatetimeIndex,
-    sta_seconds: float = 1.0,
-    lta_seconds: float = 5.0,
-    on_threshold: float = 3.0,
-    off_threshold: float = 1.5,
-) -> pd.Series:
-    """Count 2–5 Hz STA/LTA onsets per target hour across valid segments."""
-    event_times: list[pd.Timestamp] = []
-
-    for trace in stream:
-        filtered = trace.copy()
-        filtered.filter(
-            "bandpass",
-            freqmin=2.0,
-            freqmax=5.0,
-            corners=4,
-            zerophase=True,
-        )
-
-        values = np.asarray(filtered.data, dtype=float)
-        sampling_rate = float(filtered.stats.sampling_rate)
-        sta_samples = int(sta_seconds * sampling_rate)
-        lta_samples = int(lta_seconds * sampling_rate)
-
-        if len(values) <= lta_samples or sta_samples < 1:
-            continue
-
-        characteristic = classic_sta_lta(
-            values,
-            sta_samples,
-            lta_samples,
-        )
-        for onset, _ in trigger_onset(
-            characteristic,
-            on_threshold,
-            off_threshold,
-        ):
-            event_times.append(
-                pd.Timestamp(
-                    (filtered.stats.starttime + onset / sampling_rate).datetime,
-                    tz="UTC",
-                )
-            )
-
-    counts = pd.Series(0.0, index=output_index, name="event_rate_2_5")
-    if event_times:
-        events = pd.Series(1.0, index=pd.DatetimeIndex(event_times))
-        hourly = events.resample("1h").sum()
-        counts.loc[counts.index.intersection(hourly.index)] = hourly.reindex(
-            counts.index.intersection(hourly.index)
-        ).to_numpy()
-
-    return counts
-
-
 def extract_features_for_day(
     client,
     day_start,
     cfg: dict,
 ) -> pd.DataFrame:
-    """Extract the four retained hourly waveform variables for one UTC day."""
+    """Extract the three retained hourly waveform variables for one UTC day."""
     day_start = UTCDateTime(day_start)
     stream, coverage = get_day_stream(client, day_start, cfg)
 
@@ -340,22 +278,31 @@ def extract_features_for_day(
     )
 
     frame = pd.DataFrame(index=output_index)
-    frame["hydro_2_5"] = hydro.resample(output_frequency).mean()
+
+    frame["hydro_2_5"] = hydro.resample(
+        output_frequency
+    ).mean()
+
     frame["spectral_log_ratio_4p5_8_over_8_16"] = (
         spectral_ratio.resample(output_frequency).mean()
     )
-    frame["event_rate_2_5"] = _event_rate_2_5(
-        stream,
-        output_index=output_index,
-    )
+
     frame["effect_tremor_5_15"] = effect.resample(
         output_frequency
-    ).quantile(float(cfg.get("effect_hourly_quantile", 0.90)))
+    ).quantile(
+        float(cfg.get("effect_hourly_quantile", 0.90))
+    )
 
-    minimum_coverage = float(cfg.get("minimum_hourly_coverage", 0.999))
-    incomplete = coverage.reindex(output_index).fillna(0.0) < minimum_coverage
+    minimum_coverage = float(
+        cfg.get("minimum_hourly_coverage", 0.999)
+    )
+    incomplete = (
+        coverage.reindex(output_index).fillna(0.0)
+        < minimum_coverage
+    )
     frame.loc[incomplete, :] = np.nan
     frame.index.name = "time"
+
     return frame
 
 
@@ -375,17 +322,14 @@ def build_waveform_dataset(
 
         if save_path.exists() and not overwrite:
             cached = pd.read_pickle(save_path)
-            if (
-                isinstance(cached, dict)
-                and cached.get("cache_version") == WAVEFORM_CACHE_VERSION
-                and "waveform_df" in cached
-            ):
-                return cached["waveform_df"], cached.get("failures", [])
 
-            print(
-                "Existing waveform cache predates the corrected gap-aware "
-                "pipeline and will be rebuilt."
-            )
+            if isinstance(cached, dict):
+                return (
+                    cached["waveform_df"],
+                    list(cached.get("failures", [])),
+                )
+
+            return cached, []
 
     days = pd.date_range(start=start, end=end, freq="D")
     frames: list[pd.DataFrame] = []
@@ -410,7 +354,6 @@ def build_waveform_dataset(
     if save_path is not None:
         pd.to_pickle(
             {
-                "cache_version": WAVEFORM_CACHE_VERSION,
                 "waveform_df": waveform_df,
                 "failures": failures,
                 "start": start,
