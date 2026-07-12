@@ -1,362 +1,423 @@
+from __future__ import annotations
+
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from obspy import UTCDateTime
+from obspy import Stream, UTCDateTime
 from obspy.signal.trigger import classic_sta_lta, trigger_onset
 
 
-def _interpolate_only_short_gaps(x, max_gap_samples):
-    """
-    Interpolate only NaN gaps shorter than or equal to max_gap_samples.
-    Longer gaps remain NaN.
-    """
-    x = np.asarray(x, dtype=float)
-    isnan = np.isnan(x)
+WAVEFORM_CACHE_VERSION = 2
 
-    if not isnan.any():
-        return x
 
-    idx = np.arange(len(x))
-    valid = ~isnan
+def _nan_groups(values: np.ndarray) -> list[tuple[int, int]]:
+    missing = np.isnan(values)
+    groups: list[tuple[int, int]] = []
+    start: int | None = None
 
-    if not valid.any():
-        return x
+    for index, is_missing in enumerate(missing):
+        if is_missing and start is None:
+            start = index
+        elif not is_missing and start is not None:
+            groups.append((start, index - 1))
+            start = None
 
-    nan_groups = []
-    in_gap = False
-    start = None
-
-    for i, flag in enumerate(isnan):
-        if flag and not in_gap:
-            start = i
-            in_gap = True
-        elif not flag and in_gap:
-            nan_groups.append((start, i - 1))
-            in_gap = False
-
-    if in_gap:
-        nan_groups.append((start, len(x) - 1))
-
-    for g0, g1 in nan_groups:
-        gap_len = g1 - g0 + 1
-
-        if gap_len <= max_gap_samples:
-            left_ok = g0 > 0 and not np.isnan(x[g0 - 1])
-            right_ok = g1 < len(x) - 1 and not np.isnan(x[g1 + 1])
-
-            if left_ok and right_ok:
-                x[g0:g1 + 1] = np.interp(
-                    idx[g0:g1 + 1],
-                    idx[valid],
-                    x[valid],
-                )
-
-    return x
-
-def _count_nan_groups(x):
-    isnan = np.isnan(x)
-    groups = []
-    in_gap = False
-    start = None
-
-    for i, flag in enumerate(isnan):
-        if flag and not in_gap:
-            start = i
-            in_gap = True
-        elif not flag and in_gap:
-            groups.append((start, i - 1))
-            in_gap = False
-
-    if in_gap:
-        groups.append((start, len(x) - 1))
+    if start is not None:
+        groups.append((start, len(values) - 1))
 
     return groups
 
-def get_day_trace(client, day_start, cfg):
-    pad = cfg.get("pad_sec", 0)
 
-    day_start_utc = UTCDateTime(day_start)
-    t1 = day_start_utc - pad
-    t2 = day_start_utc + 24 * 3600 + pad
+def _interpolate_short_gaps(
+    values: np.ndarray,
+    *,
+    max_gap_samples: int,
+) -> np.ndarray:
+    """Interpolate only bounded gaps no longer than ``max_gap_samples``."""
+    values = np.asarray(values, dtype=float).copy()
+    valid = np.isfinite(values)
 
-    st = client.get_waveforms(
+    if valid.all() or not valid.any():
+        return values
+
+    positions = np.arange(len(values))
+
+    for start, end in _nan_groups(values):
+        gap_length = end - start + 1
+        bounded = (
+            start > 0
+            and end < len(values) - 1
+            and np.isfinite(values[start - 1])
+            and np.isfinite(values[end + 1])
+        )
+        if gap_length <= max_gap_samples and bounded:
+            values[start : end + 1] = np.interp(
+                positions[start : end + 1],
+                positions[valid],
+                values[valid],
+            )
+
+    return values
+
+
+def _hourly_coverage(
+    stream: Stream,
+    *,
+    day_start: UTCDateTime,
+) -> pd.Series:
+    """Fraction of each target-day hour covered by valid waveform segments."""
+    index = pd.date_range(
+        pd.Timestamp(day_start.datetime, tz="UTC"),
+        periods=24,
+        freq="1h",
+    )
+    coverage = pd.Series(0.0, index=index, name="waveform_coverage")
+
+    for trace in stream:
+        sample_interval = 1.0 / float(trace.stats.sampling_rate)
+        segment_start = pd.Timestamp(trace.stats.starttime.datetime, tz="UTC")
+        segment_end = pd.Timestamp(
+            (trace.stats.endtime + sample_interval).datetime,
+            tz="UTC",
+        )
+
+        for hour_start in index:
+            hour_end = hour_start + pd.Timedelta(hours=1)
+            overlap_start = max(segment_start, hour_start)
+            overlap_end = min(segment_end, hour_end)
+            overlap_seconds = max(
+                0.0,
+                (overlap_end - overlap_start).total_seconds(),
+            )
+            coverage.loc[hour_start] += overlap_seconds / 3600.0
+
+    return coverage.clip(upper=1.0)
+
+
+def get_day_stream(
+    client,
+    day_start,
+    cfg: dict,
+) -> tuple[Stream, pd.Series]:
+    """
+    Retrieve and response-correct one padded day.
+
+    Tiny bounded gaps are interpolated. Longer gaps remain masked, the stream is
+    split into valid continuous segments, and only affected hourly outputs are
+    marked missing. This avoids discarding an otherwise usable full day.
+    """
+    day_start = UTCDateTime(day_start)
+    pad_seconds = float(cfg.get("pad_sec", 0))
+    request_start = day_start - pad_seconds
+    request_end = day_start + 24 * 3600 + pad_seconds
+
+    stream = client.get_waveforms(
         cfg["network"],
         cfg["station"],
         cfg["location"],
         cfg["channel"],
-        t1,
-        t2,
+        request_start,
+        request_end,
         attach_response=True,
-    )
+    ).copy()
+    stream.sort()
 
-    st = st.copy()
-    st.sort()
+    if len(stream) == 0:
+        raise ValueError(f"Empty waveform stream for {day_start.date}")
 
-    if len(st) == 0:
-        raise ValueError(f"Empty waveform stream for {day_start}")
-
-    # Conservative merge: do not automatically interpolate all gaps.
-    st.merge(method=0, fill_value=None)
-
-    if len(st) != 1:
-        raise ValueError(f"Expected 1 merged trace for {day_start}, got {len(st)}")
-
-    tr = st[0]
-
-    # Convert possible masked-array gaps to NaN.
-    data = np.ma.masked_invalid(np.asarray(tr.data, dtype=float))
-    x = data.filled(np.nan)
-
-    sr = tr.stats.sampling_rate
-    max_gap_sec = cfg.get("max_interp_gap_sec", 2.0)
-    max_gap_samples = int(max_gap_sec * sr)
-
-    gap_groups_before = _count_nan_groups(x)
-
-    x = _interpolate_only_short_gaps(x, max_gap_samples)
-
-    gap_groups_after = _count_nan_groups(x)
-
-    tr.stats.processing.append(
-        f"gap_policy: short_gap_limit={max_gap_sec}s, "
-        f"gaps_before={len(gap_groups_before)}, "
-        f"gaps_after={len(gap_groups_after)}"
-    )
-    remaining_nan_count = int(np.isnan(x).sum())
-
-    if remaining_nan_count > 0:
+    stream.merge(method=0, fill_value=None)
+    if len(stream) != 1:
         raise ValueError(
-            "Waveform contains unresolved long gaps after short-gap interpolation: "
-            f"{remaining_nan_count} missing samples."
+            f"Expected one merged trace for {day_start.date}, got {len(stream)}"
         )
-    tr.data = x.astype(np.float64)
 
-    tr.detrend("linear")
-    tr.detrend("demean")
-    tr.taper(max_percentage=0.02)
+    merged = stream[0]
+    masked = np.ma.asarray(merged.data, dtype=float)
+    values = masked.filled(np.nan)
 
-    tr.remove_response(
-        output=cfg.get("response_output", "VEL"),
-        pre_filt=cfg.get("pre_filt", (0.5, 1.0, 20.0, 25.0)),
+    sampling_rate = float(merged.stats.sampling_rate)
+    max_gap_samples = int(
+        float(cfg.get("max_interp_gap_sec", 2.0)) * sampling_rate
+    )
+    values = _interpolate_short_gaps(
+        values,
+        max_gap_samples=max_gap_samples,
     )
 
-    return tr
+    merged.data = np.ma.masked_invalid(values)
+    valid_stream = Stream(traces=[merged]).split()
+
+    if len(valid_stream) == 0:
+        raise ValueError(f"No valid waveform segments for {day_start.date}")
+
+    coverage = _hourly_coverage(valid_stream, day_start=day_start)
+
+    processed = Stream()
+    minimum_segment_seconds = max(
+        60.0,
+        4.0 / float(cfg.get("pre_filt", (0.5, 1.0, 20.0, 25.0))[1]),
+    )
+
+    for segment in valid_stream:
+        duration = float(segment.stats.endtime - segment.stats.starttime)
+        if duration < minimum_segment_seconds:
+            continue
+
+        trace = segment.copy()
+        trace.data = np.asarray(trace.data, dtype=np.float64)
+        trace.detrend("linear")
+        trace.detrend("demean")
+        trace.taper(max_percentage=0.02)
+        trace.remove_response(
+            output=cfg.get("response_output", "VEL"),
+            pre_filt=cfg.get("pre_filt", (0.5, 1.0, 20.0, 25.0)),
+        )
+        processed += trace
+
+    if len(processed) == 0:
+        raise ValueError(
+            f"No waveform segment was long enough to process for {day_start.date}"
+        )
+
+    return processed, coverage
 
 
-# helper: RMS in a band. this will be used for: 2–5 Hz RMS, 4.5–8 Hz RMS, 8–16 Hz RMS. 
-# using 10-minute windows (600 seconds) -> each RMS value summarizes 10 minutes of seismic energy
+def _band_rms_series(
+    stream: Stream,
+    *,
+    fmin: float,
+    fmax: float,
+    window_seconds: int,
+) -> pd.Series:
+    """Non-overlapping RMS windows computed separately on valid segments."""
+    parts: list[pd.Series] = []
 
-def band_rms_series(trace, fmin, fmax, win_sec=600):
-    tr = trace.copy()
-    tr.filter("bandpass", freqmin=fmin, freqmax=fmax, corners=4, zerophase=True)
+    for trace in stream:
+        filtered = trace.copy()
+        filtered.filter(
+            "bandpass",
+            freqmin=fmin,
+            freqmax=fmax,
+            corners=4,
+            zerophase=True,
+        )
 
-    sr = tr.stats.sampling_rate
-    nwin = int(win_sec * sr)
-    x = tr.data.astype(float)
+        sampling_rate = float(filtered.stats.sampling_rate)
+        window_samples = int(window_seconds * sampling_rate)
+        if window_samples <= 0:
+            raise ValueError("window_seconds is too small.")
 
-    times, vals = [], []
-    for i in range(0, len(x) - nwin + 1, nwin):
-        seg = x[i:i+nwin]
-        rms = np.sqrt(np.mean(seg**2))
-        times.append(tr.stats.starttime + i / sr)
-        vals.append(rms)
+        values = np.asarray(filtered.data, dtype=float)
+        times: list[UTCDateTime] = []
+        rms_values: list[float] = []
 
-    if len(vals) == 0:
+        for start in range(0, len(values) - window_samples + 1, window_samples):
+            segment = values[start : start + window_samples]
+            times.append(filtered.stats.starttime + start / sampling_rate)
+            rms_values.append(float(np.sqrt(np.mean(segment**2))))
+
+        if rms_values:
+            parts.append(
+                pd.Series(
+                    rms_values,
+                    index=pd.to_datetime(
+                        [time.datetime for time in times],
+                        utc=True,
+                    ),
+                )
+            )
+
+    if not parts:
         return pd.Series(dtype=float)
 
-    return pd.Series(
-        vals,
-        index=pd.to_datetime([t.datetime for t in times], utc=True),
+    return pd.concat(parts).sort_index()
+
+
+def _event_rate_2_5(
+    stream: Stream,
+    *,
+    output_index: pd.DatetimeIndex,
+    sta_seconds: float = 1.0,
+    lta_seconds: float = 5.0,
+    on_threshold: float = 3.0,
+    off_threshold: float = 1.5,
+) -> pd.Series:
+    """Count 2–5 Hz STA/LTA onsets per target hour across valid segments."""
+    event_times: list[pd.Timestamp] = []
+
+    for trace in stream:
+        filtered = trace.copy()
+        filtered.filter(
+            "bandpass",
+            freqmin=2.0,
+            freqmax=5.0,
+            corners=4,
+            zerophase=True,
+        )
+
+        values = np.asarray(filtered.data, dtype=float)
+        sampling_rate = float(filtered.stats.sampling_rate)
+        sta_samples = int(sta_seconds * sampling_rate)
+        lta_samples = int(lta_seconds * sampling_rate)
+
+        if len(values) <= lta_samples or sta_samples < 1:
+            continue
+
+        characteristic = classic_sta_lta(
+            values,
+            sta_samples,
+            lta_samples,
+        )
+        for onset, _ in trigger_onset(
+            characteristic,
+            on_threshold,
+            off_threshold,
+        ):
+            event_times.append(
+                pd.Timestamp(
+                    (filtered.stats.starttime + onset / sampling_rate).datetime,
+                    tz="UTC",
+                )
+            )
+
+    counts = pd.Series(0.0, index=output_index, name="event_rate_2_5")
+    if event_times:
+        events = pd.Series(1.0, index=pd.DatetimeIndex(event_times))
+        hourly = events.resample("1h").sum()
+        counts.loc[counts.index.intersection(hourly.index)] = hourly.reindex(
+            counts.index.intersection(hourly.index)
+        ).to_numpy()
+
+    return counts
+
+
+def extract_features_for_day(
+    client,
+    day_start,
+    cfg: dict,
+) -> pd.DataFrame:
+    """Extract the four retained hourly waveform variables for one UTC day."""
+    day_start = UTCDateTime(day_start)
+    stream, coverage = get_day_stream(client, day_start, cfg)
+
+    window_seconds = int(cfg.get("rms_window_sec", 600))
+    output_frequency = str(cfg.get("master_freq", "1h"))
+    output_index = pd.date_range(
+        pd.Timestamp(day_start.datetime, tz="UTC"),
+        periods=24,
+        freq=output_frequency,
     )
 
-# Hydrothermal tremor RMS 2–5 Hz
-# direct hydrothermal-state variable
-def hydro_rms_2_5(trace, win_sec=600):
-    s = band_rms_series(trace, 2.0, 5.0, win_sec=win_sec)
-    s.name = "hydro_2_5"
-    return s
-
-def spectral_log_ratio_4p5_8_over_8_16(
-    trace,
-    win_sec=600,
-    eps=1e-30,
-):
-    low = band_rms_series(
-        trace,
-        4.5,
-        8.0,
-        win_sec=win_sec,
+    hydro = _band_rms_series(
+        stream,
+        fmin=2.0,
+        fmax=5.0,
+        window_seconds=window_seconds,
     )
-    high = band_rms_series(
-        trace,
-        8.0,
-        16.0,
-        win_sec=win_sec,
+    low = _band_rms_series(
+        stream,
+        fmin=4.5,
+        fmax=8.0,
+        window_seconds=window_seconds,
     )
-
-    log_ratio = (
-        np.log(low.clip(lower=0) + eps)
-        - np.log(high.clip(lower=0) + eps)
+    high = _band_rms_series(
+        stream,
+        fmin=8.0,
+        fmax=16.0,
+        window_seconds=window_seconds,
     )
-    log_ratio.name = "spectral_log_ratio_4p5_8_over_8_16"
-    return log_ratio
-
-# Continuous effect variable: eruption/tremor response energy
-# Uses 5–15 Hz to avoid directly containing hydro_2_5 as a sub-band.
-def effect_tremor_rms_5_15(trace, win_sec=600):
-    s = band_rms_series(trace, 5.0, 15.0, win_sec=win_sec)
-    s.name = "effect_tremor_5_15"
-    return s
-
-# HF event rate in 2–5 Hz only
-def event_rate_2_5(
-    trace,
-    sta_sec=1.0,
-    lta_sec=5.0,
-    on_thres=3.0,
-    off_thres=1.5,
-    out_freq="1h",
-):
-    tr = trace.copy()
-    tr.filter("bandpass", freqmin=2.0, freqmax=5.0, corners=4, zerophase=True)
-
-    x = tr.data.astype(float)
-    sr = tr.stats.sampling_rate
-
-    start = pd.to_datetime(tr.stats.starttime.datetime, utc=True).floor(out_freq)
-    end = pd.to_datetime(tr.stats.endtime.datetime, utc=True).ceil(out_freq)
-
-    full_index = pd.date_range(
-        start=start,
-        end=end - pd.Timedelta(out_freq),
-        freq=out_freq,
-        tz="UTC",
+    effect = _band_rms_series(
+        stream,
+        fmin=5.0,
+        fmax=15.0,
+        window_seconds=window_seconds,
     )
 
-    # Do not run STA/LTA on traces containing NaNs from long gaps.
-    # But return NaN, not an empty series, so missing data is not later
-    # confused with zero detected events.
-    if np.isnan(x).any():
-        return pd.Series(np.nan, index=full_index, name="event_rate_2_5")
-
-    cft = classic_sta_lta(
-        x,
-        int(sta_sec * sr),
-        int(lta_sec * sr),
+    spectral_ratio = (
+        np.log(low.clip(lower=0) + 1e-30)
+        - np.log(high.clip(lower=0) + 1e-30)
     )
 
-    on_off = trigger_onset(cft, on_thres, off_thres)
-
-    if len(on_off) == 0:
-        return pd.Series(0, index=full_index, name="event_rate_2_5")
-
-    event_times = pd.to_datetime(
-        [tr.stats.starttime.datetime + pd.Timedelta(seconds=on / sr) for on, _ in on_off],
-        utc=True,
+    frame = pd.DataFrame(index=output_index)
+    frame["hydro_2_5"] = hydro.resample(output_frequency).mean()
+    frame["spectral_log_ratio_4p5_8_over_8_16"] = (
+        spectral_ratio.resample(output_frequency).mean()
     )
-
-    s = (
-        pd.Series(1, index=event_times)
-        .resample(out_freq)
-        .sum()
-        .reindex(full_index, fill_value=0)
+    frame["event_rate_2_5"] = _event_rate_2_5(
+        stream,
+        output_index=output_index,
     )
+    frame["effect_tremor_5_15"] = effect.resample(
+        output_frequency
+    ).quantile(float(cfg.get("effect_hourly_quantile", 0.90)))
 
-    s.name = "event_rate_2_5"
-    return s
-
-
-# Extract all features for one day
-def extract_features_for_day(client, day_start, cfg):
-    tr = get_day_trace(client, day_start, cfg)
-
-    win_sec = cfg.get("rms_window_sec", 600)
-    out_freq = cfg.get("master_freq", "1h")
-
-    hydro = hydro_rms_2_5(tr, win_sec=win_sec)
-    ratio = spectral_log_ratio_4p5_8_over_8_16(
-        tr,
-        win_sec=win_sec,
-    )
-    hf_rate = event_rate_2_5(tr, out_freq=out_freq)
-    effect = effect_tremor_rms_5_15(tr, win_sec=win_sec)
-
-    hydro_h = hydro.resample(out_freq).mean()
-    ratio_h = ratio.resample(out_freq).mean()
-    effect_quantile = cfg.get("effect_hourly_quantile", 0.90)
-
-    effect_h = effect.resample(out_freq).quantile(
-        effect_quantile
-    )
-
-    df = pd.concat([hydro_h, ratio_h, hf_rate, effect_h], axis=1)
-
-    left = pd.Timestamp(UTCDateTime(day_start).datetime, tz="UTC")
-    right = left + pd.Timedelta(days=1)
-
-    df = df.loc[(df.index >= left) & (df.index < right)].copy()
-
-    return df
+    minimum_coverage = float(cfg.get("minimum_hourly_coverage", 0.999))
+    incomplete = coverage.reindex(output_index).fillna(0.0) < minimum_coverage
+    frame.loc[incomplete, :] = np.nan
+    frame.index.name = "time"
+    return frame
 
 
 def build_waveform_dataset(
     client,
     start,
     end,
-    cfg,
-    save_path=None,
-    overwrite=False,
-):
+    cfg: dict,
+    *,
+    save_path: str | Path | None = None,
+    overwrite: bool = False,
+) -> tuple[pd.DataFrame, list[tuple[object, str]]]:
+    """Build or load the cached hourly Whakaari waveform feature dataframe."""
     if save_path is not None:
         save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
 
         if save_path.exists() and not overwrite:
             cached = pd.read_pickle(save_path)
-            print(f"loaded cached waveform dataset: {save_path}")
-
-            if isinstance(cached, dict):
+            if (
+                isinstance(cached, dict)
+                and cached.get("cache_version") == WAVEFORM_CACHE_VERSION
+                and "waveform_df" in cached
+            ):
                 return cached["waveform_df"], cached.get("failures", [])
 
-            # Backward-compatible fallback if only the dataframe was saved.
-            return cached, []
+            print(
+                "Existing waveform cache predates the corrected gap-aware "
+                "pipeline and will be rebuilt."
+            )
 
-    days = pd.date_range(start, end, freq="D")
-
-    all_days = []
-    failures = []
+    days = pd.date_range(start=start, end=end, freq="D")
+    frames: list[pd.DataFrame] = []
+    failures: list[tuple[object, str]] = []
 
     for day in days:
         try:
-            df_day = extract_features_for_day(client, day, cfg)
-            all_days.append(df_day)
-            print("done:", day.date())
-        except Exception as e:
-            failures.append((day.date(), str(e)))
-            print("failed:", day.date(), e)
+            frames.append(extract_features_for_day(client, day, cfg))
+            print(f"done: {day.date()}")
+        except Exception as exc:
+            failures.append((day.date(), str(exc)))
+            print(f"failed: {day.date()} — {exc}")
 
-    if len(all_days) == 0:
+    if not frames:
         raise RuntimeError("No waveform days were successfully processed.")
 
-    waveform_df = pd.concat(all_days).sort_index()
+    waveform_df = pd.concat(frames).sort_index()
     waveform_df = waveform_df[~waveform_df.index.duplicated(keep="first")]
-
     waveform_df.index = pd.to_datetime(waveform_df.index, utc=True)
-    waveform_df = waveform_df.sort_index()
+    waveform_df.index.name = "time"
 
     if save_path is not None:
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-
         pd.to_pickle(
             {
+                "cache_version": WAVEFORM_CACHE_VERSION,
                 "waveform_df": waveform_df,
                 "failures": failures,
                 "start": start,
                 "end": end,
-                "cfg": cfg,
+                "config": dict(cfg),
             },
             save_path,
         )
-
-        print(f"saved waveform dataset: {save_path}")
 
     return waveform_df, failures

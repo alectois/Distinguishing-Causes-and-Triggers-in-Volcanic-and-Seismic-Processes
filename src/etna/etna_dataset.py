@@ -1,40 +1,64 @@
-import pandas as pd
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import pandas as pd
 import requests
 from sklearn.preprocessing import StandardScaler
 
-def merge_data(base, ext, base_time, ext_time, value_cols, tolerance_hours):
-    base = base.copy()
-    ext = ext.copy()
 
-    base[base_time] = pd.to_datetime(base[base_time], utc=True, errors="coerce")
-    ext[ext_time] = pd.to_datetime(ext[ext_time], utc=True, errors="coerce")
+def _to_utc_timestamp(value) -> pd.Timestamp:
+    return pd.to_datetime(value, utc=True)
 
-    base = base.dropna(subset=[base_time]).sort_values(base_time)
-    ext = ext.dropna(subset=[ext_time]).sort_values(ext_time)
-    missing_value_cols = sorted(set(value_cols) - set(ext.columns))
 
-    if missing_value_cols:
-        raise ValueError(
-            f"External dataframe is missing requested columns: {missing_value_cols}"
-        )
-    keep = [ext_time] + [c for c in value_cols if c in ext.columns]
-    ext = ext[keep].copy()
+def merge_hourly_data(
+    base: pd.DataFrame,
+    external: pd.DataFrame,
+    *,
+    base_time: str,
+    external_time: str,
+    value_columns: list[str],
+) -> pd.DataFrame:
+    """Join an external hourly dataframe by exact timestamp."""
+    missing = sorted(set([external_time, *value_columns]) - set(external.columns))
+    if missing:
+        raise ValueError(f"External dataframe is missing columns: {missing}")
 
-    merged = pd.merge_asof(
-        base,
-        ext,
-        left_on=base_time,
-        right_on=ext_time,
-        direction="backward",
-        tolerance=pd.Timedelta(hours=tolerance_hours),
+    left = base.copy()
+    right = external[[external_time, *value_columns]].copy()
+
+    left[base_time] = pd.to_datetime(left[base_time], utc=True, errors="coerce")
+    right[external_time] = pd.to_datetime(
+        right[external_time],
+        utc=True,
+        errors="coerce",
     )
 
-    if ext_time != base_time and ext_time in merged.columns:
-        merged = merged.drop(columns=[ext_time])
+    if left[base_time].isna().any() or right[external_time].isna().any():
+        raise ValueError("Cannot merge data containing invalid timestamps.")
 
-    return merged
+    if left[base_time].duplicated().any():
+        raise ValueError("Base dataframe contains duplicate timestamps.")
+
+    if right[external_time].duplicated().any():
+        duplicates = right.loc[
+            right[external_time].duplicated(keep=False),
+            external_time,
+        ].unique()[:5]
+        raise ValueError(
+            "External dataframe contains duplicate timestamps, e.g. "
+            f"{list(duplicates)}"
+        )
+
+    right = right.rename(columns={external_time: base_time})
+
+    return left.merge(
+        right,
+        on=base_time,
+        how="left",
+        validate="one_to_one",
+        sort=True,
+    )
+
 
 def load_etna_event_catalog_xls(
     path: str | Path,
@@ -42,42 +66,47 @@ def load_etna_event_catalog_xls(
     sheet_name=0,
     quality_filter: bool = False,
 ) -> pd.DataFrame:
-    """
-    Load the EtnaSC 2000--2010 catalogue and construct UTC timestamps.
+    """Load the EtnaSC 2000–2010 catalogue and construct UTC timestamps."""
+    try:
+        dataframe = pd.read_excel(Path(path), sheet_name=sheet_name)
+    except ImportError as exc:
+        raise ImportError(
+            "Reading the legacy .xls catalogue requires the 'xlrd' package."
+        ) from exc
 
-    Expected columns:
-        YE, MO, DA, HR, MI, SE, MD, ML, LAT, LON,
-        DEPSL, DEPGL, N.O., RMS, GAP, ERZ, ERH
-
-    The returned dataframe contains a 'timestamp' column.
-    """
-    path = Path(path)
-    df = pd.read_excel(path, sheet_name=sheet_name)
-
-    required = ["YE", "MO", "DA", "HR", "MI", "SE"]
-    missing = sorted(set(required) - set(df.columns))
+    time_columns = ["YE", "MO", "DA", "HR", "MI", "SE"]
+    missing = sorted(set(time_columns) - set(dataframe.columns))
     if missing:
         raise ValueError(f"Missing catalogue time columns: {missing}")
 
-    for col in required:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+    for column in time_columns:
+        dataframe[column] = pd.to_numeric(dataframe[column], errors="coerce")
 
     base_time = pd.to_datetime(
         {
-            "year": df["YE"],
-            "month": df["MO"],
-            "day": df["DA"],
-            "hour": df["HR"],
-            "minute": df["MI"],
+            "year": dataframe["YE"],
+            "month": dataframe["MO"],
+            "day": dataframe["DA"],
+            "hour": dataframe["HR"],
+            "minute": dataframe["MI"],
         },
         utc=True,
         errors="coerce",
     )
 
-    df["timestamp"] = base_time + pd.to_timedelta(df["SE"], unit="s")
-    df = df.dropna(subset=["timestamp"]).sort_values("timestamp").reset_index(drop=True)
+    dataframe["timestamp"] = (
+        base_time
+        + pd.to_timedelta(dataframe["SE"], unit="s")
+    )
 
-    numeric_cols = [
+    dataframe = (
+        dataframe
+        .dropna(subset=["timestamp"])
+        .sort_values("timestamp")
+        .reset_index(drop=True)
+    )
+
+    numeric_columns = [
         "MD",
         "ML",
         "LAT",
@@ -91,37 +120,48 @@ def load_etna_event_catalog_xls(
         "ERH",
     ]
 
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+    for column in numeric_columns:
+        if column in dataframe.columns:
+            dataframe[column] = pd.to_numeric(
+                dataframe[column],
+                errors="coerce",
+            )
 
     if quality_filter:
         required_quality = ["N.O.", "RMS", "GAP"]
-        missing_quality = [c for c in required_quality if c not in df.columns]
+        missing_quality = [
+            column
+            for column in required_quality
+            if column not in dataframe.columns
+        ]
         if missing_quality:
-            raise ValueError(f"Cannot quality-filter catalogue; missing: {missing_quality}")
+            raise ValueError(
+                "Cannot quality-filter catalogue; missing columns: "
+                f"{missing_quality}"
+            )
 
-        df = df[
-            (df["N.O."] >= 8)
-            & (df["RMS"] <= 0.30)
-            & (df["GAP"] <= 250)
+        dataframe = dataframe.loc[
+            (dataframe["N.O."] >= 8)
+            & (dataframe["RMS"] <= 0.30)
+            & (dataframe["GAP"] <= 250)
         ].copy()
 
-    return df
+    return dataframe
+
 
 def catalogue_hourly_counts(
-    catalog_df: pd.DataFrame,
+    catalogue: pd.DataFrame,
     master_index: pd.DatetimeIndex,
 ) -> pd.Series:
-    events = catalog_df.copy()
+    """Count catalogue events on the supplied complete hourly index."""
+    events = catalogue.copy()
 
     if "timestamp" not in events.columns:
-        if "time" in events.columns:
-            events = events.rename(columns={"time": "timestamp"})
-        else:
+        if "time" not in events.columns:
             raise ValueError(
                 "Catalogue dataframe must contain 'timestamp' or 'time'."
             )
+        events = events.rename(columns={"time": "timestamp"})
 
     events["timestamp"] = pd.to_datetime(
         events["timestamp"],
@@ -130,9 +170,7 @@ def catalogue_hourly_counts(
     )
     events = events.dropna(subset=["timestamp"]).sort_values("timestamp")
 
-    master_index = pd.DatetimeIndex(
-        pd.to_datetime(master_index, utc=True)
-    )
+    index = pd.DatetimeIndex(pd.to_datetime(master_index, utc=True))
 
     return (
         events
@@ -140,12 +178,14 @@ def catalogue_hourly_counts(
         .assign(count=1)["count"]
         .resample("1h")
         .sum()
-        .reindex(master_index, fill_value=0)
+        .reindex(index, fill_value=0)
         .astype(float)
+        .rename("catalogue_count")
     )
 
+
 def catalogue_event_rate_response(
-    catalog_df: pd.DataFrame,
+    catalogue: pd.DataFrame,
     master_index: pd.DatetimeIndex,
     *,
     response_window: int = 6,
@@ -153,17 +193,12 @@ def catalogue_event_rate_response(
     min_periods: int = 12,
 ) -> pd.Series:
     """
-    Short-term local seismic response.
+    Positive short-term local-seismicity response.
 
-    At time t:
-    - response window: counts from t-5 through t;
-    - baseline: earlier six-hour count windows ending at least six hours
-      before t.
-
-    The current response window therefore does not overlap with the
-    contemporaneous background-state window.
+    At hour t, the response uses counts from t-5 through t. Its baseline uses
+    earlier six-hour response windows ending at least six hours before t.
     """
-    hourly_count = catalogue_hourly_counts(catalog_df, master_index)
+    hourly_count = catalogue_hourly_counts(catalogue, master_index)
 
     recent_count = hourly_count.rolling(
         window=response_window,
@@ -182,12 +217,15 @@ def catalogue_event_rate_response(
         .median()
     )
 
-    response = (log_recent_count - past_baseline).clip(lower=0)
-    response.name = "local_event_rate_response"
-    return response
+    return (
+        (log_recent_count - past_baseline)
+        .clip(lower=0)
+        .rename("local_event_rate_response")
+    )
+
 
 def catalogue_event_rate_state(
-    catalog_df: pd.DataFrame,
+    catalogue: pd.DataFrame,
     master_index: pd.DatetimeIndex,
     *,
     state_window: int = 48,
@@ -197,12 +235,12 @@ def catalogue_event_rate_state(
     """
     Past local-seismicity state.
 
-    At time t the state uses only counts ending six hours before t.
-    It therefore excludes the six-hour window used by the response proxy.
+    At hour t, the state uses a 48-hour count window ending six hours before t,
+    so it does not overlap the contemporaneous six-hour response window.
     """
-    hourly_count = catalogue_hourly_counts(catalog_df, master_index)
+    hourly_count = catalogue_hourly_counts(catalogue, master_index)
 
-    past_count_sum = (
+    past_count = (
         hourly_count
         .shift(exclusion_hours)
         .rolling(
@@ -212,68 +250,69 @@ def catalogue_event_rate_state(
         .sum()
     )
 
-    state = np.log1p(past_count_sum)
-    state.name = "local_event_rate_state"
-    return state
+    return np.log1p(past_count).rename("local_event_rate_state")
 
 
-def _numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
-    return pd.to_numeric(df[col], errors="coerce")
+def _numeric_series(dataframe: pd.DataFrame, column: str) -> pd.Series:
+    return pd.to_numeric(dataframe[column], errors="coerce")
 
-def positive_log_epsilon(s: pd.Series) -> float:
-    """
-    Estimate the additive epsilon for a positive log transformation.
 
-    The parameter must be estimated on the reference interval and then reused
-    unchanged for the case interval.
-    """
-    x = pd.to_numeric(s, errors="coerce")
+def _log1p_nonnegative(series: pd.Series) -> pd.Series:
+    values = pd.to_numeric(series, errors="coerce")
 
-    if x.isna().any():
+    if (values.dropna() < 0).any():
         raise ValueError(
-            f"Cannot estimate log epsilon because {s.name!r} contains NaNs."
+            f"Expected non-negative values in {series.name!r} before log1p."
         )
 
-    if (x < 0).any():
+    return np.log1p(values)
+
+
+def positive_log_epsilon(series: pd.Series) -> float:
+    """Estimate a positive log offset on a reference interval."""
+    values = pd.to_numeric(series, errors="coerce")
+
+    if values.isna().any():
         raise ValueError(
-            f"Cannot estimate log epsilon because {s.name!r} contains "
+            f"Cannot estimate log epsilon because {series.name!r} contains NaNs."
+        )
+
+    if (values < 0).any():
+        raise ValueError(
+            f"Cannot estimate log epsilon because {series.name!r} contains "
             "negative values."
         )
 
-    positive = x[x > 0]
-
-    if len(positive) == 0:
+    positive = values[values > 0]
+    if positive.empty:
         return 1e-30
 
     return max(float(positive.quantile(0.01)) * 0.1, 1e-30)
 
-def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
-    """
-    Log-transform strictly non-negative physical amplitudes.
 
-    better than log1p for seismic RMS values because RMS velocities
-    can be much smaller than 1, where log1p(x) is almost identical to x.
-    """
-    x = pd.to_numeric(s, errors="coerce")
+def safe_log_positive(
+    series: pd.Series,
+    eps: float | None = None,
+) -> pd.Series:
+    """Log-transform a non-negative physical-amplitude series."""
+    values = pd.to_numeric(series, errors="coerce")
 
-    if (x < 0).any():
-        raise ValueError(f"safe_log_positive received negative values in {s.name!r}")
+    if (values.dropna() < 0).any():
+        raise ValueError(
+            f"safe_log_positive received negative values in {series.name!r}."
+        )
 
     if eps is None:
-        eps = positive_log_epsilon(x)
+        eps = positive_log_epsilon(values)
 
-    return np.log(x.clip(lower=0) + eps)
+    return np.log(values + float(eps))
+
 
 def fit_cause_trigger_transform_parameters(
     reference: pd.DataFrame,
 ) -> dict:
-    """
-    Fit data-dependent transformation parameters on the pre-case reference
-    interval only.
-    """
-    parameters = {
-        "log_positive_eps": {},
-    }
+    """Fit data-dependent transformations on the pre-case reference interval."""
+    parameters = {"log_positive_eps": {}}
 
     if "teleseismic" in reference.columns:
         parameters["log_positive_eps"]["teleseismic"] = (
@@ -282,103 +321,77 @@ def fit_cause_trigger_transform_parameters(
 
     return parameters
 
+
 def transform_for_cause_trigger_scaling(
-    final: pd.DataFrame,
+    dataframe: pd.DataFrame,
     *,
     transform_parameters: dict | None = None,
 ) -> pd.DataFrame:
-    """
-    Apply family-aware transformations before StandardScaler.
-
-    final_raw remains unchanged. This transformed copy is used only for
-    constructing etna_final.csv.
-    """
-    transformed = final.copy()
+    """Apply variable-family transformations before standardization."""
+    transformed = dataframe.copy()
 
     if transform_parameters is None:
         transform_parameters = fit_cause_trigger_transform_parameters(
             transformed
         )
 
-    log_positive_eps = transform_parameters.get(
-        "log_positive_eps",
-        {},
-    )
+    epsilons = transform_parameters.get("log_positive_eps", {})
 
-    log_positive_cols = [
-        "teleseismic",
-    ]
+    if "teleseismic" in transformed.columns:
+        if "teleseismic" not in epsilons:
+            raise ValueError(
+                "Missing reference-fitted log epsilon for 'teleseismic'."
+            )
+        transformed["teleseismic"] = safe_log_positive(
+            transformed["teleseismic"],
+            eps=float(epsilons["teleseismic"]),
+        )
 
-    log1p_cols = [
-        "rainfall_mm",
-        "CO2_3",
-    ]
-
-    asinh_cols = [
-        "pressure_drop",
-    ]
-
-    for col in log_positive_cols:
-        if col in transformed.columns:
-            if col not in log_positive_eps:
-                raise ValueError(
-                    f"Missing reference-fitted log epsilon for {col!r}."
-                )
-
-            transformed[col] = safe_log_positive(
-                transformed[col],
-                eps=float(log_positive_eps[col]),
+    for column in ("rainfall_mm", "CO2_3"):
+        if column in transformed.columns:
+            transformed[column] = _log1p_nonnegative(
+                _numeric_series(transformed, column)
             )
 
-    for col in log1p_cols:
-        if col in transformed.columns:
-            transformed[col] = np.log1p(
-                _numeric_series(transformed, col).clip(lower=0)
-            )
-
-    for col in asinh_cols:
-        if col in transformed.columns:
-            transformed[col] = np.arcsinh(
-                _numeric_series(transformed, col)
-            )
+    if "pressure_drop" in transformed.columns:
+        transformed["pressure_drop"] = np.arcsinh(
+            _numeric_series(transformed, "pressure_drop")
+        )
 
     return transformed
 
-def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    StandardScaler-compatible z-standardization:
-        mean 0, variance 1.
 
-    Raises an error for constant or invalid columns instead of silently creating
-    unusable model input.
-    """
-    numeric = df.apply(pd.to_numeric, errors="coerce")
+def standard_scale_dataframe(dataframe: pd.DataFrame) -> pd.DataFrame:
+    """Return StandardScaler-compatible z-scores with strict validation."""
+    numeric = dataframe.apply(pd.to_numeric, errors="coerce")
 
     if numeric.isna().any().any():
         missing = numeric.isna().sum()
-        missing = missing[missing > 0].sort_values(ascending=False)
-        raise ValueError(f"Cannot standardize because transformed data contain NaNs:\n{missing}")
+        raise ValueError(
+            "Cannot standardize data containing NaNs:\n"
+            f"{missing[missing > 0].sort_values(ascending=False)}"
+        )
 
     if not np.isfinite(numeric.to_numpy()).all():
-        bad_cols = [
-            col
-            for col in numeric.columns
-            if not np.isfinite(numeric[col].to_numpy()).all()
+        invalid = [
+            column
+            for column in numeric.columns
+            if not np.isfinite(numeric[column].to_numpy()).all()
         ]
         raise ValueError(
-            "Cannot standardize because transformed data contain infinite values: "
-            f"{bad_cols}"
+            "Cannot standardize data containing non-finite values in: "
+            f"{invalid}"
         )
-    
-    constant_cols = [
-        col for col in numeric.columns
-        if numeric[col].nunique(dropna=True) <= 1
-    ]
-    if constant_cols:
-        raise ValueError(f"Cannot standardize constant columns: {constant_cols}")
 
-    scaler = StandardScaler()
-    scaled = scaler.fit_transform(numeric)
+    constant = [
+        column
+        for column in numeric.columns
+        if numeric[column].nunique(dropna=True) <= 1
+    ]
+    if constant:
+        raise ValueError(f"Cannot standardize constant columns: {constant}")
+
+    scaled = StandardScaler().fit_transform(numeric)
 
     return pd.DataFrame(
         scaled,
@@ -386,59 +399,109 @@ def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         columns=numeric.columns,
     )
 
+
+def validate_etna_dataset(dataframe: pd.DataFrame) -> None:
+    """Require a complete, finite, strictly hourly canonical dataset."""
+    required = {
+        "time",
+        "teleseismic",
+        "local_event_rate_state",
+        "local_event_rate_response",
+    }
+    missing_required = sorted(required - set(dataframe.columns))
+    if missing_required:
+        raise ValueError(
+            f"Final Etna dataset is missing required columns: {missing_required}"
+        )
+
+    time = pd.to_datetime(dataframe["time"], utc=True, errors="coerce")
+
+    if time.isna().any():
+        raise ValueError("Final Etna dataset contains invalid timestamps.")
+
+    if time.duplicated().any():
+        raise ValueError("Final Etna dataset contains duplicate timestamps.")
+
+    if not time.is_monotonic_increasing:
+        raise ValueError("Final Etna dataset is not sorted by time.")
+
+    deltas = time.diff().dropna()
+    if not deltas.eq(pd.Timedelta("1h")).all():
+        raise ValueError("Final Etna dataset is not a complete hourly grid.")
+
+    numeric = dataframe.drop(columns="time").apply(
+        pd.to_numeric,
+        errors="coerce",
+    )
+
+    if numeric.isna().any().any():
+        missing = numeric.isna().sum()
+        raise ValueError(
+            "Final Etna dataset contains missing values:\n"
+            f"{missing[missing > 0].sort_values(ascending=False)}"
+        )
+
+    if not np.isfinite(numeric.to_numpy()).all():
+        raise ValueError("Final Etna dataset contains non-finite values.")
+
+    scaled_columns = [
+        column
+        for column in dataframe.columns
+        if column.endswith("_scaled")
+    ]
+    if scaled_columns:
+        raise ValueError(
+            "The canonical Etna dataset must remain unstandardized. "
+            f"Found scaled columns: {scaled_columns}"
+        )
+
+
+def _waveform_frame(waveform: pd.DataFrame) -> pd.DataFrame:
+    frame = waveform.copy()
+
+    if "time" in frame.columns:
+        frame["time"] = pd.to_datetime(
+            frame["time"],
+            utc=True,
+            errors="coerce",
+        )
+        frame = frame.set_index("time")
+    elif isinstance(frame.index, pd.DatetimeIndex):
+        frame.index = pd.to_datetime(frame.index, utc=True)
+    else:
+        raise ValueError(
+            "Waveform dataframe must have a DatetimeIndex or a 'time' column."
+        )
+
+    if "teleseismic" not in frame.columns:
+        raise ValueError("Waveform dataframe is missing 'teleseismic'.")
+
+    frame["teleseismic"] = pd.to_numeric(
+        frame["teleseismic"],
+        errors="coerce",
+    )
+
+    return frame[["teleseismic"]].sort_index()
+
+
 def create_etna_dataset(
     wave_df: pd.DataFrame,
     *,
-    start_time: str | None = None,
-    end_time: str | None = None,
-    catalog_df: pd.DataFrame | None = None,
+    start_time,
+    end_time,
+    catalog_df: pd.DataFrame,
     etnagas_df: pd.DataFrame | None = None,
     etnagas_cols: list[str] | None = None,
-    etnagas_buffer_hours: int = 6,
-    etnagas_tolerance_hours: int = 1,
     weather_df: pd.DataFrame | None = None,
     weather_cols: list[str] | None = None,
-    weather_buffer_hours: int = 6,
-    weather_tolerance_hours: int = 1,
     output_dir: str | Path | None = None,
-):
-    # ---- load station waveform features ----
-    df = wave_df.copy().reset_index()
+) -> pd.DataFrame:
+    """Construct and optionally save the canonical unstandardized hourly dataset."""
+    analysis_start = _to_utc_timestamp(start_time)
+    analysis_end = _to_utc_timestamp(end_time)
 
-    if "time" not in df.columns:
-        if "index" in df.columns:
-            df = df.rename(columns={"index": "time"})
-        else:
-            raise KeyError("Waveform dataframe must have a DatetimeIndex or a 'time' column.")
-
-    df["time"] = pd.to_datetime(df["time"], utc=True, errors="coerce")
-    df = df.dropna(subset=["time"]).sort_values("time").reset_index(drop=True)
-
-    seismic_cols = [
-        "teleseismic",
-    ]
-
-    for c in seismic_cols:
-        if c not in df.columns:
-            raise KeyError(f"Missing '{c}' in waveform dataframe.")
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    analysis_start = (
-        pd.to_datetime(start_time, utc=True)
-        if start_time is not None
-        else df["time"].min().floor("h")
-    )
-
-    analysis_end = (
-        pd.to_datetime(end_time, utc=True)
-        if end_time is not None
-        else df["time"].max().ceil("h") + pd.Timedelta(hours=1)
-    )
-
-    df = df[
-        (df["time"] >= analysis_start)
-        & (df["time"] < analysis_end)
-    ].copy()
+    if analysis_end <= analysis_start:
+        raise ValueError("end_time must be later than start_time.")
 
     master_index = pd.date_range(
         start=analysis_start,
@@ -448,9 +511,10 @@ def create_etna_dataset(
         tz="UTC",
     )
 
+    waveform = _waveform_frame(wave_df)
+
     base = (
-        df
-        .set_index("time")[seismic_cols]
+        waveform
         .resample("1h")
         .mean()
         .reindex(master_index)
@@ -458,15 +522,9 @@ def create_etna_dataset(
         .reset_index()
     )
 
-    if catalog_df is None:
-        raise ValueError(
-            "catalog_df is required because the final Etna effect is "
-            "local_event_rate_response from the Etna event catalogue."
-        )
-
     base["local_event_rate_state"] = catalogue_event_rate_state(
         catalog_df,
-        pd.DatetimeIndex(base["time"]),
+        master_index,
         state_window=48,
         exclusion_hours=6,
         min_periods=24,
@@ -474,176 +532,256 @@ def create_etna_dataset(
 
     base["local_event_rate_response"] = catalogue_event_rate_response(
         catalog_df,
-        pd.DatetimeIndex(base["time"]),
+        master_index,
         response_window=6,
         baseline_window=24,
         min_periods=12,
     ).to_numpy()
 
-    # Drop only the first rows where past-only state/response construction is undefined.
+    # Only the leading rows lacking the past-only catalogue windows are removed.
     base = base.dropna(
-        subset=["local_event_rate_state", "local_event_rate_response"]
+        subset=[
+            "local_event_rate_state",
+            "local_event_rate_response",
+        ]
     ).reset_index(drop=True)
 
-    model_cols = [
+    if etnagas_df is not None and etnagas_cols:
+        base = merge_hourly_data(
+            base,
+            etnagas_df,
+            base_time="time",
+            external_time="timestamp",
+            value_columns=list(etnagas_cols),
+        )
+
+    if weather_df is not None and weather_cols:
+        base = merge_hourly_data(
+            base,
+            weather_df,
+            base_time="time",
+            external_time="timestamp",
+            value_columns=list(weather_cols),
+        )
+
+    ordered_columns = [
         "time",
         "teleseismic",
         "local_event_rate_state",
         "local_event_rate_response",
+        *(etnagas_cols or []),
+        *(weather_cols or []),
     ]
+    ordered_columns = list(dict.fromkeys(ordered_columns))
 
-    base = base[model_cols]
+    analysis = (
+        base[ordered_columns]
+        .sort_values("time")
+        .reset_index(drop=True)
+    )
 
-    # ---- ETNAGAS ----
-    if etnagas_df is not None and etnagas_cols:
-        g = etnagas_df.copy()
-
-        tmin = base["time"].iloc[0] - pd.Timedelta(hours=etnagas_buffer_hours)
-        tmax = base["time"].iloc[-1] + pd.Timedelta(hours=etnagas_buffer_hours)
-
-        g = g[(g["timestamp"] >= tmin) & (g["timestamp"] <= tmax)].copy()
-
-        base = merge_data(
-            base=base,
-            ext=g,
-            base_time="time",
-            ext_time="timestamp",
-            value_cols=etnagas_cols,
-            tolerance_hours=etnagas_tolerance_hours,
-        )
-
-    # ---- Open-Meteo weather ----
-    if weather_df is not None and weather_cols:
-        w = weather_df.copy()
-
-        tmin = base["time"].iloc[0] - pd.Timedelta(hours=weather_buffer_hours)
-        tmax = base["time"].iloc[-1] + pd.Timedelta(hours=weather_buffer_hours)
-
-        w = w[(w["timestamp"] >= tmin) & (w["timestamp"] <= tmax)].copy()
-
-        base = merge_data(
-            base=base,
-            ext=w,
-            base_time="time",
-            ext_time="timestamp",
-            value_cols=weather_cols,
-            tolerance_hours=weather_tolerance_hours,
-        )
-
-    analysis = base.sort_values("time").reset_index(drop=True)
-
-    unexpected_suffix_columns = [
-        column
-        for column in analysis.columns
-        if column.endswith("_scaled")
-    ]
-
-    if unexpected_suffix_columns:
-        raise ValueError(
-            "Etna analysis dataset must remain unstandardized. "
-            f"Found scaled columns: {unexpected_suffix_columns}"
-        )
+    validate_etna_dataset(analysis)
 
     if output_dir is not None:
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        output_path = output_dir / "etna_dataset.csv"
+        output_path = Path(output_dir) / "etna_dataset.csv"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         analysis.to_csv(output_path, index=False)
 
     return analysis
 
-def load_etnagas_csv(path, value_cols):
-    df = pd.read_csv(path).replace("NULL", np.nan)
-    df["timestamp"] = pd.to_datetime(df["Time"], utc=True, errors="coerce")
 
-    source_cols = [c for c in value_cols if c in df.columns]
-    if "pressure_drop" in value_cols and "Patm_3" in df.columns:
-        source_cols = list(dict.fromkeys(source_cols + ["Patm_3"]))
+def load_etnagas_csv(
+    path: str | Path,
+    value_cols: list[str],
+    *,
+    start_time=None,
+    end_time=None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Load ETNAGAS variables on an exact hourly grid.
 
-    df = (
-        df[["timestamp"] + source_cols]
+    Isolated one-hour gaps are linearly interpolated. The returned report lists
+    the timestamps and source variables affected by that interpolation.
+    """
+    raw = pd.read_csv(path).replace("NULL", np.nan)
+
+    if "Time" not in raw.columns:
+        raise ValueError("ETNAGAS CSV is missing the 'Time' column.")
+
+    raw["timestamp"] = pd.to_datetime(
+        raw["Time"],
+        utc=True,
+        errors="coerce",
+    )
+    raw = (
+        raw
         .dropna(subset=["timestamp"])
         .sort_values("timestamp")
-        .drop_duplicates(subset=["timestamp"], keep="first")
+        .drop_duplicates("timestamp", keep="first")
     )
 
-    for col in source_cols:
-        df[col] = pd.to_numeric(
-            df[col],
-            errors="coerce",
+    direct_columns = [
+        column
+        for column in value_cols
+        if column != "pressure_drop"
+    ]
+
+    source_columns = list(direct_columns)
+    if "pressure_drop" in value_cols:
+        source_columns.append("Patm_3")
+
+    missing_source = sorted(set(source_columns) - set(raw.columns))
+    if missing_source:
+        raise ValueError(
+            f"ETNAGAS CSV is missing source columns: {missing_source}"
         )
 
+    for column in source_columns:
+        raw[column] = pd.to_numeric(raw[column], errors="coerce")
+
+    if start_time is None:
+        requested_start = raw["timestamp"].min().floor("h")
+    else:
+        requested_start = _to_utc_timestamp(start_time).floor("h")
+
+    if end_time is None:
+        requested_end = raw["timestamp"].max().ceil("h") + pd.Timedelta("1h")
+    else:
+        requested_end = _to_utc_timestamp(end_time).ceil("h")
+
+    source_start = (
+        requested_start - pd.Timedelta("1h")
+        if "pressure_drop" in value_cols
+        else requested_start
+    )
+
+    source = raw.loc[
+        (raw["timestamp"] >= source_start)
+        & (raw["timestamp"] < requested_end),
+        ["timestamp", *source_columns],
+    ].copy()
+
+    full_index = pd.date_range(
+        source_start,
+        requested_end,
+        freq="1h",
+        inclusive="left",
+        tz="UTC",
+    )
+
     hourly = (
-        df
+        source
         .set_index("timestamp")
         .resample("1h")
         .mean()
+        .reindex(full_index)
     )
 
-    continuous_cols = [
-        column
-        for column in source_cols
-        if column != "Patm_3"
-    ]
+    missing_before = hourly[source_columns].isna()
 
-    if continuous_cols:
-        hourly[continuous_cols] = hourly[continuous_cols].interpolate(
-            method="time",
-            limit=1,
-            limit_area="inside",
+    hourly[source_columns] = hourly[source_columns].interpolate(
+        method="time",
+        limit=1,
+        limit_area="inside",
+    )
+
+    report_rows = []
+    for timestamp in hourly.index:
+        filled = [
+            column
+            for column in source_columns
+            if missing_before.at[timestamp, column]
+            and pd.notna(hourly.at[timestamp, column])
+        ]
+
+        if filled and requested_start <= timestamp < requested_end:
+            report_rows.append({
+                "timestamp": timestamp,
+                "interpolated_variables": ", ".join(filled),
+                "method": "linear time interpolation",
+                "maximum_gap": "1 hour",
+            })
+
+    remaining = hourly.loc[
+        (hourly.index >= requested_start)
+        & (hourly.index < requested_end),
+        source_columns,
+    ].isna()
+
+    if remaining.any().any():
+        missing = remaining.sum()
+        raise ValueError(
+            "ETNAGAS data remain incomplete after one-hour interpolation:\n"
+            f"{missing[missing > 0].sort_values(ascending=False)}"
         )
-
-    if "Patm_3" in hourly.columns:
-        pressure = hourly["Patm_3"].interpolate(
-            method="time",
-            limit=1,
-            limit_area="inside",
-        )
-        hourly["Patm_3"] = pressure
-
-    df = hourly.reset_index()
 
     if "pressure_drop" in value_cols:
-        if "Patm_3" not in df.columns:
-            raise KeyError(
-                "Cannot compute pressure_drop because 'Patm_3' is missing."
-            )
+        hourly["pressure_drop"] = -hourly["Patm_3"].diff()
 
-        df["pressure_drop"] = -df["Patm_3"].diff()
+    output = (
+        hourly
+        .loc[
+            (hourly.index >= requested_start)
+            & (hourly.index < requested_end)
+        ]
+        .rename_axis("timestamp")
+        .reset_index()
+    )
 
-    final_cols = ["timestamp"] + [c for c in value_cols if c in df.columns]
-    return df[final_cols]
+    final_columns = ["timestamp", *value_cols]
+    report = pd.DataFrame(
+        report_rows,
+        columns=[
+            "timestamp",
+            "interpolated_variables",
+            "method",
+            "maximum_gap",
+        ],
+    )
+
+    return output[final_columns], report
 
 
 def load_openmeteo_etna_weather(
     start_date: str,
     end_date: str,
+    *,
     latitude: float = 37.75,
     longitude: float = 14.99,
-):
-    url = (
-        "https://archive-api.open-meteo.com/v1/archive?"
-        f"latitude={latitude}&longitude={longitude}"
-        f"&start_date={start_date}&end_date={end_date}"
-        "&hourly=precipitation"
-        "&timezone=UTC"
-    )
+) -> pd.DataFrame:
+    """Download hourly Open-Meteo precipitation for the Etna proxy point."""
+    url = "https://archive-api.open-meteo.com/v1/archive"
+    params = {
+        "latitude": latitude,
+        "longitude": longitude,
+        "start_date": start_date,
+        "end_date": end_date,
+        "hourly": "precipitation",
+        "timezone": "UTC",
+    }
 
-    r = requests.get(url, timeout=60)
-    r.raise_for_status()
-    data = r.json()
+    response = requests.get(url, params=params, timeout=60)
+    response.raise_for_status()
+    data = response.json()
 
     weather = pd.DataFrame({
-        "timestamp": pd.to_datetime(data["hourly"]["time"], utc=True),
-        "rainfall_mm": data["hourly"]["precipitation"],
+        "timestamp": pd.to_datetime(
+            data["hourly"]["time"],
+            utc=True,
+        ),
+        "rainfall_mm": pd.to_numeric(
+            data["hourly"]["precipitation"],
+            errors="coerce",
+        ),
     }).sort_values("timestamp")
 
-    weather["rainfall_mm"] = pd.to_numeric(weather["rainfall_mm"], errors="coerce")
+    if weather["timestamp"].duplicated().any():
+        raise ValueError("Open-Meteo returned duplicate hourly timestamps.")
 
     if weather["rainfall_mm"].isna().any():
         missing = int(weather["rainfall_mm"].isna().sum())
         raise ValueError(
-            f"Open-Meteo Etna precipitation contains {missing} missing values."
+            f"Open-Meteo precipitation contains {missing} missing values."
         )
+
     return weather[["timestamp", "rainfall_mm"]]

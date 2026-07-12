@@ -1,10 +1,6 @@
 """
-Etna station availability screening.
-
-This module keeps the station-selection / availability-screening logic out of
-the notebook. It discovers vertical streams, filters them by distance from the
-Etna summit, probes a short waveform segment each day, summarizes actual data
-availability, and optionally exports readable CSV/TXT reports.
+Etna station availability screening.It discovers vertical streams, filters them by distance from the
+Etna summit, probes a short waveform segment each day, summarizes daily probe availability, and optionally exports readable CSV/TXT reports.
 """
 
 from __future__ import annotations
@@ -260,17 +256,17 @@ def _summarize_probe_group(group: pd.DataFrame) -> pd.Series:
         "n_days": len(group),
         "ok_days": int(group["ok"].sum()),
         "ok_fraction": float(group["ok"].mean()),
-        "actual_data_start": actual_start,
-        "actual_data_end": actual_end,
-        "actual_data_start_date": (
+        "successful_probe_start": actual_start,
+        "successful_probe_end": actual_end,
+        "successful_probe_start_date": (
             pd.to_datetime(actual_start).strftime("%Y-%m-%d")
             if pd.notna(actual_start) else "none/open"
         ),
-        "actual_data_end_date": (
+        "successful_probe_end_date": (
             pd.to_datetime(actual_end).strftime("%Y-%m-%d")
             if pd.notna(actual_end) else "none/open"
         ),
-        "actual_data_ranges": _date_ranges_from_ok_days(
+        "successful_probe_ranges": _date_ranges_from_ok_days(
             group.loc[group["ok"], "date"].astype(str).tolist()
         ),
         "missing_dates": ", ".join(group.loc[~group["ok"], "date"].astype(str).tolist()),
@@ -286,7 +282,7 @@ def summarize_daily_probe(
     *,
     channel_rank: dict[str, int] | None = None,
 ) -> pd.DataFrame:
-    """Summarize one row per station/location/channel."""
+    """Summarize daily probe success for each station/location/channel."""
     if channel_rank is None:
         channel_rank = DEFAULT_CHANNEL_RANK
 
@@ -335,7 +331,7 @@ def run_station_screening(
     display_func: Callable[[pd.DataFrame], None] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Complete reproducible station screen:
+    Reproducible station screen:
     metadata discovery -> distance filtering -> daily probe -> ranked summary.
     """
     network = waveform_cfg["network"]
@@ -432,9 +428,9 @@ def export_station_screening_results(
         "location",
         "metadata_start_date",
         "metadata_end_date",
-        "actual_data_start_date",
-        "actual_data_end_date",
-        "actual_data_ranges",
+        "successful_probe_start_date",
+        "successful_probe_end_date",
+        "successful_probe_ranges",
         "missing_dates",
         "lat",
         "lon",
@@ -499,8 +495,8 @@ def export_station_screening_results(
                 f.write(
                     f"{row['station']}.{row['location']}.{row['channel']} | "
                     f"distance={row['distance_km']:.2f} km | "
-                    f"actual_data={row.get('actual_data_start_date', 'none')} "
-                    f"to {row.get('actual_data_end_date', 'none')} | "
+                    f"successful_probes={row.get('successful_probe_start_date', 'none')} "
+                    f"to {row.get('successful_probe_end_date', 'none')} | "
                     f"ok={int(row['ok_days'])}/{int(row['n_days'])} days | "
                     f"mean_probe_coverage={row['mean_probe_coverage']:.3f} | "
                     f"metadata={row.get('metadata_start_date', 'unknown')} "

@@ -1,49 +1,42 @@
 from obspy import UTCDateTime
 import pandas as pd
 
-# configure the processing parameters for the study
+
 ETNA_WAVEFORM_CONFIG = {
     "network": "IV",
+    "station": "ESLN",
     "location": "",
     "channel": "HHZ",
-    "stations": ["ESLN"],
-
     "start": UTCDateTime("2008-04-12T00:00:00"),
     "end": UTCDateTime("2008-05-16T00:00:00"),
-
-    # process in daily chunks, but pad each day for filtering stability
     "chunk_sec": 24 * 3600,
     "pad_sec": 3600,
     "base_freq": "1h",
-
     "bands": {
         "teleseismic": (0.03, 0.30),
     },
-
     "windows_sec": {
         "teleseismic": 120,
     },
-
-    # remove response to velocity
     "response_output": "VEL",
     "pre_filt": (0.02, 0.03, 30.0, 40.0),
-    # gap policy
-    "max_interp_gap_sec": 2.0, # only interpolate tiny gaps
+    "max_interp_gap_sec": 2.0,
+    "min_valid_rms_windows_per_hour": 20,
+    "max_consecutive_missing_rms_windows": 5,
 }
 
 ETNA_GAS_METEO_COLS = [
     "CO2_3",
     "pressure_drop",
-    "WindSpeed",
 ]
-ETNA_WEATHER_COLS = ["rainfall_mm"]
-ETNA_EVENT_TIME = UTCDateTime("2008-05-12T06:28:00")
-ETNA_CATALOGUE_FILENAME = "Etna catalogue_2000-2010.xls"
 
-# etna geo-metadata:
-def etna_observable_metadata():
+ETNA_WEATHER_COLS = ["rainfall_mm"]
+EVENT_TIME = UTCDateTime("2008-05-12T06:28:00")
+
+
+def etna_observable_metadata() -> pd.DataFrame:
+    """Return source metadata for the variables retained in the Etna model."""
     rows = [
-        # esln waveform-derived variables
         {
             "case": "Etna",
             "source_id": "ESLN",
@@ -80,8 +73,6 @@ def etna_observable_metadata():
             "lon": 14.99,
             "plot_role": "effect",
         },
-
-        # Etna gas/meteo variables
         {
             "case": "Etna",
             "source_id": "ETNAGAS_3",
@@ -108,20 +99,6 @@ def etna_observable_metadata():
         },
         {
             "case": "Etna",
-            "source_id": "ETNAGAS_3",
-            "source_label": "ETNAGAS network, 3c",
-            "observable": "WindSpeed",
-            "observable_label": "Wind speed",
-            "family": "meteorology",
-            "spatial_type": "point_or_network_station",
-            "lat": 37.6086,
-            "lon": 15.0822,
-            "plot_role": "direct_or_network_measurement",
-        },
-
-        # Etna proxy/source observables
-        {
-            "case": "Etna",
             "source_id": "ETNA_OPENMETEO_PROXY",
             "source_label": "Open-Meteo Etna proxy point",
             "observable": "rainfall_mm",
@@ -133,5 +110,4 @@ def etna_observable_metadata():
             "plot_role": "proxy",
         },
     ]
-
     return pd.DataFrame(rows)

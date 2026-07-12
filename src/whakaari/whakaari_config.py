@@ -1,9 +1,12 @@
+from __future__ import annotations
+
 import pandas as pd
+
 
 WHAKAARI_START = "2019-10-01"
 WHAKAARI_END = "2019-12-12"
-
 WHAKAARI_ERUPTION_TIME = pd.Timestamp("2019-12-09 01:11", tz="UTC")
+
 TILDE_DATA_URL = "https://tilde.geonet.org.nz/v4/data/"
 
 WHAKAARI_LAT = -37.52
@@ -19,14 +22,25 @@ WHAKAARI_WAVEFORM_CONFIG = {
     "response_output": "VEL",
     "pre_filt": (0.5, 1.0, 20.0, 25.0),
     "max_interp_gap_sec": 2.0,
+    "minimum_hourly_coverage": 0.999,
     "pad_sec": 3600,
     "effect_hourly_quantile": 0.90,
 }
 
-#whakaari geo-metadata
-def whakaari_observable_metadata():
+WHAKAARI_ANALYSIS_COLUMNS = [
+    "hydro_2_5",
+    "spectral_log_ratio_4p5_8_over_8_16",
+    "event_rate_2_5",
+    "effect_tremor_5_15",
+    "rainfall_mm",
+    "pressure_drop",
+    "GNSS_deformation_rate",
+]
+
+
+def whakaari_observable_metadata() -> pd.DataFrame:
+    """Return one metadata row per retained Whakaari observable."""
     rows = [
-        # WSRZ waveform-derived observables
         {
             "case": "Whakaari",
             "source_id": "WSRZ",
@@ -75,8 +89,6 @@ def whakaari_observable_metadata():
             "lon": 177.1778,
             "plot_role": "effect",
         },
-
-        # GNSS pair
         {
             "case": "Whakaari",
             "source_id": "RGWC_RGWI",
@@ -85,21 +97,14 @@ def whakaari_observable_metadata():
             "observable_label": "Lagged daily GNSS deformation change",
             "family": "deformation",
             "spatial_type": "derived_station_pair_midpoint",
-
-            # Display the derived deformation proxy at the midpoint of the pair.
             "lat": (-37.5243 + -37.5181) / 2,
             "lon": (177.1925 + 177.1778) / 2,
-
-            # Keep endpoints for documentation if needed, but the main map will not draw the line.
             "lat1": -37.5243,
             "lon1": 177.1925,
             "lat2": -37.5181,
             "lon2": 177.1778,
-
             "plot_role": "derived_station_pair",
         },
-
-        # Weather proxy
         {
             "case": "Whakaari",
             "source_id": "WHAKAARI_OPENMETEO_PROXY",
@@ -125,5 +130,4 @@ def whakaari_observable_metadata():
             "plot_role": "proxy",
         },
     ]
-
     return pd.DataFrame(rows)

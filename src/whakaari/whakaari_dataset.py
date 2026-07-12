@@ -1,106 +1,101 @@
+from __future__ import annotations
+
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-def _numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
-    return pd.to_numeric(df[col], errors="coerce")
+
+def _numeric_series(df: pd.DataFrame, column: str) -> pd.Series:
+    return pd.to_numeric(df[column], errors="coerce")
+
+
+def _utc_index(frame: pd.DataFrame, name: str) -> pd.DataFrame:
+    out = frame.copy()
+    out.index = pd.to_datetime(out.index, utc=True, errors="raise")
+    out = out.sort_index()
+    out.index.name = name
+    if out.index.has_duplicates:
+        raise ValueError(f"{name} dataframe contains duplicate timestamps.")
+    return out
+
 
 def past_rolling_median_state(
-    s: pd.Series,
+    series: pd.Series,
     *,
     window: int = 6,
     min_periods: int = 3,
 ) -> pd.Series:
-    """
-    Convert an immediate hourly variable into a past-only state proxy.
-
-    The value at time t depends only on observations before t:
-        rolling median over previous values, shifted by one sample.
-    """
+    """Past-only rolling median, shifted by one hourly sample."""
     return (
-        pd.to_numeric(s, errors="coerce")
+        pd.to_numeric(series, errors="coerce")
         .rolling(window=window, min_periods=min_periods)
         .median()
         .shift(1)
     )
 
-def positive_log_epsilon(s: pd.Series) -> float:
-    """
-    Estimate the additive epsilon for a positive log transformation.
 
-    The parameter is estimated on the reference interval and reused for the
-    case interval.
-    """
-    x = pd.to_numeric(s, errors="coerce")
+def positive_log_epsilon(series: pd.Series) -> float:
+    """Estimate a small positive log offset from a reference interval."""
+    values = pd.to_numeric(series, errors="coerce")
 
-    if x.isna().any():
+    if values.isna().any():
         raise ValueError(
-            f"Cannot estimate log epsilon because {s.name!r} contains NaNs."
+            f"Cannot estimate log epsilon because {series.name!r} contains NaNs."
+        )
+    if (values < 0).any():
+        raise ValueError(
+            f"Cannot estimate log epsilon because {series.name!r} contains negative values."
         )
 
-    if (x < 0).any():
-        raise ValueError(
-            f"Cannot estimate log epsilon because {s.name!r} contains "
-            "negative values."
-        )
-
-    positive = x[x > 0]
-
-    if len(positive) == 0:
+    positive = values[values > 0]
+    if positive.empty:
         return 1e-30
 
     return max(float(positive.quantile(0.01)) * 0.1, 1e-30)
 
-def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
-    """
-    Log-transform strictly non-negative physical amplitudes/ratios.
 
-    This is better than log1p for seismic RMS values because RMS velocities
-    can be much smaller than 1, where log1p(x) is almost identical to x.
-    """
-    x = pd.to_numeric(s, errors="coerce")
-
-    if (x < 0).any():
-        raise ValueError(f"safe_log_positive received negative values in {s.name!r}")
+def safe_log_positive(
+    series: pd.Series,
+    eps: float | None = None,
+) -> pd.Series:
+    """Log-transform a non-negative physical amplitude series."""
+    values = pd.to_numeric(series, errors="coerce")
+    if (values < 0).any():
+        raise ValueError(
+            f"safe_log_positive received negative values in {series.name!r}."
+        )
 
     if eps is None:
-        eps = positive_log_epsilon(x)
+        eps = positive_log_epsilon(values)
 
-    return np.log(x.clip(lower=0) + eps)
+    return np.log(values.clip(lower=0) + float(eps))
+
 
 def positive_past_log_anomaly(
-    s: pd.Series,
+    series: pd.Series,
     *,
     baseline_window: int = 24,
     min_periods: int = 12,
     eps: float = 1e-30,
 ) -> pd.Series:
-    """
-    Positive log anomaly relative to a past-only rolling median.
-    """
-    log_s = safe_log_positive(s, eps=eps)
-
-    past_baseline = (
-        log_s
+    """Positive log excess above a past-only rolling-median baseline."""
+    log_values = safe_log_positive(series, eps=eps)
+    baseline = (
+        log_values
         .rolling(window=baseline_window, min_periods=min_periods)
         .median()
         .shift(1)
     )
+    return (log_values - baseline).clip(lower=0)
 
-    return (log_s - past_baseline).clip(lower=0)
 
 def fit_cause_trigger_transform_parameters(
     reference: pd.DataFrame,
 ) -> dict:
-    """
-    Fit data-dependent transformation parameters on the pre-case reference
-    interval only.
-    """
-    parameters = {
-        "log_positive_eps": {},
-    }
+    """Fit data-dependent transformation parameters on the reference interval."""
+    parameters = {"log_positive_eps": {}}
 
     if "hydro_2_5" in reference.columns:
         parameters["log_positive_eps"]["hydro_2_5"] = (
@@ -109,112 +104,68 @@ def fit_cause_trigger_transform_parameters(
 
     return parameters
 
+
 def transform_for_cause_trigger_scaling(
     final: pd.DataFrame,
     *,
     transform_parameters: dict | None = None,
 ) -> pd.DataFrame:
-    """
-    Apply neutral, variable-family transformations before StandardScaler.
-
-    This makes heterogeneous
-    observables numerically comparable for HMML/PCMCI and the Cause--Trigger
-    split/F-test.
-    """
+    """Apply variable-family transformations before standardization."""
     transformed = final.copy()
+
     if transform_parameters is None:
-        transform_parameters = fit_cause_trigger_transform_parameters(
-            transformed
+        transform_parameters = fit_cause_trigger_transform_parameters(transformed)
+
+    log_positive_eps = transform_parameters.get("log_positive_eps", {})
+
+    if "hydro_2_5" in transformed.columns:
+        if "hydro_2_5" not in log_positive_eps:
+            raise ValueError("Missing reference-fitted log epsilon for 'hydro_2_5'.")
+        transformed["hydro_2_5"] = safe_log_positive(
+            transformed["hydro_2_5"],
+            eps=float(log_positive_eps["hydro_2_5"]),
         )
 
-    log_positive_eps = transform_parameters.get(
-        "log_positive_eps",
-        {},
-    )
-
-    # Positive amplitude / ratio variables.
-    # Use log, not log1p, because waveform RMS values are often << 1.
-    log_positive_cols = [
-        "hydro_2_5",
-    ]
-
-    # Positive count / accumulation variables.
-    log1p_cols = [
-        "event_rate_2_5",
-        "rainfall_mm",
-    ]
-
-    # Signed burst-like variables.
-    asinh_cols = [
-        "pressure_drop",
-        "GNSS_deformation_rate",
-    ]
-
-    for col in log_positive_cols:
-        if col in transformed.columns:
-            if col not in log_positive_eps:
-                raise ValueError(
-                    f"Missing reference-fitted log epsilon for {col!r}."
-                )
-
-            transformed[col] = safe_log_positive(
-                transformed[col],
-                eps=float(log_positive_eps[col]),
+    for column in ("event_rate_2_5", "rainfall_mm"):
+        if column in transformed.columns:
+            transformed[column] = np.log1p(
+                _numeric_series(transformed, column).clip(lower=0)
             )
 
-    for col in log1p_cols:
-        if col in transformed.columns:
-            transformed[col] = np.log1p(
-                _numeric_series(transformed, col).clip(lower=0)
-            )
-
-    for col in asinh_cols:
-        if col in transformed.columns:
-            transformed[col] = np.arcsinh(
-                _numeric_series(transformed, col)
+    for column in ("pressure_drop", "GNSS_deformation_rate"):
+        if column in transformed.columns:
+            transformed[column] = np.arcsinh(
+                _numeric_series(transformed, column)
             )
 
     return transformed
 
 
 def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    StandardScaler-compatible z-standardization:
-        mean 0, variance 1.
-
-    Raises an error for NaNs, infinite values, or constant columns instead of
-    silently producing unusable causal-model input.
-    """
+    """Return population-standardized numeric columns."""
     numeric = df.apply(pd.to_numeric, errors="coerce")
 
     if numeric.isna().any().any():
         missing = numeric.isna().sum()
-        missing = missing[missing > 0].sort_values(ascending=False)
         raise ValueError(
             "Cannot standardize because transformed data contain NaNs:\n"
-            f"{missing}"
+            f"{missing[missing > 0]}"
         )
 
     if not np.isfinite(numeric.to_numpy()).all():
-        bad_cols = [
-            col for col in numeric.columns
-            if not np.isfinite(numeric[col].to_numpy()).all()
-        ]
+        raise ValueError("Cannot standardize non-finite transformed values.")
+
+    constant_columns = [
+        column
+        for column in numeric.columns
+        if numeric[column].nunique(dropna=True) <= 1
+    ]
+    if constant_columns:
         raise ValueError(
-            "Cannot standardize because transformed data contain infinite values: "
-            f"{bad_cols}"
+            f"Cannot standardize constant columns: {constant_columns}"
         )
 
-    constant_cols = [
-        col for col in numeric.columns
-        if numeric[col].nunique(dropna=True) <= 1
-    ]
-    if constant_cols:
-        raise ValueError(f"Cannot standardize constant columns: {constant_cols}")
-
-    scaler = StandardScaler()
-    scaled = scaler.fit_transform(numeric)
-
+    scaled = StandardScaler().fit_transform(numeric)
     return pd.DataFrame(
         scaled,
         index=numeric.index,
@@ -222,33 +173,72 @@ def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def build_master_dataframe(
-    wave,
-    weather_vars,
-    gnss,
-    start,
-    end,
-    master_freq="1h",
-):
-    master_index = pd.date_range(
-        start=start,
-        end=pd.Timestamp(end) + pd.Timedelta(hours=23),
-        freq=master_freq,
-        tz="UTC",
+def _full_day_hourly_index(
+    start: str | pd.Timestamp,
+    end: str | pd.Timestamp,
+    frequency: str,
+) -> pd.DatetimeIndex:
+    start_timestamp = pd.to_datetime(start, utc=True)
+    end_timestamp = pd.to_datetime(end, utc=True)
+
+    if end_timestamp == end_timestamp.normalize():
+        end_exclusive = end_timestamp + pd.Timedelta(days=1)
+    else:
+        end_exclusive = end_timestamp
+
+    return pd.date_range(
+        start=start_timestamp,
+        end=end_exclusive,
+        freq=frequency,
+        inclusive="left",
     )
 
-    wave_1h = wave.resample(master_freq).mean()
 
-    # Replace the immediate spectral ratio with a past-only smoothed
-    # spectral-state proxy. 
-    if "spectral_log_ratio_4p5_8_over_8_16" in wave_1h.columns:
-        wave_1h["spectral_log_ratio_4p5_8_over_8_16"] = past_rolling_median_state(
-            wave_1h["spectral_log_ratio_4p5_8_over_8_16"],
-            window=6,
-            min_periods=3,
+def build_master_dataframe(
+    wave: pd.DataFrame,
+    weather_vars: pd.DataFrame,
+    gnss: pd.DataFrame,
+    start,
+    end,
+    master_freq: str = "1h",
+) -> pd.DataFrame:
+    """
+    Align waveform, weather, and past-only GNSS variables on one hourly grid.
+
+    The GNSS value assigned to day D is the displacement change from D-2 to
+    D-1, so the entire hourly step for D uses information available before D.
+    """
+    master_index = _full_day_hourly_index(start, end, master_freq)
+
+    wave_hourly = _utc_index(wave, "time").resample(master_freq).mean()
+    wave_hourly = wave_hourly.reindex(master_index)
+
+    if "spectral_log_ratio_4p5_8_over_8_16" in wave_hourly.columns:
+        wave_hourly["spectral_log_ratio_4p5_8_over_8_16"] = (
+            past_rolling_median_state(
+                wave_hourly["spectral_log_ratio_4p5_8_over_8_16"],
+                window=6,
+                min_periods=3,
+            )
         )
-    weather_1h = weather_vars.resample(master_freq).mean()
-    gnss_daily = gnss.resample("1D").mean()
+
+    if "effect_tremor_5_15" in wave_hourly.columns:
+        wave_hourly["effect_tremor_5_15"] = positive_past_log_anomaly(
+            wave_hourly["effect_tremor_5_15"],
+            baseline_window=24,
+            min_periods=12,
+        )
+
+    weather_hourly = (
+        _utc_index(weather_vars, "timestamp")
+        .resample(master_freq)
+        .mean()
+        .reindex(master_index)
+    )
+
+    gnss_daily = _utc_index(gnss, "timestamp").resample("1D").mean()
+    if "GNSS_deformation" not in gnss_daily.columns:
+        raise ValueError("GNSS dataframe must contain 'GNSS_deformation'.")
 
     gnss_daily["GNSS_deformation_rate"] = (
         gnss_daily["GNSS_deformation"]
@@ -256,211 +246,180 @@ def build_master_dataframe(
         .shift(1)
     )
 
-    gnss_1h = (
+    # Reindex first, then forward-fill within each day. Resampling alone stops at
+    # the final daily timestamp and previously created 23 artificial end NaNs.
+    gnss_hourly = (
         gnss_daily[["GNSS_deformation_rate"]]
-        .resample(master_freq)
+        .reindex(master_index)
         .ffill(limit=23)
     )
 
-    # Replace raw 5--15 Hz RMS with a positive tremor-response anomaly.
-    # positive values represent eruption-response
-    # excess above the recent past baseline.
-    if "effect_tremor_5_15" in wave_1h.columns:
-        wave_1h["effect_tremor_5_15"] = positive_past_log_anomaly(
-            wave_1h["effect_tremor_5_15"],
-            baseline_window=24,
-            min_periods=12,
+    master = pd.concat(
+        [wave_hourly, weather_hourly, gnss_hourly],
+        axis=1,
+    )
+    master.index = master_index
+    master.index.name = "time"
+    return master
+
+
+def prepare_analysis_dataframe(
+    master: pd.DataFrame,
+    *,
+    required_columns: list[str] | None = None,
+) -> pd.DataFrame:
+    """
+    Keep all retained variables and remove only rows unresolved in any of them.
+
+    Missing waveform hours are not interpolated. They remain explicit missing
+    timestamps in the canonical complete-case dataframe.
+    """
+    analysis = _utc_index(master, "time")
+
+    if required_columns is None:
+        required_columns = [
+            "hydro_2_5",
+            "spectral_log_ratio_4p5_8_over_8_16",
+            "event_rate_2_5",
+            "effect_tremor_5_15",
+            "rainfall_mm",
+            "pressure_drop",
+            "GNSS_deformation_rate",
+        ]
+
+    missing_columns = sorted(set(required_columns) - set(analysis.columns))
+    if missing_columns:
+        raise ValueError(
+            f"Whakaari master dataframe is missing columns: {missing_columns}"
         )
 
-    wave_1h = wave_1h.reindex(master_index)
-    weather_1h = weather_1h.reindex(master_index)
-    gnss_1h = gnss_1h.reindex(master_index)
+    analysis = analysis[required_columns].apply(
+        pd.to_numeric,
+        errors="coerce",
+    )
+    analysis = analysis.dropna(subset=required_columns)
 
-    frames = [wave_1h, weather_1h, gnss_1h]
+    if not np.isfinite(analysis.to_numpy()).all():
+        raise ValueError("Whakaari analysis dataframe contains non-finite values.")
 
-    whakaari_master = pd.concat(frames, axis=1)
-    whakaari_master.index.name = "time"
-    return whakaari_master
+    return analysis
 
 
-def prepare_analysis_dataframe(whakaari_master):
-    whakaari_raw = whakaari_master.copy()
+def _timestamp_ranges(index: pd.DatetimeIndex) -> pd.DataFrame:
+    """Convert sorted hourly timestamps into compact continuous ranges."""
+    index = pd.DatetimeIndex(index).sort_values().unique()
 
-    if "GNSS_deformation_rate" in whakaari_raw.columns:
-        whakaari_raw["GNSS_deformation_rate"] = pd.to_numeric(
-            whakaari_raw["GNSS_deformation_rate"],
-            errors="coerce",
+    if len(index) == 0:
+        return pd.DataFrame(columns=["start", "end", "hours"])
+
+    rows: list[dict[str, object]] = []
+    start = previous = index[0]
+
+    for timestamp in index[1:]:
+        if timestamp == previous + pd.Timedelta(hours=1):
+            previous = timestamp
+            continue
+
+        rows.append(
+            {
+                "start": start,
+                "end": previous,
+                "hours": int((previous - start) / pd.Timedelta("1h")) + 1,
+            }
         )
+        start = previous = timestamp
 
-    required_cols = [
-        "hydro_2_5",
-        "spectral_log_ratio_4p5_8_over_8_16",
-        "event_rate_2_5",
-        "effect_tremor_5_15",
-        "rainfall_mm",
-        "pressure_drop",
-    ]
+    rows.append(
+        {
+            "start": start,
+            "end": previous,
+            "hours": int((previous - start) / pd.Timedelta("1h")) + 1,
+        }
+    )
+    return pd.DataFrame(rows)
 
-    required_existing = [
-        col for col in required_cols
-        if col in whakaari_raw.columns
-    ]
 
-    whakaari_raw = whakaari_raw.dropna(
-        subset=required_existing
+def preprocessing_report(
+    rawest_df: pd.DataFrame,
+    prepared_df: pd.DataFrame,
+) -> dict[str, pd.DataFrame]:
+    """Return compact construction, missing-value, and dropped-range tables."""
+    master = _utc_index(rawest_df, "time")
+    prepared = _utc_index(prepared_df, "time")
+    dropped = master.index.difference(prepared.index)
+
+    summary = pd.DataFrame(
+        [
+            {
+                "master_rows": len(master),
+                "analysis_rows": len(prepared),
+                "rows_removed": len(dropped),
+                "analysis_start": prepared.index.min(),
+                "analysis_end": prepared.index.max(),
+                "duplicate_timestamps": int(prepared.index.duplicated().sum()),
+                "remaining_missing_values": int(prepared.isna().sum().sum()),
+            }
+        ]
     )
 
-    return whakaari_raw
+    missing_by_variable = pd.DataFrame(
+        {
+            "missing_in_master": master.isna().sum(),
+            "missing_in_analysis": prepared.isna().sum().reindex(
+                master.columns,
+                fill_value=0,
+            ),
+        }
+    )
+    missing_by_variable.index.name = "variable"
+    missing_by_variable = missing_by_variable.reset_index()
 
-def preprocessing_report(rawest_df, prepared_df):
-    """
-    Notebook-only preprocessing audit.
+    return {
+        "summary": summary,
+        "missing_by_variable": missing_by_variable,
+        "dropped_ranges": _timestamp_ranges(dropped),
+    }
 
-    Compares:
-    - rawest_df: output of build_master_dataframe()
-    - prepared_df: output of prepare_analysis_dataframe()
-
-    It reports:
-    - rows before/after
-    - dropped timestamps
-    - missing values before/after
-    - how many NaNs were filled
-    - how many existing values changed
-    - how many non-missing values were lost because rows were dropped
-    """
-
-    rawest = rawest_df.copy()
-    prepared = prepared_df.copy()
-
-    if "time" in rawest.columns:
-        rawest = rawest.set_index("time")
-    if "time" in prepared.columns:
-        prepared = prepared.set_index("time")
-
-    rawest.index = pd.to_datetime(rawest.index, utc=True)
-    prepared.index = pd.to_datetime(prepared.index, utc=True)
-
-    common_index = rawest.index.intersection(prepared.index)
-    dropped_timestamps = rawest.index.difference(prepared.index)
-
-    rows = []
-
-    all_cols = sorted(set(rawest.columns).union(set(prepared.columns)))
-
-    for col in all_cols:
-        if col not in rawest.columns:
-            rows.append({
-                "variable": col,
-                "status": "added",
-                "missing_before": np.nan,
-                "missing_after": prepared[col].isna().sum(),
-                "filled_from_nan": np.nan,
-                "changed_existing": np.nan,
-                "lost_by_dropped_rows": np.nan,
-            })
-            continue
-
-        if col not in prepared.columns:
-            rows.append({
-                "variable": col,
-                "status": "removed",
-                "missing_before": rawest[col].isna().sum(),
-                "missing_after": np.nan,
-                "filled_from_nan": np.nan,
-                "changed_existing": np.nan,
-                "lost_by_dropped_rows": rawest[col].notna().sum(),
-            })
-            continue
-
-        before = rawest.loc[common_index, col]
-        after = prepared.loc[common_index, col]
-
-        before_num = pd.to_numeric(before, errors="coerce")
-        after_num = pd.to_numeric(after, errors="coerce")
-
-        filled_from_nan = int((before.isna() & after.notna()).sum())
-
-        both_present = before.notna() & after.notna()
-
-        changed_existing = int((
-            both_present
-            & ~np.isclose(
-                before_num,
-                after_num,
-                rtol=1e-10,
-                atol=1e-12,
-                equal_nan=True,
-            )
-        ).sum())
-
-        lost_by_dropped_rows = int(rawest.loc[dropped_timestamps, col].notna().sum())
-
-        rows.append({
-            "variable": col,
-            "status": "kept",
-            "missing_before": int(rawest[col].isna().sum()),
-            "missing_after": int(prepared[col].isna().sum()),
-            "filled_from_nan": filled_from_nan,
-            "changed_existing": changed_existing,
-            "lost_by_dropped_rows": lost_by_dropped_rows,
-        })
-
-    report = pd.DataFrame(rows).sort_values("variable").reset_index(drop=True)
-
-    print("\nPreprocessing summary")
-    print("---------------------")
-    print(f"Rows before preprocessing: {len(rawest)}")
-    print(f"Rows after preprocessing:  {len(prepared)}")
-    print(f"Rows dropped:              {len(dropped_timestamps)}")
-
-    if len(dropped_timestamps) > 0:
-        print("\nDropped timestamps:")
-        for ts in dropped_timestamps:
-            print(f"  {ts}")
-
-    print("\nVariables with preprocessing changes:")
-    changed = report[
-        (report["filled_from_nan"].fillna(0) > 0)
-        | (report["changed_existing"].fillna(0) > 0)
-        | (report["lost_by_dropped_rows"].fillna(0) > 0)
-        | (report["status"] != "kept")
-    ]
-
-    if len(changed) == 0:
-        print("  None")
-    else:
-        try:
-            from IPython.display import display
-            display(changed)
-        except Exception:
-            print(changed.to_string(index=False))
-
-    return report
 
 def save_whakaari_analysis_dataset(
     analysis: pd.DataFrame,
     output_dir: str | Path,
 ) -> Path:
-    """
-    Save the canonical hourly Whakaari analysis dataset in
-    physical or proxy units. Transformations and standardization
-    are applied later to the selected case-study interval.
-    """
+    """Validate and save the canonical complete-case Whakaari dataset."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    scaled_columns = [
-        column
-        for column in analysis.columns
-        if column.endswith("_scaled")
-    ]
+    frame = _utc_index(analysis, "time")
 
+    scaled_columns = [
+        column for column in frame.columns if column.endswith("_scaled")
+    ]
     if scaled_columns:
         raise ValueError(
-            "Whakaari analysis dataset must remain unstandardized. "
-            f"Found scaled columns: {scaled_columns}"
+            "Whakaari canonical data must remain unstandardized. "
+            f"Found: {scaled_columns}"
         )
 
+    if frame.isna().any().any():
+        missing = frame.isna().sum()
+        raise ValueError(
+            "Whakaari analysis data contain missing values:\n"
+            f"{missing[missing > 0]}"
+        )
+
+    if not np.isfinite(frame.to_numpy(dtype=float)).all():
+        raise ValueError("Whakaari analysis data contain non-finite values.")
+
+    if frame.index.has_duplicates or not frame.index.is_monotonic_increasing:
+        raise ValueError("Whakaari timestamps must be unique and sorted.")
+
+    if not (
+        (frame.index.minute == 0)
+        & (frame.index.second == 0)
+        & (frame.index.microsecond == 0)
+    ).all():
+        raise ValueError("Whakaari timestamps must lie on the hourly grid.")
+
     output_path = output_dir / "whakaari_dataset.csv"
-    analysis.to_csv(output_path, index_label="time")
+    frame.to_csv(output_path, index_label="time")
     return output_path

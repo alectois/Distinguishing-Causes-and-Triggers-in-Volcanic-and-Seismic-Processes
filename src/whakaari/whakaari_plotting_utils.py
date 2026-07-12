@@ -31,8 +31,6 @@ def _save_current_figure(fig, filename, save_dir="figures", formats=("pdf", "png
 THESIS_COLORS = {
     "series": "#0072B2",
     "event": "#D55E00",
-    "secondary": "#009E73",
-    "grid": "0.85",
 }
 
 
@@ -68,15 +66,6 @@ def set_thesis_style():
 # Time-series variable groups / labels
 # -----------------------------------------------------------------------------
 
-WHAKAARI_ALL_COLS = [
-    "hydro_2_5",
-    "spectral_log_ratio_4p5_8_over_8_16",
-    "event_rate_2_5",
-    "effect_tremor_5_15",
-    "rainfall_mm",
-    "pressure_drop",
-    "GNSS_deformation_rate",
-]
 
 WHAKAARI_SEISMIC_COLS = [
     "hydro_2_5",
@@ -127,27 +116,218 @@ WHAKAARI_AXIS_LABELS = {
 }
 
 
-def dataset_health_report(df, name):
-    print(f"\n{name}")
-    print("shape:", df.shape)
+def dataset_health_report(df: pd.DataFrame, name: str = "Whakaari dataset") -> pd.DataFrame:
+    """Return a one-row structural audit for an indexed or time-column dataframe."""
+    frame = df.copy()
 
-    if isinstance(df.index, pd.DatetimeIndex):
-        print("duplicate timestamps:", df.index.duplicated().sum())
-        print("time sorted:", df.index.is_monotonic_increasing)
-    elif "timestamp" in df.columns:
-        print("duplicate timestamps:", df["timestamp"].duplicated().sum())
-        print("time sorted:", df["timestamp"].is_monotonic_increasing)
-    elif "time" in df.columns:
-        print("duplicate timestamps:", df["time"].duplicated().sum())
-        print("time sorted:", df["time"].is_monotonic_increasing)
+    if isinstance(frame.index, pd.DatetimeIndex):
+        time_index = pd.to_datetime(frame.index, utc=True)
+    elif "timestamp" in frame.columns:
+        time_index = pd.to_datetime(frame["timestamp"], utc=True, errors="coerce")
+    elif "time" in frame.columns:
+        time_index = pd.to_datetime(frame["time"], utc=True, errors="coerce")
     else:
-        print("No timestamp/time index/column found.")
+        raise ValueError("No DatetimeIndex, 'time', or 'timestamp' field found.")
 
-    print("\nMissing fraction:")
-    print(df.isna().mean().sort_values())
+    valid_time = pd.DatetimeIndex(time_index.dropna())
+    deltas = pd.Series(valid_time).diff().dropna()
+    missing_hours = int(
+        sum(
+            max(int(delta / pd.Timedelta("1h")) - 1, 0)
+            for delta in deltas
+        )
+    )
 
-    return df.describe()
+    numeric = frame.select_dtypes(include=[np.number])
 
+    return pd.DataFrame([{
+        "name": name,
+        "rows": int(len(frame)),
+        "variables": int(numeric.shape[1]),
+        "start": valid_time.min() if len(valid_time) else pd.NaT,
+        "end": valid_time.max() if len(valid_time) else pd.NaT,
+        "duplicate_timestamps": int(valid_time.duplicated().sum()),
+        "time_sorted": bool(valid_time.is_monotonic_increasing),
+        "missing_hourly_timestamps": missing_hours,
+        "missing_values": int(frame.isna().sum().sum()),
+    }])
+
+
+WHAKAARI_LOGLOG_COLS = [
+    "hydro_2_5",
+    "spectral_log_ratio_4p5_8_over_8_16",
+    "event_rate_2_5",
+    "effect_tremor_5_15",
+    "rainfall_mm",
+    "pressure_drop",
+    "GNSS_deformation_rate",
+]
+
+
+def plot_loglog_distributions(
+    dataframe: pd.DataFrame,
+    columns: list[str] | None = None,
+    *,
+    axis_labels: dict | None = None,
+    bins: int = 35,
+    filename: str | None = None,
+    save_dir: str | Path | None = "figures",
+    formats=("pdf", "png"),
+    title: str | None = None,
+    ncols: int | None = None,
+    min_positive_count: int = 5,
+):
+    """
+    Plot log-binned empirical densities on log-log axes.
+
+    True logarithmic axes require strictly positive observations. Non-positive
+    values are excluded separately for each variable and counted in the
+    returned report; they are never shifted or transformed for this diagnostic.
+    """
+    set_thesis_style()
+    axis_labels = WHAKAARI_AXIS_LABELS if axis_labels is None else axis_labels
+
+    if columns is None:
+        columns = [
+            column
+            for column in dataframe.columns
+            if column not in {"time", "timestamp", "station"}
+            and pd.api.types.is_numeric_dtype(dataframe[column])
+        ]
+
+    columns = [column for column in columns if column in dataframe.columns]
+    if not columns:
+        raise ValueError("No requested numeric columns are available for log-log plotting.")
+
+    if ncols is None:
+        ncols = len(columns) if len(columns) <= 4 else 4
+    nrows = int(np.ceil(len(columns) / ncols))
+
+    figure, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(3.9 * ncols, 2.85 * nrows),
+        squeeze=False,
+    )
+    axes = axes.ravel()
+    report_rows = []
+
+    for axis, column in zip(axes, columns):
+        values = pd.to_numeric(dataframe[column], errors="coerce").dropna()
+        positive = values[values > 0]
+
+        n_total = int(len(values))
+        n_positive = int(len(positive))
+        n_nonpositive = int((values <= 0).sum())
+        n_unique_positive = int(positive.nunique())
+
+        report_rows.append({
+            "variable": column,
+            "n_total_nonmissing": n_total,
+            "n_positive_used": n_positive,
+            "n_nonpositive_excluded": n_nonpositive,
+            "positive_fraction": n_positive / n_total if n_total else np.nan,
+            "min_positive": float(positive.min()) if n_positive else np.nan,
+            "max_positive": float(positive.max()) if n_positive else np.nan,
+            "n_unique_positive": n_unique_positive,
+        })
+
+        panel_title, unit_label = axis_labels.get(column, (column, "Value"))
+        if n_positive < min_positive_count or n_unique_positive < 2:
+            axis.axis("off")
+            axis.text(
+                0.02,
+                0.72,
+                f"{panel_title}\n\n"
+                "Not enough positive observations for log-log axes\n"
+                f"positive n = {n_positive}\n"
+                f"unique positive = {n_unique_positive}\n"
+                f"non-positive excluded = {n_nonpositive}",
+                transform=axis.transAxes,
+                ha="left",
+                va="top",
+                fontsize=9,
+            )
+            continue
+
+        edges = np.geomspace(float(positive.min()), float(positive.max()), bins + 1)
+        density, edges = np.histogram(positive, bins=edges, density=True)
+        centres = np.sqrt(edges[:-1] * edges[1:])
+        valid = density > 0
+
+        axis.plot(
+            centres[valid],
+            density[valid],
+            marker="o",
+            markersize=2.8,
+            linewidth=0.80,
+            color=THESIS_COLORS["series"],
+        )
+        axis.set_xscale("log")
+        axis.set_yscale("log")
+        axis.set_title(panel_title, loc="left", pad=4)
+        axis.set_xlabel(unit_label)
+        axis.set_ylabel("Density")
+        axis.grid(True, which="both", alpha=0.14, linewidth=0.42)
+        axis.text(
+            0.98,
+            0.95,
+            f"positive n={n_positive}\n≤0 excluded={n_nonpositive}",
+            transform=axis.transAxes,
+            ha="right",
+            va="top",
+            fontsize=7.6,
+            color="0.30",
+            bbox={
+                "facecolor": "white",
+                "edgecolor": "none",
+                "alpha": 0.72,
+                "pad": 1.4,
+            },
+        )
+
+    for axis in axes[len(columns):]:
+        axis.axis("off")
+
+    if title:
+        figure.suptitle(title, y=1.01, fontsize=11.0, fontweight="bold")
+
+    figure.tight_layout()
+    _save_current_figure(
+        figure,
+        filename=filename,
+        save_dir=save_dir,
+        formats=formats,
+    )
+    plt.show()
+
+    return figure, axes[:len(columns)], pd.DataFrame(report_rows)
+
+
+def plot_whakaari_loglog_distributions(
+    dataframe: pd.DataFrame,
+    columns: list[str] | None = None,
+    *,
+    bins: int = 35,
+    filename: str = "whakaari_loglog_raw_variables",
+    save_dir: str | Path | None = "figures",
+):
+    """Plot positive-subset log-log densities for all canonical Whakaari variables."""
+    if columns is None:
+        columns = [
+            column
+            for column in WHAKAARI_LOGLOG_COLS
+            if column in dataframe.columns
+        ]
+
+    return plot_loglog_distributions(
+        dataframe=dataframe,
+        columns=columns,
+        axis_labels=WHAKAARI_AXIS_LABELS,
+        bins=bins,
+        filename=filename,
+        save_dir=save_dir,
+    )
 
 def _prepare_whakaari_dataframe(csv_path, eruption_time, time_window=None):
     df = pd.read_csv(csv_path)
@@ -340,80 +520,6 @@ def plot_whakaari_thesis_figures(
     return seismic, external
 
 
-def plot_variable_pdfs(df, name=None, cols=None, bins=40, filename=None, save_dir="figures"):
-    """
-    Plot empirical probability density functions for numeric Whakaari variables.
-    Uses density-normalized histograms.
-    """
-    set_thesis_style()
-
-    if cols is None:
-        cols = [
-            c for c in df.columns
-            if c not in ["timestamp", "time", "station"]
-            and pd.api.types.is_numeric_dtype(df[c])
-        ]
-
-    cols = [c for c in cols if c in df.columns]
-
-    if len(cols) == 0:
-        print("No numeric columns to plot.")
-        return None
-
-    n = len(cols)
-    if n <= 4:
-        ncols = n
-    elif n <= 8:
-        ncols = 4
-    else:
-        ncols = 3
-
-    nrows = int(np.ceil(n / ncols))
-
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(3.8 * ncols, 2.85 * nrows),
-        squeeze=False,
-    )
-
-    axes = axes.ravel()
-
-    for ax, col in zip(axes, cols):
-        x = pd.to_numeric(df[col], errors="coerce").dropna()
-
-        ax.hist(
-            x,
-            bins=bins,
-            density=True,
-            alpha=0.75,
-            edgecolor="black",
-            linewidth=0.4,
-        )
-
-        ax.axvline(x.mean(), linestyle="--", linewidth=1.5, label="mean")
-        ax.axvline(x.median(), linestyle=":", linewidth=1.5, label="median")
-
-        panel_title, _ = WHAKAARI_AXIS_LABELS.get(col, (col, "Value"))
-        ax.set_title(panel_title, loc="left")
-        ax.set_ylabel("Density")
-        ax.grid(True, alpha=0.14, linewidth=0.42)
-        ax.legend(fontsize=8)
-
-    for ax in axes[len(cols):]:
-        ax.axis("off")
-
-    if name:
-        fig.suptitle(str(name), y=1.01)
-
-    plt.tight_layout()
-
-    if filename is None:
-        filename = "whakaari_variable_pdfs"
-
-    _save_current_figure(fig, filename, save_dir)
-    plt.show()
-    return fig, axes[:len(cols)]
 
 
 def distribution_summary(df, name=None):
@@ -811,210 +917,3 @@ def plot_whakaari_all_variables_map(
     variable_table = _make_source_variable_table(df)
 
     return fig, ax, variable_table
-
-def plot_loglog_distributions(
-    df,
-    cols=None,
-    *,
-    axis_labels=None,
-    bins=35,
-    filename=None,
-    save_dir="figures",
-    formats=("pdf", "png"),
-    title=None,
-    ncols=None,
-    fig_width_per_col=3.9,
-    panel_height=2.85,
-    min_positive_count=5,
-):
-    """
-    Plot log-binned empirical densities on log-log axes for all requested variables.
-
-    Non-positive values cannot appear on true log axes, so they are excluded
-    variable-by-variable and reported. Variables with too few positive values
-    still get a panel explaining why they were skipped.
-    """
-    set_thesis_style()
-
-    if axis_labels is None:
-        axis_labels = {}
-
-    if cols is None:
-        cols = [
-            c for c in df.columns
-            if c not in ["time", "timestamp", "station"]
-            and pd.api.types.is_numeric_dtype(df[c])
-        ]
-
-    cols = [c for c in cols if c in df.columns]
-
-    if len(cols) == 0:
-        print("No requested numeric columns available for log-log plotting.")
-        return None, None, pd.DataFrame()
-    
-    if ncols is None:
-        if len(cols) <= 4:
-            ncols = len(cols)
-        elif len(cols) <= 8:
-            ncols = 4
-        else:
-            ncols = 3
-
-    nrows = int(np.ceil(len(cols) / ncols))
-
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(fig_width_per_col * ncols, panel_height * nrows),
-        squeeze=False,
-    )
-    axes = axes.ravel()
-
-    report_rows = []
-
-    for ax, col in zip(axes, cols):
-        x_all = pd.to_numeric(df[col], errors="coerce").dropna()
-        x_pos = x_all[x_all > 0]
-
-        n_total = int(len(x_all))
-        n_positive = int(len(x_pos))
-        n_nonpositive = int((x_all <= 0).sum())
-        n_unique_positive = int(x_pos.nunique())
-
-        report_rows.append({
-            "variable": col,
-            "n_total_nonmissing": n_total,
-            "n_positive_used": n_positive,
-            "n_nonpositive_dropped": n_nonpositive,
-            "positive_fraction": n_positive / n_total if n_total else np.nan,
-            "min_positive": float(x_pos.min()) if n_positive else np.nan,
-            "max_positive": float(x_pos.max()) if n_positive else np.nan,
-            "n_unique_positive": n_unique_positive,
-        })
-
-        panel_title, unit_label = axis_labels.get(col, (col, "Value"))
-
-        if n_positive < min_positive_count or n_unique_positive < 2:
-            ax.axis("off")
-            ax.text(
-                0.02,
-                0.72,
-                f"{panel_title}\n\n"
-                f"Not enough positive values for log-log axes\n"
-                f"positive n = {n_positive}\n"
-                f"unique positive = {n_unique_positive}\n"
-                f"non-positive dropped = {n_nonpositive}",
-                transform=ax.transAxes,
-                ha="left",
-                va="top",
-                fontsize=9,
-            )
-            continue
-
-        xmin = float(x_pos.min())
-        xmax = float(x_pos.max())
-
-        if xmin <= 0 or xmax <= xmin:
-            ax.axis("off")
-            ax.text(
-                0.02,
-                0.72,
-                f"{panel_title}\n\nSkipped: invalid positive range.",
-                transform=ax.transAxes,
-                ha="left",
-                va="top",
-                fontsize=9,
-            )
-            continue
-
-        edges = np.geomspace(xmin, xmax, bins + 1)
-        counts, edges = np.histogram(x_pos, bins=edges, density=True)
-
-        centres = np.sqrt(edges[:-1] * edges[1:])
-        mask = counts > 0
-
-        ax.plot(
-            centres[mask],
-            counts[mask],
-            marker="o",
-            markersize=2.8,
-            linewidth=0.80,
-            color=THESIS_COLORS["series"],
-        )
-
-        ax.set_xscale("log")
-        ax.set_yscale("log")
-        ax.set_title(panel_title, loc="left", pad=4)
-        ax.set_xlabel(unit_label)
-        ax.set_ylabel("Density")
-        ax.grid(True, which="both", alpha=0.14, linewidth=0.42)
-
-        if col in {"spectral_log_ratio_4p5_8_over_8_16", "GNSS_deformation_rate"}:
-            text_x, text_y, text_ha, text_va = 0.04, 0.06, "left", "bottom"
-        else:
-            text_x, text_y, text_ha, text_va = 0.98, 0.95, "right", "top"
-
-        ax.text(
-            text_x,
-            text_y,
-            f"positive n={n_positive}\n≤0 dropped={n_nonpositive}",
-            transform=ax.transAxes,
-            ha=text_ha,
-            va=text_va,
-            fontsize=7.6,
-            color="0.30",
-            bbox={
-                "facecolor": "white",
-                "edgecolor": "none",
-                "alpha": 0.72,
-                "pad": 1.4,
-            },
-        )
-
-    for ax in axes[len(cols):]:
-        ax.axis("off")
-
-    if title is not None:
-        fig.suptitle(title, y=1.01, fontsize=11.0, fontweight="bold")
-
-    plt.tight_layout()
-
-    _save_current_figure(
-        fig,
-        filename=filename,
-        save_dir=save_dir,
-        formats=formats,
-    )
-
-    plt.show()
-
-    report = pd.DataFrame(report_rows)
-    return fig, axes[:len(cols)], report
-
-def plot_whakaari_loglog_distributions(
-    df,
-    cols=None,
-    *,
-    bins=35,
-    filename="whakaari_loglog_all_raw_variables",
-    save_dir="figures",
-):
-    """
-    Whakaari all-variable log-log distribution diagnostic.
-
-    Uses all raw Whakaari variables by default. Variables with zeros or negative
-    values are represented by their positive subset only, with exclusions
-    reported in the returned table.
-    """
-    if cols is None:
-        cols = [c for c in WHAKAARI_ALL_COLS if c in df.columns]
-
-    return plot_loglog_distributions(
-        df=df,
-        cols=cols,
-        axis_labels=WHAKAARI_AXIS_LABELS,
-        bins=bins,
-        filename=filename,
-        save_dir=save_dir,
-        title=None,
-    )
