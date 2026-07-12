@@ -26,6 +26,33 @@ def past_rolling_median_state(
         .shift(1)
     )
 
+def positive_log_epsilon(s: pd.Series) -> float:
+    """
+    Estimate the additive epsilon for a positive log transformation.
+
+    The parameter is estimated on the reference interval and reused for the
+    case interval.
+    """
+    x = pd.to_numeric(s, errors="coerce")
+
+    if x.isna().any():
+        raise ValueError(
+            f"Cannot estimate log epsilon because {s.name!r} contains NaNs."
+        )
+
+    if (x < 0).any():
+        raise ValueError(
+            f"Cannot estimate log epsilon because {s.name!r} contains "
+            "negative values."
+        )
+
+    positive = x[x > 0]
+
+    if len(positive) == 0:
+        return 1e-30
+
+    return max(float(positive.quantile(0.01)) * 0.1, 1e-30)
+
 def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
     """
     Log-transform strictly non-negative physical amplitudes/ratios.
@@ -38,13 +65,8 @@ def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
     if (x < 0).any():
         raise ValueError(f"safe_log_positive received negative values in {s.name!r}")
 
-    positive = x[x > 0]
-
     if eps is None:
-        if len(positive) == 0:
-            eps = 1e-30
-        else:
-            eps = max(float(positive.quantile(0.01)) * 0.1, 1e-30)
+        eps = positive_log_epsilon(x)
 
     return np.log(x.clip(lower=0) + eps)
 
@@ -53,17 +75,12 @@ def positive_past_log_anomaly(
     *,
     baseline_window: int = 24,
     min_periods: int = 12,
+    eps: float = 1e-30,
 ) -> pd.Series:
     """
-    Convert a positive amplitude series into a positive past-baseline anomaly.
-
-    The value at time t is:
-        max(log(x_t + eps) - median(log(x_{t-24:t-1} + eps)), 0)
-
-    This is used for effect proxies where the target should represent
-    a positive response anomaly rather than raw absolute amplitude.
+    Positive log anomaly relative to a past-only rolling median.
     """
-    log_s = safe_log_positive(s)
+    log_s = safe_log_positive(s, eps=eps)
 
     past_baseline = (
         log_s
@@ -74,7 +91,29 @@ def positive_past_log_anomaly(
 
     return (log_s - past_baseline).clip(lower=0)
 
-def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
+def fit_cause_trigger_transform_parameters(
+    reference: pd.DataFrame,
+) -> dict:
+    """
+    Fit data-dependent transformation parameters on the pre-case reference
+    interval only.
+    """
+    parameters = {
+        "log_positive_eps": {},
+    }
+
+    if "hydro_2_5" in reference.columns:
+        parameters["log_positive_eps"]["hydro_2_5"] = (
+            positive_log_epsilon(reference["hydro_2_5"])
+        )
+
+    return parameters
+
+def transform_for_cause_trigger_scaling(
+    final: pd.DataFrame,
+    *,
+    transform_parameters: dict | None = None,
+) -> pd.DataFrame:
     """
     Apply neutral, variable-family transformations before StandardScaler.
 
@@ -83,6 +122,15 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     split/F-test.
     """
     transformed = final.copy()
+    if transform_parameters is None:
+        transform_parameters = fit_cause_trigger_transform_parameters(
+            transformed
+        )
+
+    log_positive_eps = transform_parameters.get(
+        "log_positive_eps",
+        {},
+    )
 
     # Positive amplitude / ratio variables.
     # Use log, not log1p, because waveform RMS values are often << 1.
@@ -104,7 +152,15 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
 
     for col in log_positive_cols:
         if col in transformed.columns:
-            transformed[col] = safe_log_positive(transformed[col])
+            if col not in log_positive_eps:
+                raise ValueError(
+                    f"Missing reference-fitted log epsilon for {col!r}."
+                )
+
+            transformed[col] = safe_log_positive(
+                transformed[col],
+                eps=float(log_positive_eps[col]),
+            )
 
     for col in log1p_cols:
         if col in transformed.columns:

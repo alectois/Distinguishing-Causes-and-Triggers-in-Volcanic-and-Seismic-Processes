@@ -11,56 +11,54 @@ Hlaváčková-Schindler, K., Wöß, R., Pecorino, V., & Schindler, P. (2025).
 Zenodo. DOI: 10.5281/zenodo.15109084
 """
 
+from __future__ import annotations
+
+import warnings
+
 import numpy as np
 import pandas as pd
 from statsmodels.tsa.api import VAR
-import warnings
+
+
+_VALID_CRITERIA = {"aic", "bic", "hqic", "fpe"}
 
 
 def select_var_lag(
-    df,
-    max_lags=12,
-    criterion="aic",
-    fallback_lag=1,
-):
-    """
-    Select the optimal VAR lag.
-
-    The fallback is retained for reproducibility, but failures are reported.
-    """
-    valid_criteria = {"aic", "bic", "hqic", "fpe"}
-
-    if criterion not in valid_criteria:
+    df: pd.DataFrame,
+    max_lags: int = 12,
+    criterion: str = "aic",
+    fallback_lag: int = 1,
+) -> int:
+    """Select a positive VAR lag using an information criterion."""
+    if criterion not in _VALID_CRITERIA:
         raise ValueError(
-            f"criterion must be one of {sorted(valid_criteria)}, "
-            f"got {criterion!r}"
+            f"criterion must be one of {sorted(_VALID_CRITERIA)}, "
+            f"got {criterion!r}."
         )
+    if not isinstance(max_lags, int) or max_lags < 1:
+        raise ValueError("max_lags must be a positive integer.")
+    if not isinstance(fallback_lag, int) or not 1 <= fallback_lag <= max_lags:
+        raise ValueError("fallback_lag must be between 1 and max_lags.")
 
-    numeric_df = df.select_dtypes(include=[np.number]).dropna()
+    numeric = df.apply(pd.to_numeric, errors="coerce")
+    if numeric.isna().any().any():
+        raise ValueError("VAR lag selection received missing or non-numeric values.")
+    if not np.isfinite(numeric.to_numpy()).all():
+        raise ValueError("VAR lag selection received non-finite values.")
+    if numeric.shape[1] < 2:
+        raise ValueError("VAR lag selection requires at least two variables.")
 
-    if len(numeric_df) <= max_lags + 2:
+    if len(numeric) <= max_lags + 2:
         warnings.warn(
-            "Too few rows for requested VAR maximum lag; "
+            "Too few rows for the requested VAR maximum lag; "
             f"using fallback lag {fallback_lag}.",
             RuntimeWarning,
         )
         return fallback_lag
 
     try:
-        model = VAR(numeric_df)
-        selected = model.select_order(maxlags=max_lags)
+        selected = VAR(numeric).select_order(maxlags=max_lags)
         lag = getattr(selected, criterion)
-
-        if lag is None or np.isnan(lag) or lag < 1:
-            warnings.warn(
-                f"VAR-{criterion.upper()} returned invalid lag {lag!r}; "
-                f"using fallback lag {fallback_lag}.",
-                RuntimeWarning,
-            )
-            return fallback_lag
-
-        return int(lag)
-
     except Exception as exc:
         warnings.warn(
             f"VAR-{criterion.upper()} lag selection failed: {exc}. "
@@ -69,72 +67,12 @@ def select_var_lag(
         )
         return fallback_lag
 
-
-def convert_name(name: str):
-    convert = {
-        "gamma": "gamma",
-        "norm": "gaussian",
-        "invgauss": "inverse_gaussian",
-    }
-
-    if name not in convert:
-        return "gaussian"
-
-    return convert[name]
-
-
-def find_distribution(series, fallback_distribution="gaussian"):
-    """
-    Fit distribution for the target series and convert to HMML-compatible name.
-
-    For standardized data with negative values, return gaussian because
-    gamma and inverse Gaussian require positive support.
-    """
-    clean_series = pd.Series(series).dropna()
-
-    if len(clean_series) < 10:
-        return fallback_distribution
-
-    if (clean_series <= 0).any():
-        return "gaussian"
-    
-    try:
-        from distfit import distfit
-
-        dist = distfit(
-            distr=["gamma", "invgauss", "norm"],
-            random_state=0,
-            verbose=False,
+    if lag is None or not np.isfinite(lag) or int(lag) < 1:
+        warnings.warn(
+            f"VAR-{criterion.upper()} returned invalid lag {lag!r}; "
+            f"using fallback lag {fallback_lag}.",
+            RuntimeWarning,
         )
-        dv = dist.fit_transform(clean_series.values)
-        best_distribution = dv["model"]["name"]
-        return convert_name(best_distribution)
+        return fallback_lag
 
-    except Exception:
-        return fallback_distribution
-
-
-def find_parameters(
-    X,
-    target_series,
-    max_lags=12,
-    criterion="aic",
-    fallback_lag=1,
-    fallback_distribution="gaussian",
-):
-    """
-    Return distribution and lag for CauseTriggerConfig.
-    """
-    lag = select_var_lag(
-        X,
-        max_lags=max_lags,
-        criterion=criterion,
-        fallback_lag=fallback_lag,
-    )
-
-    distribution = find_distribution(
-        target_series,
-        fallback_distribution=fallback_distribution,
-    )
-
-    return distribution, lag
+    return int(lag)

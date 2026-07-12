@@ -5,97 +5,113 @@ Hlaváčková-Schindler, K., Wöß, R., Pecorino, V., & Schindler, P. (2025).
 Zenodo. DOI: 10.5281/zenodo.15109084
 """
 
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
-"""
-This class handles all computations and data transformations necessary for the HMML algorithm.
-"""
 
-class HMMLRunner():
-    def __init__(self, lags: int = None, distribution: str = None, mode: str = "exhaustive"):
-        if lags is None or lags < 1:
-            raise ValueError(f"HMMLRunner requires lags >= 1, got {lags}")
+
+class HMMLRunner:
+    """Run HMML and return lag coefficients plus adjacency."""
+
+    def __init__(self, lags: int, distribution: str = "gaussian"):
+        if not isinstance(lags, int) or lags < 1:
+            raise ValueError(f"HMMLRunner requires lags >= 1, got {lags!r}.")
+        if not isinstance(distribution, str) or not distribution:
+            raise ValueError("distribution must be a non-empty string.")
 
         try:
             import hmml
         except ImportError as exc:
             raise ImportError(
-                "The 'hmml' package is required for causal_backend='hmml'. "
-                "Install hmml or use causal_backend='pcmci' / 'pcmci_plus'."
+                "The 'hmml' package is required for causal_backend='hmml'."
             ) from exc
 
         self.lags = lags
         self.distribution = distribution
-        self.requested_distribution = distribution
-        self.used_distribution = distribution
-        self.used_fallback = False
+        self._algorithm = hmml.HmmlExh
 
-        algorithms = {
-            "exhaustive": hmml.HmmlExh,
-            "genetic": hmml.HmmlGa,
-        }
-
-        if mode not in algorithms:
+    def _validate_input(self, X: pd.DataFrame, y_t: str) -> None:
+        if y_t not in X.columns:
+            raise ValueError(f"Target variable {y_t!r} is not in X.columns.")
+        if len(X) <= self.lags:
             raise ValueError(
-                f"Unknown HMML mode={mode!r}. Use 'exhaustive' or 'genetic'."
+                f"HMML requires more rows than lags; got n={len(X)}, "
+                f"lags={self.lags}."
             )
+        if X.isna().any().any():
+            raise ValueError("HMMLRunner received NaNs.")
+        if not all(np.issubdtype(dtype, np.number) for dtype in X.dtypes):
+            raise ValueError("HMMLRunner expects numeric columns only.")
+        if not np.isfinite(X.to_numpy()).all():
+            raise ValueError("HMMLRunner received non-finite values.")
 
-        self.HMML = algorithms[mode]
-        
-    def run_hmml(self, X: pd.DataFrame, y_t: str):
+    def _beta_matrix(
+        self,
+        result: dict,
+        columns: pd.Index,
+        adjacency: np.ndarray,
+    ) -> pd.DataFrame:
+        beta = np.zeros((len(columns), self.lags), dtype=float)
+        beta_i = result.get("beta_i")
+
+        active = adjacency.astype(bool)
+        if beta_i is None and active.any():
+            raise RuntimeError("HMML selected parents but returned no beta coefficients.")
+
+        if beta_i is not None:
+            expected = int(active.sum()) * self.lags
+            values = np.asarray(beta_i, dtype=float).reshape(-1)
+            if values.size != expected:
+                raise RuntimeError(
+                    "HMML beta length is inconsistent with adjacency and lag count."
+                )
+            beta[active, :] = values.reshape(int(active.sum()), self.lags)
+
+        if not np.isfinite(beta).all():
+            raise RuntimeError("HMML returned non-finite beta coefficients.")
+
+        return pd.DataFrame(
+            beta.T,
+            index=[f"Lag_{lag}" for lag in range(1, self.lags + 1)],
+            columns=columns,
+        )
+
+    def get_betas_and_adjacency(
+        self,
+        X: pd.DataFrame,
+        y_t: str,
+    ) -> tuple[pd.DataFrame, np.ndarray]:
+        """Fit HMML once and return beta shaped (lags, variables)."""
+        self._validate_input(X, y_t)
 
         target_indices = [X.columns.get_loc(y_t)]
-        hmmlga = self.HMML(np.transpose(X.to_numpy()), self.lags, [self.distribution], target_indices)
-        return hmmlga.fit()
+        model = self._algorithm(
+            X.to_numpy(dtype=float).T,
+            self.lags,
+            [self.distribution],
+            target_indices,
+        )
+        results = model.fit()
 
-    def transform_beta_matrix(self,result_dict,X_columns):
-        beta = np.zeros([len(X_columns), self.lags])
-
-        if "beta_i" in result_dict.keys():
-            beta_i = result_dict["beta_i"]
-            sequence = result_dict["adjacency"]
-
-            if beta_i is not None:
-                beta[sequence.astype(bool), :] = beta_i.reshape(np.count_nonzero(sequence), self.lags)
-
-        columns = [f"Lag_{lag}" for lag in range(1,self.lags+1)]
-        return pd.DataFrame(beta,index=X_columns, columns=columns)
-
-    def get_betas_and_adjacency(self, X: pd.DataFrame, y_t: str):
-        if y_t not in X.columns:
-            raise ValueError(f"Target variable {y_t!r} is not in X.columns")
-
-        if X.isna().any().any():
-            raise ValueError("HMMLRunner received NaNs. Drop or impute missing values first.")
-
-        if not all(np.issubdtype(dtype, np.number) for dtype in X.dtypes):
-            raise ValueError("HMMLRunner expects all columns to be numeric.")
-
-        original_distribution = self.distribution
-
-        self.used_distribution = original_distribution
-        self.used_fallback = False
-
-        results = self.run_hmml(X, y_t=y_t)
-
-        if len(results) == 0:
-            self.used_fallback = True
-            self.used_distribution = "gaussian"
-
-            try:
-                self.distribution = "gaussian"
-                results = self.run_hmml(X, y_t=y_t)
-            finally:
-                self.distribution = original_distribution
-
-        if len(results) == 0:
+        if not results:
             raise RuntimeError(
-                f"HMML returned no results for target={y_t}, "
-                f"lags={self.lags}, requested_distribution={self.requested_distribution}, "
-                f"used_distribution={self.used_distribution}"
+                f"HMML returned no result for target={y_t!r}, "
+                f"lags={self.lags}, distribution={self.distribution!r}."
             )
 
-        adjacency = results[0]["adjacency"]
-        betas = self.transform_beta_matrix(results[0], X.columns).T
+        result = results[0]
+        if "adjacency" not in result:
+            raise RuntimeError("HMML result does not contain adjacency.")
 
-        return betas, adjacency
+        adjacency = np.asarray(result["adjacency"]).reshape(-1)
+        if adjacency.size != X.shape[1]:
+            raise RuntimeError(
+                "HMML adjacency length does not match the number of variables."
+            )
+        if not np.isfinite(adjacency).all():
+            raise RuntimeError("HMML returned non-finite adjacency values.")
+
+        adjacency = (adjacency != 0).astype(int)
+        beta = self._beta_matrix(result, X.columns, adjacency)
+        return beta, adjacency

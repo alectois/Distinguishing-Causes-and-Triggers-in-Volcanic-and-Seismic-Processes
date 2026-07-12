@@ -220,6 +220,33 @@ def catalogue_event_rate_state(
 def _numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce")
 
+def positive_log_epsilon(s: pd.Series) -> float:
+    """
+    Estimate the additive epsilon for a positive log transformation.
+
+    The parameter must be estimated on the reference interval and then reused
+    unchanged for the case interval.
+    """
+    x = pd.to_numeric(s, errors="coerce")
+
+    if x.isna().any():
+        raise ValueError(
+            f"Cannot estimate log epsilon because {s.name!r} contains NaNs."
+        )
+
+    if (x < 0).any():
+        raise ValueError(
+            f"Cannot estimate log epsilon because {s.name!r} contains "
+            "negative values."
+        )
+
+    positive = x[x > 0]
+
+    if len(positive) == 0:
+        return 1e-30
+
+    return max(float(positive.quantile(0.01)) * 0.1, 1e-30)
+
 def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
     """
     Log-transform strictly non-negative physical amplitudes.
@@ -232,18 +259,34 @@ def safe_log_positive(s: pd.Series, eps: float | None = None) -> pd.Series:
     if (x < 0).any():
         raise ValueError(f"safe_log_positive received negative values in {s.name!r}")
 
-    positive = x[x > 0]
-
     if eps is None:
-        if len(positive) == 0:
-            eps = 1e-30
-        else:
-            eps = max(float(positive.quantile(0.01)) * 0.1, 1e-30)
+        eps = positive_log_epsilon(x)
 
     return np.log(x.clip(lower=0) + eps)
 
+def fit_cause_trigger_transform_parameters(
+    reference: pd.DataFrame,
+) -> dict:
+    """
+    Fit data-dependent transformation parameters on the pre-case reference
+    interval only.
+    """
+    parameters = {
+        "log_positive_eps": {},
+    }
 
-def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
+    if "teleseismic" in reference.columns:
+        parameters["log_positive_eps"]["teleseismic"] = (
+            positive_log_epsilon(reference["teleseismic"])
+        )
+
+    return parameters
+
+def transform_for_cause_trigger_scaling(
+    final: pd.DataFrame,
+    *,
+    transform_parameters: dict | None = None,
+) -> pd.DataFrame:
     """
     Apply family-aware transformations before StandardScaler.
 
@@ -251,6 +294,16 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     constructing etna_final.csv.
     """
     transformed = final.copy()
+
+    if transform_parameters is None:
+        transform_parameters = fit_cause_trigger_transform_parameters(
+            transformed
+        )
+
+    log_positive_eps = transform_parameters.get(
+        "log_positive_eps",
+        {},
+    )
 
     log_positive_cols = [
         "teleseismic",
@@ -267,7 +320,15 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
 
     for col in log_positive_cols:
         if col in transformed.columns:
-            transformed[col] = safe_log_positive(transformed[col])
+            if col not in log_positive_eps:
+                raise ValueError(
+                    f"Missing reference-fitted log epsilon for {col!r}."
+                )
+
+            transformed[col] = safe_log_positive(
+                transformed[col],
+                eps=float(log_positive_eps[col]),
+            )
 
     for col in log1p_cols:
         if col in transformed.columns:
