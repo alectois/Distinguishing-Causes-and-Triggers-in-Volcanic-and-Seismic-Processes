@@ -6,13 +6,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-try:
-    from whakaari_config import WHAKAARI_LAT, WHAKAARI_LON, WHAKAARI_EQ_RADIUS_KM
-except Exception:
-    WHAKAARI_LAT = -37.52
-    WHAKAARI_LON = 177.18
-    WHAKAARI_EQ_RADIUS_KM = np.nan
-
 def _save_current_figure(fig, filename, save_dir="figures", formats=("pdf", "png"), dpi=450):
     """Save every figure as PDF and PNG under figures/ by default."""
     if save_dir is None or filename is None:
@@ -77,25 +70,25 @@ def set_thesis_style():
 
 WHAKAARI_ALL_COLS = [
     "hydro_2_5",
-    "ratio_4p5_8_over_8_16",
+    "spectral_log_ratio_4p5_8_over_8_16",
     "event_rate_2_5",
     "effect_tremor_5_15",
-    "rain_12h_sum",
+    "rainfall_mm",
     "pressure_drop",
-    "GNSS_deformation",
+    "GNSS_deformation_rate",
 ]
 
 WHAKAARI_SEISMIC_COLS = [
     "hydro_2_5",
-    "ratio_4p5_8_over_8_16",
+    "spectral_log_ratio_4p5_8_over_8_16",
     "event_rate_2_5",
     "effect_tremor_5_15",
 ]
 
 WHAKAARI_EXTERNAL_COLS = [
-    "rain_12h_sum",
+    "rainfall_mm",
     "pressure_drop",
-    "GNSS_deformation",
+    "GNSS_deformation_rate",
 ]
 
 WHAKAARI_LOG_Y_COLS = {
@@ -107,9 +100,9 @@ WHAKAARI_AXIS_LABELS = {
         "Hydrothermal RMS, 2–5 Hz",
         "RMS velocity"
     ),
-    "ratio_4p5_8_over_8_16": (
-        "Spectral ratio",
-        "Ratio"
+    "spectral_log_ratio_4p5_8_over_8_16": (
+        "Past-smoothed spectral contrast, 4.5–8 / 8–16 Hz",
+        "Log amplitude ratio",
     ),
     "event_rate_2_5": (
         "STA/LTA event rate, 2–5 Hz",
@@ -119,25 +112,25 @@ WHAKAARI_AXIS_LABELS = {
         "Tremor anomaly (Effect), 5–15 Hz",
         "log-RMS excess"
     ),
-    "rain_12h_sum": (
-        "12-hour rainfall sum",
-        "mm"
+    "rainfall_mm": (
+        "Hourly precipitation",
+        "mm",
     ),
     "pressure_drop": (
         "Atmospheric pressure drop",
         "hPa"
     ),
-    "GNSS_deformation": (
-        "GNSS deformation",
-        "m"
+    "GNSS_deformation_rate": (
+        "Lagged daily GNSS deformation change",
+        "m day⁻¹",
     ),
 
     "hydro_2_5_scaled": (
         "Hydrothermal RMS, 2–5 Hz",
         "Std. value"
     ),
-    "ratio_4p5_8_over_8_16_scaled": (
-        "Spectral ratio",
+    "spectral_log_ratio_4p5_8_over_8_16_scaled": (
+        "Past-smoothed spectral contrast, 4.5–8 / 8–16 Hz",
         "Std. value"
     ),
     "event_rate_2_5_scaled": (
@@ -148,16 +141,16 @@ WHAKAARI_AXIS_LABELS = {
         "Tremor anomaly (Effect), 5–15 Hz",
         "Std. value"
     ),
-    "rain_12h_sum_scaled": (
-        "12-hour rainfall sum",
+    "rainfall_mm_scaled": (
+        "Hourly precipitation",
         "Std. value"
     ),
     "pressure_drop_scaled": (
         "Atmospheric pressure drop",
         "Std. value"
     ),
-    "GNSS_deformation_scaled": (
-        "GNSS deformation",
+    "GNSS_deformation_rate_scaled": (
+        "Lagged daily GNSS deformation change",
         "Std. value"
     ),
 }
@@ -258,13 +251,13 @@ def _plot_whakaari_group(
         if col in WHAKAARI_LOG_Y_COLS:
             y = y.where(y > 0)
 
-        drawstyle = "steps-post" if col == "GNSS_deformation" else "default"
+        drawstyle = "steps-post" if col == "GNSS_deformation_rate" else "default"
 
         ax.plot(
             df.index,
             y,
             color=THESIS_COLORS["series"],
-            linewidth=max(line_width, 0.72) if col == "GNSS_deformation" else line_width,
+            linewidth=max(line_width, 0.72) if col == "GNSS_deformation_rate" else line_width,
             drawstyle=drawstyle,
             alpha=0.98,
             antialiased=True,
@@ -985,7 +978,7 @@ def plot_loglog_distributions(
         ax.set_ylabel("Density")
         ax.grid(True, which="both", alpha=0.14, linewidth=0.42)
 
-        if col in {"ratio_4p5_8_over_8_16", "GNSS_deformation"}:
+        if col in {"spectral_log_ratio_4p5_8_over_8_16", "GNSS_deformation_rate"}:
             text_x, text_y, text_ha, text_va = 0.04, 0.06, "left", "bottom"
         else:
             text_x, text_y, text_ha, text_va = 0.98, 0.95, "right", "top"

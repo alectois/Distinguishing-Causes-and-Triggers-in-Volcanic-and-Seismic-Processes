@@ -13,11 +13,16 @@ from cause_trigger import (
     diagnostics_to_dataframe,
     find_effect_split,
     run_cause_trigger,
+    validate_regular_time_index,
 )
 from parameter_extraction import find_parameters
+from etna.etna_dataset import (
+    transform_for_cause_trigger_scaling,
+    standard_scale_dataframe,
+)
 
 
-EFFECT = "local_event_rate_anomaly_scaled"
+EFFECT = "local_event_rate_response_scaled"
 
 DEFAULT_RUN_SPECS = (
     {"run": "hmml_backend_beta", "backend": "hmml"},
@@ -54,7 +59,7 @@ class EtnaWorkflowConfig:
     # Used only when PCMCI/PCMCI+ select parents and beta_star is refitted.
     refit_alpha: float = 1.0
     refit_cv: bool = True
-    refit_cv_folds: int = 5
+    refit_cv_folds: int = 3
 
     # PCMCI / PCMCI+ settings.
     pcmci_pc_alpha: float = 0.05
@@ -107,6 +112,7 @@ def load_model_frame(
     time_col: str = "time",
     drop_columns: Sequence[str] = ("station",),
     include_columns: Optional[Sequence[str]] = None,
+    require_complete: bool = True,
 ) -> pd.DataFrame:
     csv_path = Path(csv_path)
     df = pd.read_csv(csv_path)
@@ -140,12 +146,37 @@ def load_model_frame(
         duplicates = model.index[model.index.duplicated()].unique()[:5]
         raise ValueError(f"Model dataframe has duplicate timestamps, e.g. {list(duplicates)}")
 
-    if model.isna().any().any():
+    if require_complete and model.isna().any().any():
         missing = model.isna().sum()
         missing = missing[missing > 0].sort_values(ascending=False)
         raise ValueError(f"Model dataframe contains NaNs:\n{missing}")
 
     return model
+
+def prepare_case_model_frame(
+    raw_case: pd.DataFrame,
+) -> pd.DataFrame:
+    validate_regular_time_index(raw_case, expected_step="1h")
+
+    if raw_case.isna().any().any():
+        missing = raw_case.isna().sum()
+        missing = missing[missing > 0].sort_values(ascending=False)
+        raise ValueError(
+            "Etna case interval contains missing values before scaling:\n"
+            f"{missing}"
+        )
+
+    transformed = transform_for_cause_trigger_scaling(
+        raw_case.copy()
+    )
+    scaled = standard_scale_dataframe(transformed)
+
+    scaled.columns = [
+        f"{column}_scaled"
+        for column in scaled.columns
+    ]
+    scaled.index = raw_case.index
+    return scaled
 
 def case_study_interval(
     df_full: pd.DataFrame,
@@ -155,9 +186,15 @@ def case_study_interval(
     post_hours: int,
 ) -> pd.DataFrame:
     event_time = pd.Timestamp(event_time)
-    case_start = event_time - pd.Timedelta(days=int(pre_days))
-    case_end = event_time + pd.Timedelta(hours=int(post_hours))
-    return df_full.loc[case_start:case_end].copy()
+    event_hour = event_time.floor("h")
+
+    case_start = event_hour - pd.Timedelta(days=int(pre_days))
+    case_end = event_hour + pd.Timedelta(hours=int(post_hours))
+    mask = (
+        (df_full.index >= case_start)
+        & (df_full.index < case_end)
+    )
+    return df_full.loc[mask].copy()
 
 def model_overview(df: pd.DataFrame, effect: str) -> dict:
     """Return compact dataframe/target diagnostics for notebook display."""
@@ -241,10 +278,10 @@ def reference_parameter_table(
     fallback_distribution: str = "gaussian",
 ) -> pd.DataFrame:
     """
-    Return VAR-AIC/VAR-BIC lag references and distribution metadata.
+    Return VAR-AIC and VAR-BIC lag references.
 
-    These values are reported as metadata only. The final interpretation should
-    come from the physically defined case window and the lag grid.
+    VAR-AIC supplies the primary paper-compatible HMML lag. VAR-BIC and the
+    explicit lag grid are reported as secondary references and sensitivity checks.
     """
     rows = [
         select_parameters(
@@ -840,19 +877,14 @@ def split_parameter_grid(
     min_I1_lengths: Iterable[int] = (48,),
     min_I2_lengths: Iterable[int] = (30,),
 ) -> pd.DataFrame:
-    """
-    Audit split sensitivity to case window and minimum interval lengths.
-
-    This should be used before backend runs. It reports where the automatic
-    Cause--Trigger split falls under physically motivated window choices.
-    """
     event_time = pd.Timestamp(event_time)
+    event_hour = event_time.floor("h")
     rows = []
 
     for pre in pre_days:
         for post in post_hours:
-            case_start = event_time - pd.Timedelta(days=int(pre))
-            case_end = event_time + pd.Timedelta(hours=int(post))
+            case_start = event_hour - pd.Timedelta(days=int(pre))
+            case_end = event_hour + pd.Timedelta(hours=int(post))
             df = df_full.loc[case_start:case_end].copy()
 
             for min_I1 in min_I1_lengths:

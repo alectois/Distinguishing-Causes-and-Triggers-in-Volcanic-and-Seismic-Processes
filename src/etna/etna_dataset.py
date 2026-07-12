@@ -13,7 +13,12 @@ def merge_data(base, ext, base_time, ext_time, value_cols, tolerance_hours):
 
     base = base.dropna(subset=[base_time]).sort_values(base_time)
     ext = ext.dropna(subset=[ext_time]).sort_values(ext_time)
+    missing_value_cols = sorted(set(value_cols) - set(ext.columns))
 
+    if missing_value_cols:
+        raise ValueError(
+            f"External dataframe is missing requested columns: {missing_value_cols}"
+        )
     keep = [ext_time] + [c for c in value_cols if c in ext.columns]
     ext = ext[keep].copy()
 
@@ -74,6 +79,7 @@ def load_etna_event_catalog_xls(
 
     numeric_cols = [
         "MD",
+        "ML",
         "LAT",
         "LON",
         "DEPSL",
@@ -103,118 +109,113 @@ def load_etna_event_catalog_xls(
 
     return df
 
-def catalogue_event_rate_anomaly(
+def catalogue_hourly_counts(
     catalog_df: pd.DataFrame,
     master_index: pd.DatetimeIndex,
-    *,
-    baseline_window: int = 24,
-    min_periods: int = 12,
 ) -> pd.Series:
-    """
-    Build the Etna effect target from located local catalogue events.
-
-    Steps:
-        hourly event count
-        -> log1p(count)
-        -> positive anomaly above past 24 h rolling median
-
-    Output:
-        local_event_rate_anomaly
-    """
     events = catalog_df.copy()
 
     if "timestamp" not in events.columns:
         if "time" in events.columns:
             events = events.rename(columns={"time": "timestamp"})
         else:
-            raise ValueError("Catalogue dataframe must contain 'timestamp' or 'time'.")
+            raise ValueError(
+                "Catalogue dataframe must contain 'timestamp' or 'time'."
+            )
 
-    events["timestamp"] = pd.to_datetime(events["timestamp"], utc=True, errors="coerce")
+    events["timestamp"] = pd.to_datetime(
+        events["timestamp"],
+        utc=True,
+        errors="coerce",
+    )
     events = events.dropna(subset=["timestamp"]).sort_values("timestamp")
 
-    master_index = pd.DatetimeIndex(pd.to_datetime(master_index, utc=True))
+    master_index = pd.DatetimeIndex(
+        pd.to_datetime(master_index, utc=True)
+    )
 
-    hourly_count = (
+    return (
         events
         .set_index("timestamp")
-        .assign(count=1)
-        ["count"]
+        .assign(count=1)["count"]
         .resample("1h")
         .sum()
         .reindex(master_index, fill_value=0)
         .astype(float)
     )
 
-    log_count = np.log1p(hourly_count)
+def catalogue_event_rate_response(
+    catalog_df: pd.DataFrame,
+    master_index: pd.DatetimeIndex,
+    *,
+    response_window: int = 6,
+    baseline_window: int = 24,
+    min_periods: int = 12,
+) -> pd.Series:
+    """
+    Short-term local seismic response.
+
+    At time t:
+    - response window: counts from t-5 through t;
+    - baseline: earlier six-hour count windows ending at least six hours
+      before t.
+
+    The current response window therefore does not overlap with the
+    contemporaneous background-state window.
+    """
+    hourly_count = catalogue_hourly_counts(catalog_df, master_index)
+
+    recent_count = hourly_count.rolling(
+        window=response_window,
+        min_periods=1,
+    ).sum()
+
+    log_recent_count = np.log1p(recent_count)
 
     past_baseline = (
-        log_count
-        .rolling(window=baseline_window, min_periods=min_periods)
+        log_recent_count
+        .shift(response_window)
+        .rolling(
+            window=baseline_window,
+            min_periods=min_periods,
+        )
         .median()
-        .shift(1)
     )
 
-    anomaly = (log_count - past_baseline).clip(lower=0)
-    anomaly.name = "local_event_rate_anomaly"
-
-    return anomaly
+    response = (log_recent_count - past_baseline).clip(lower=0)
+    response.name = "local_event_rate_response"
+    return response
 
 def catalogue_event_rate_state(
     catalog_df: pd.DataFrame,
     master_index: pd.DatetimeIndex,
     *,
     state_window: int = 48,
-    min_periods: int = 12,
+    exclusion_hours: int = 6,
+    min_periods: int = 24,
 ) -> pd.Series:
     """
-    Build a past-only Etna catalogue seismicity state.
+    Past local-seismicity state.
 
-    Steps:
-        hourly event count
-        -> past-only rolling 48 h event-count sum
-        -> log1p
-
-    The value at time t uses only previous hours:
-        count_{t-48}, ..., count_{t-1}
-
-    Output:
-        local_event_rate_state
+    At time t the state uses only counts ending six hours before t.
+    It therefore excludes the six-hour window used by the response proxy.
     """
-    events = catalog_df.copy()
-
-    if "timestamp" not in events.columns:
-        if "time" in events.columns:
-            events = events.rename(columns={"time": "timestamp"})
-        else:
-            raise ValueError("Catalogue dataframe must contain 'timestamp' or 'time'.")
-
-    events["timestamp"] = pd.to_datetime(events["timestamp"], utc=True, errors="coerce")
-    events = events.dropna(subset=["timestamp"]).sort_values("timestamp")
-
-    master_index = pd.DatetimeIndex(pd.to_datetime(master_index, utc=True))
-
-    hourly_count = (
-        events
-        .set_index("timestamp")
-        .assign(count=1)
-        ["count"]
-        .resample("1h")
-        .sum()
-        .reindex(master_index, fill_value=0)
-        .astype(float)
-    )
+    hourly_count = catalogue_hourly_counts(catalog_df, master_index)
 
     past_count_sum = (
         hourly_count
-        .rolling(window=state_window, min_periods=min_periods)
+        .shift(exclusion_hours)
+        .rolling(
+            window=state_window,
+            min_periods=min_periods,
+        )
         .sum()
-        .shift(1)
     )
 
     state = np.log1p(past_count_sum)
     state.name = "local_event_rate_state"
-
     return state
+
 
 def _numeric_series(df: pd.DataFrame, col: str) -> pd.Series:
     return pd.to_numeric(df[col], errors="coerce")
@@ -256,7 +257,7 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     ]
 
     log1p_cols = [
-        "rain_6h_sum",
+        "rainfall_mm",
         "CO2_3",
     ]
 
@@ -297,6 +298,17 @@ def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         missing = missing[missing > 0].sort_values(ascending=False)
         raise ValueError(f"Cannot standardize because transformed data contain NaNs:\n{missing}")
 
+    if not np.isfinite(numeric.to_numpy()).all():
+        bad_cols = [
+            col
+            for col in numeric.columns
+            if not np.isfinite(numeric[col].to_numpy()).all()
+        ]
+        raise ValueError(
+            "Cannot standardize because transformed data contain infinite values: "
+            f"{bad_cols}"
+        )
+    
     constant_cols = [
         col for col in numeric.columns
         if numeric[col].nunique(dropna=True) <= 1
@@ -313,7 +325,7 @@ def standard_scale_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         columns=numeric.columns,
     )
 
-def create_etna_final_dataset(
+def create_etna_dataset(
     wave_df: pd.DataFrame,
     station_name: str,
     *,
@@ -323,7 +335,7 @@ def create_etna_final_dataset(
     etnagas_df: pd.DataFrame | None = None,
     etnagas_cols: list[str] | None = None,
     etnagas_buffer_hours: int = 6,
-    etnagas_tolerance_hours: int = 6,
+    etnagas_tolerance_hours: int = 1,
     weather_df: pd.DataFrame | None = None,
     weather_cols: list[str] | None = None,
     weather_buffer_hours: int = 6,
@@ -351,48 +363,73 @@ def create_etna_final_dataset(
             raise KeyError(f"Missing '{c}' in waveform dataframe.")
         df[c] = pd.to_numeric(df[c], errors="coerce")
 
-    if start_time is not None:
-        df = df[df["time"] >= pd.to_datetime(start_time, utc=True)]
-    if end_time is not None:
-        df = df[df["time"] < pd.to_datetime(end_time, utc=True)]
+    analysis_start = (
+        pd.to_datetime(start_time, utc=True)
+        if start_time is not None
+        else df["time"].min().floor("h")
+    )
 
-    base_cols = [
-        "time",
-        *seismic_cols,
-    ]
+    analysis_end = (
+        pd.to_datetime(end_time, utc=True)
+        if end_time is not None
+        else df["time"].max().ceil("h") + pd.Timedelta(hours=1)
+    )
 
-    base = df[base_cols].copy()
+    df = df[
+        (df["time"] >= analysis_start)
+        & (df["time"] < analysis_end)
+    ].copy()
+
+    master_index = pd.date_range(
+        start=analysis_start,
+        end=analysis_end,
+        freq="1h",
+        inclusive="left",
+        tz="UTC",
+    )
+
+    base = (
+        df
+        .set_index("time")[seismic_cols]
+        .resample("1h")
+        .mean()
+        .reindex(master_index)
+        .rename_axis("time")
+        .reset_index()
+    )
 
     if catalog_df is None:
         raise ValueError(
             "catalog_df is required because the final Etna effect is "
-            "local_event_rate_anomaly from the Etna event catalogue."
+            "local_event_rate_response from the Etna event catalogue."
         )
 
     base["local_event_rate_state"] = catalogue_event_rate_state(
         catalog_df,
         pd.DatetimeIndex(base["time"]),
         state_window=48,
-        min_periods=12,
+        exclusion_hours=6,
+        min_periods=24,
     ).to_numpy()
 
-    base["local_event_rate_anomaly"] = catalogue_event_rate_anomaly(
+    base["local_event_rate_response"] = catalogue_event_rate_response(
         catalog_df,
         pd.DatetimeIndex(base["time"]),
+        response_window=6,
         baseline_window=24,
         min_periods=12,
     ).to_numpy()
 
-    # Drop only the first rows where past-only state/anomaly construction is undefined.
+    # Drop only the first rows where past-only state/response construction is undefined.
     base = base.dropna(
-        subset=["local_event_rate_state", "local_event_rate_anomaly"]
+        subset=["local_event_rate_state", "local_event_rate_response"]
     ).reset_index(drop=True)
 
     model_cols = [
         "time",
         "teleseismic",
         "local_event_rate_state",
-        "local_event_rate_anomaly",
+        "local_event_rate_response",
     ]
 
     base["station"] = station_name
@@ -434,72 +471,28 @@ def create_etna_final_dataset(
             tolerance_hours=weather_tolerance_hours,
         )
 
-    # final sorted dataframe
-    final = base.sort_values("time").reset_index(drop=True)
+    analysis = base.sort_values("time").reset_index(drop=True)
 
-    # ---- final transformation + StandardScaler ----
-    # Raw variables remain unchanged in final_raw.
-    # The scaled dataset is built from a transformed copy.
-
-    exclude_from_scaling = ["station", "time"]
-
-    scale_input = transform_for_cause_trigger_scaling(final)
-
-    scale_cols = [
-        c for c in scale_input.columns
-        if c not in exclude_from_scaling
+    unexpected_suffix_columns = [
+        column
+        for column in analysis.columns
+        if column.endswith("_scaled")
     ]
 
-    scale_input_numeric = scale_input[scale_cols].copy()
-    scaled_numeric = standard_scale_dataframe(scale_input_numeric)
-
-    final_scaled = final[["time"]].copy()
-
-    for col in scale_cols:
-        final_scaled[col + "_scaled"] = scaled_numeric[col]
-
-    if final.isna().any().any():
-        print("Warning: final dataset contains missing values.")
-        print(final.isna().mean().sort_values())
-
-    final_raw = final.copy()
-
-    unexpected_raw_suffix_cols = [
-        c for c in final_raw.columns
-        if c.endswith("_raw")
-    ]
-
-    if unexpected_raw_suffix_cols:
+    if unexpected_suffix_columns:
         raise ValueError(
-            "etna_raw should not contain *_raw columns after the Etna-Whakaari "
-            f"schema cleanup. Found: {unexpected_raw_suffix_cols}"
-        )
-
-    non_scaled_model_cols = [
-        c for c in final_scaled.columns
-        if c != "time" and not c.endswith("_scaled")
-    ]
-
-    if non_scaled_model_cols:
-        raise ValueError(
-            "etna_final should contain only 'time' and *_scaled variables. "
-            f"Found unexpected columns: {non_scaled_model_cols}"
+            "Etna analysis dataset must remain unstandardized. "
+            f"Found scaled columns: {unexpected_suffix_columns}"
         )
 
     if output_dir is not None:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        raw_path = output_dir / "etna_raw.csv"
-        final_path = output_dir / "etna_final.csv"
+        output_path = output_dir / "etna_dataset.csv"
+        analysis.to_csv(output_path, index=False)
 
-        final_raw.to_csv(raw_path, index=False)
-        final_scaled.to_csv(final_path, index=False)
-
-        print("Saved:", raw_path)
-        print("Saved:", final_path)
-
-    return final_raw, final_scaled
+    return analysis
 
 def load_etnagas_csv(path, value_cols):
     df = pd.read_csv(path).replace("NULL", np.nan)
@@ -514,18 +507,51 @@ def load_etnagas_csv(path, value_cols):
         .dropna(subset=["timestamp"])
         .sort_values("timestamp")
         .drop_duplicates(subset=["timestamp"], keep="first")
-        .reset_index(drop=True)
     )
 
     for col in source_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df[col] = pd.to_numeric(
+            df[col],
+            errors="coerce",
+        )
+
+    hourly = (
+        df
+        .set_index("timestamp")
+        .resample("1h")
+        .mean()
+    )
+
+    continuous_cols = [
+        column
+        for column in source_cols
+        if column != "Patm_3"
+    ]
+
+    if continuous_cols:
+        hourly[continuous_cols] = hourly[continuous_cols].interpolate(
+            method="time",
+            limit=1,
+            limit_area="inside",
+        )
+
+    if "Patm_3" in hourly.columns:
+        pressure = hourly["Patm_3"].interpolate(
+            method="time",
+            limit=1,
+            limit_area="inside",
+        )
+        hourly["Patm_3"] = pressure
+
+    df = hourly.reset_index()
 
     if "pressure_drop" in value_cols:
         if "Patm_3" not in df.columns:
-            raise KeyError("Cannot compute pressure_drop because 'Patm_3' is missing.")
-        df["pressure_change"] = df["Patm_3"].diff()
-        df["pressure_drop"] = -df["pressure_change"]
-        df["pressure_drop"] = df["pressure_drop"].fillna(0)
+            raise KeyError(
+                "Cannot compute pressure_drop because 'Patm_3' is missing."
+            )
+
+        df["pressure_drop"] = -df["Patm_3"].diff()
 
     final_cols = ["timestamp"] + [c for c in value_cols if c in df.columns]
     return df[final_cols]
@@ -556,11 +582,9 @@ def load_openmeteo_etna_weather(
 
     weather["rainfall_mm"] = pd.to_numeric(weather["rainfall_mm"], errors="coerce")
 
-    weather["rain_6h_sum"] = (
-        weather["rainfall_mm"]
-        .fillna(0)
-        .rolling(window=6, min_periods=1)
-        .sum()
-    )
-
-    return weather[["timestamp", "rain_6h_sum"]]
+    if weather["rainfall_mm"].isna().any():
+        missing = int(weather["rainfall_mm"].isna().sum())
+        raise ValueError(
+            f"Open-Meteo Etna precipitation contains {missing} missing values."
+        )
+    return weather[["timestamp", "rainfall_mm"]]

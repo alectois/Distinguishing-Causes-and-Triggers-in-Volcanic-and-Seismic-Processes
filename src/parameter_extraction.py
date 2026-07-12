@@ -14,17 +14,36 @@ Zenodo. DOI: 10.5281/zenodo.15109084
 import numpy as np
 import pandas as pd
 from statsmodels.tsa.api import VAR
+import warnings
 
 
-def select_var_lag(df, max_lags=12, criterion="aic", fallback_lag=1):
+def select_var_lag(
+    df,
+    max_lags=12,
+    criterion="aic",
+    fallback_lag=1,
+):
     """
-    Select the optimal lag for a multivariate time series using VAR.
+    Select the optimal VAR lag.
 
-    Returns fallback_lag if VAR selection fails or returns an invalid lag.
+    The fallback is retained for reproducibility, but failures are reported.
     """
+    valid_criteria = {"aic", "bic", "hqic", "fpe"}
+
+    if criterion not in valid_criteria:
+        raise ValueError(
+            f"criterion must be one of {sorted(valid_criteria)}, "
+            f"got {criterion!r}"
+        )
+
     numeric_df = df.select_dtypes(include=[np.number]).dropna()
 
     if len(numeric_df) <= max_lags + 2:
+        warnings.warn(
+            "Too few rows for requested VAR maximum lag; "
+            f"using fallback lag {fallback_lag}.",
+            RuntimeWarning,
+        )
         return fallback_lag
 
     try:
@@ -33,11 +52,21 @@ def select_var_lag(df, max_lags=12, criterion="aic", fallback_lag=1):
         lag = getattr(selected, criterion)
 
         if lag is None or np.isnan(lag) or lag < 1:
+            warnings.warn(
+                f"VAR-{criterion.upper()} returned invalid lag {lag!r}; "
+                f"using fallback lag {fallback_lag}.",
+                RuntimeWarning,
+            )
             return fallback_lag
 
         return int(lag)
 
-    except Exception:
+    except Exception as exc:
+        warnings.warn(
+            f"VAR-{criterion.upper()} lag selection failed: {exc}. "
+            f"Using fallback lag {fallback_lag}.",
+            RuntimeWarning,
+        )
         return fallback_lag
 
 

@@ -16,7 +16,6 @@ return causes, trigger candidates, accepted triggers, cause-trigger pairs, and d
 
 import warnings
 from dataclasses import dataclass
-from typing import Optional
 import numpy as np
 import pandas as pd
 from scipy.stats import f
@@ -24,6 +23,64 @@ from sklearn.linear_model import LinearRegression, Ridge, RidgeCV
 from sklearn.model_selection import TimeSeriesSplit
 from hmml_runner import HMMLRunner
 from pcmci_runner import PCMCIBackend
+
+def paper_abs_mean_increase(
+    mean_after: float,
+    mean_before: float,
+) -> bool:
+    """
+    Numerically stable implementation of the paper condition:
+
+        abs(E[x] in I2) > abs(E[x] in I1)
+
+    The tolerance only prevents machine-precision noise from being interpreted
+    as a strict increase. It does not change the mathematical criterion.
+    """
+    mean_after = float(mean_after)
+    mean_before = float(mean_before)
+
+    difference = abs(mean_after) - abs(mean_before)
+    scale = max(1.0, abs(mean_after), abs(mean_before))
+    tolerance = 100.0 * np.finfo(float).eps * scale
+
+    return difference > tolerance
+
+def validate_regular_time_index(
+    df: pd.DataFrame,
+    expected_step: str = "1h",
+) -> None:
+    """
+    Require a complete, strictly regular time grid.
+
+    Lagged rows must represent actual consecutive time steps rather than
+    consecutive surviving dataframe rows.
+    """
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise TypeError("Expected a pandas DatetimeIndex.")
+
+    if not df.index.is_monotonic_increasing:
+        raise ValueError("Time index is not sorted.")
+
+    if df.index.has_duplicates:
+        duplicates = df.index[df.index.duplicated()].unique()[:5]
+        raise ValueError(
+            f"Time index contains duplicate timestamps, e.g. {list(duplicates)}"
+        )
+
+    expected_delta = pd.Timedelta(expected_step)
+    deltas = df.index.to_series().diff().dropna()
+
+    invalid = deltas[deltas != expected_delta]
+
+    if not invalid.empty:
+        examples = {
+            timestamp: str(delta)
+            for timestamp, delta in invalid.head(5).items()
+        }
+        raise ValueError(
+            "Time index is not a complete regular grid. "
+            f"Expected step={expected_delta}; irregular transitions={examples}"
+        )
 
 @dataclass
 class CauseTriggerConfig:
@@ -49,7 +106,7 @@ class CauseTriggerConfig:
     # "ridge"          = stable coefficient refit under collinearity
     refit_alpha: float = 1.0
     refit_cv: bool = True
-    refit_cv_folds: int = 5
+    refit_cv_folds: int = 3
 
     parameter_source: str = "manual"
     selected_distribution: str = None
@@ -77,6 +134,42 @@ class CauseTriggerConfig:
     # If True, PCMCI+ tau=0 source-target links are allowed as trigger candidates.
     # They are not added to B2 and are not used to construct V.
     pcmci_plus_use_contemporaneous_triggers: bool = False
+
+    def __post_init__(self):
+        scalar_fields = {
+            "lags": self.lags,
+            "alpha": self.alpha,
+            "min_I1_length": self.min_I1_length,
+            "min_I2_length": self.min_I2_length,
+            "pcmci_pc_alpha": self.pcmci_pc_alpha,
+            "pcmci_alpha_level": self.pcmci_alpha_level,
+        }
+
+        for name, value in scalar_fields.items():
+            if isinstance(value, tuple):
+                raise TypeError(
+                    f"{name} must be a scalar, not tuple {value!r}. "
+                    "Check for a trailing comma in the notebook assignment."
+                )
+
+        if self.pcmci_fdr_method not in {None, "fdr_bh"}:
+            raise ValueError(
+                "pcmci_fdr_method must be None or 'fdr_bh'."
+            )
+
+        valid_cond_ind_tests = {
+            "parcorr",
+            "robust_parcorr",
+            "gpdc",
+            "cmiknn",
+        }
+
+        if self.pcmci_cond_ind_test not in valid_cond_ind_tests:
+            raise ValueError(
+                "Unsupported conditional-independence test: "
+                f"{self.pcmci_cond_ind_test!r}"
+            )
+    
 
 @dataclass
 class BackendResult:
@@ -185,10 +278,17 @@ def find_effect_split(
 
         score = abs_mean_2 - abs_mean_1
 
-        if score <= 0:
+        if not paper_abs_mean_increase(mean_2, mean_1):
             continue
 
         if score > best_score:
+            distance_to_lower = split_index - lower
+            distance_to_upper = upper - split_index
+
+            boundary_distance = min(
+                distance_to_lower,
+                distance_to_upper,
+            )
             best_score = score
             best = {
                 "split_index": int(split_index),
@@ -201,7 +301,9 @@ def find_effect_split(
                 "target_abs_mean_difference": float(score),
                 "I1_length": int(len(interval_1)),
                 "I2_length": int(len(interval_2)),
-                "boundary_split": bool(split_index == n - min_I2_length),
+                "boundary_split": bool(boundary_distance == 0),
+                "boundary_distance": int(boundary_distance),
+                "near_boundary": bool(boundary_distance <= 6),
             }
 
     if best is None:
@@ -217,6 +319,8 @@ def find_effect_split(
             "I1_length": None,
             "I2_length": None,
             "boundary_split": None,
+            "boundary_distance": None,
+            "near_boundary": None,
         }
         return out if return_info else None
 
@@ -296,39 +400,44 @@ def build_lagged_design_matrix_for_V(X_values, beta_values, lags, beta_is_ones=F
 
     return V, X_without_trigger_lagged, beta_star
 
-def build_lagged_matrix_for_refit(X_values, lags):
-    """
-    Build lagged matrix with the same column order used by
-    build_lagged_design_matrix_for_V:
+def build_selected_lag_matrix(
+    X: pd.DataFrame,
+    selected_parents: list[str],
+    selected_lags: dict[str, list[int]],
+    max_lag: int,
+):
+    n = len(X)
+    blocks = []
+    terms = []
 
-        [all variables at lag 1, all variables at lag 2, ..., all variables at lag d]
+    for parent in selected_parents:
+        parent_lags = sorted({
+            int(lag)
+            for lag in selected_lags.get(parent, [])
+            if 1 <= int(lag) <= max_lag
+        })
 
-    Returns shape:
-        (n - d) x (p * d)
-    """
-    X_values = np.asarray(X_values, dtype=float)
+        for lag in parent_lags:
+            values = X[parent].to_numpy(dtype=float)
 
-    if X_values.ndim != 2:
-        raise ValueError("X_values must be a 2D array")
+            blocks.append(
+                values[max_lag - lag:n - lag]
+            )
+            terms.append((parent, lag))
 
-    n, p = X_values.shape
+    if not blocks:
+        raise ValueError(
+            "No PCMCI-selected parent-lag terms are available for refitting."
+        )
 
-    if n <= lags:
-        raise ValueError(f"Need len(X) > lags, got len={n}, lags={lags}")
-
-    lagged_blocks = []
-    for k in range(1, lags + 1):
-        X_lag_k = X_values[lags - k : n - k, :]
-        lagged_blocks.append(X_lag_k)
-
-    return np.hstack(lagged_blocks)
-
+    return np.column_stack(blocks), terms
 
 def refit_beta_for_selected_parents(
-    X: pd.DataFrame,
-    y_t: str,
-    selected_parents: list,
-    lags: int,
+    X,
+    y_t,
+    selected_parents,
+    selected_lags,
+    lags,
     alpha: float = 1.0,
     cv: bool = True,
     cv_folds: int = 5,
@@ -354,9 +463,14 @@ def refit_beta_for_selected_parents(
             "nonzero_beta_count": 0,
         }
 
-    X_values = X[selected_parents].to_numpy(dtype=float)
+    X_lagged, selected_terms = build_selected_lag_matrix(
+        X=X,
+        selected_parents=selected_parents,
+        selected_lags=selected_lags,
+        max_lag=lags,
+    )
+
     y_values = X[y_t].iloc[lags:].to_numpy(dtype=float)
-    X_lagged = build_lagged_matrix_for_refit(X_values, lags)
 
     if len(y_values) != X_lagged.shape[0]:
         raise ValueError(
@@ -364,9 +478,22 @@ def refit_beta_for_selected_parents(
             f"X_lagged rows={X_lagged.shape[0]}"
         )
 
-    n_splits = min(cv_folds, X_lagged.shape[0] - 1)
-    use_cv = bool(cv and n_splits >= 2)
-    cv_obj = TimeSeriesSplit(n_splits=n_splits) if use_cv else None
+    n_splits = min(int(cv_folds), 3)
+
+    use_cv = bool(
+        cv
+        and n_splits >= 2
+        and X_lagged.shape[0] > 2 * (lags + 1)
+    )
+
+    cv_obj = (
+        TimeSeriesSplit(
+            n_splits=n_splits,
+            gap=lags,
+        )
+        if use_cv
+        else None
+    )
 
     ridge_alphas = np.logspace(-4, 4, 40)
 
@@ -385,7 +512,21 @@ def refit_beta_for_selected_parents(
             f"expected {X_lagged.shape[1]}"
         )
 
-    beta_matrix = beta_flat.reshape(lags, len(selected_parents))
+    beta_matrix = np.zeros(
+        (lags, len(selected_parents)),
+        dtype=float,
+    )
+
+    parent_index = {
+        parent: index
+        for index, parent in enumerate(selected_parents)
+    }
+
+    for coefficient, (parent, lag) in zip(
+        beta_flat,
+        selected_terms,
+    ):
+        beta_matrix[lag - 1, parent_index[parent]] = coefficient
 
     beta_df = pd.DataFrame(
         beta_matrix,
@@ -404,6 +545,7 @@ def refit_beta_for_selected_parents(
         "n_refit_rows": int(X_lagged.shape[0]),
         "n_refit_features": int(X_lagged.shape[1]),
         "selected_parents": selected_parents,
+        "selected_terms": selected_terms,
         "nonzero_beta_count": int(np.count_nonzero(beta_flat)),
         "beta_abs_max": float(np.max(np.abs(beta_flat))) if beta_flat.size else 0.0,
     }
@@ -610,6 +752,8 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         "split_end_index": None,
         "split_end_timestamp": None,
         "split_boundary_candidate": None,
+        "split_boundary_distance": None,
+        "split_near_boundary": None,
         "target_mean_I1": None,
         "target_mean_I2": None,
     }
@@ -630,6 +774,8 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     result["split_end_index"] = split_end_index
     result["split_score"] = split_info["score"]
     result["split_boundary_candidate"] = split_info["boundary_split"]
+    result["split_boundary_distance"] = split_info["boundary_distance"]
+    result["split_near_boundary"] = split_info["near_boundary"]
     result["target_mean_I1"] = split_info["target_mean_I1"]
     result["target_mean_I2"] = split_info["target_mean_I2"]
 
@@ -672,15 +818,22 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
 
     B_2 = list(discovery_2.parents)
 
-    # Raw backend parents may include the target itself as an autoregressive parent.
-    B_1_raw = list(discovery_1.parents)
-    B_2_raw = list(discovery_2.parents)
+    # Complete predictive parent sets. These may contain the target as an
+    # autoregressive parent and are used when constructing V.
+    B_1_model = list(discovery_1.parents)
+    B_2_model = list(discovery_2.parents)
 
-    # Cause--Trigger candidate sets must exclude the target.
-    # The target autoregressive parent is diagnostically useful, but it is not a
-    # valid cause or trigger candidate in this thesis interpretation.
-    B_1 = [v for v in B_1_raw if v != config.y_t]
-    B_2 = [v for v in B_2_raw if v != config.y_t]
+    # Physical Cause--Trigger candidates must not be the target itself.
+    B_1 = [v for v in B_1_model if v != config.y_t]
+    B_2 = [v for v in B_2_model if v != config.y_t]
+
+    result["autoregressive_parent_in_B2"] = config.y_t in B_2_model
+    result["B_1_raw"] = B_1_model
+    result["B_2_raw"] = B_2_model
+    result["B_1_model"] = B_1_model
+    result["B_2_model"] = B_2_model
+    result["B_1"] = B_1
+    result["B_2"] = B_2
 
     result["autoregressive_parent_in_B2"] = config.y_t in B_2_raw
     result["backend"] = config.causal_backend
@@ -703,7 +856,10 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
     # x_s is in lagged non-target B2 and increases from I1 to I2.
     T_candidates_lagged = []
     for col in B_2:
-        if abs(I_2[col].mean()) > abs(I_1[col].mean()):
+        if paper_abs_mean_increase(
+            I_2[col].mean(),
+            I_1[col].mean(),
+        ):
             T_candidates_lagged.append(col)
 
     # Thesis extension:
@@ -716,14 +872,23 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         config.causal_backend == "pcmci_plus"
         and config.pcmci_plus_use_contemporaneous_triggers
     ):
-        for col in contemporaneous_links.keys():
+        for col, link_info in contemporaneous_links.items():
             if col == config.y_t:
                 continue
+
             if col not in X.columns:
                 continue
 
-            # Keep the original Cause--Trigger increase condition.
-            if abs(I_2[col].mean()) > abs(I_1[col].mean()):
+            if not link_info.get(
+                "eligible_as_trigger_candidate",
+                False,
+            ):
+                continue
+
+            if paper_abs_mean_increase(
+                I_2[col].mean(),
+                I_1[col].mean(),
+            ):
                 T_candidates_contemporaneous.append(col)
 
     # Preserve order and remove duplicates.
@@ -789,10 +954,26 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         }
 
     elif config.v_weighting == "refit":
-        beta_2 = None
+        selected_lags_B2_model = {
+            parent: discovery_2.lags.get(parent, [])
+            for parent in B_2_model
+        }
+
+        beta_2, full_refit_metadata = refit_beta_for_selected_parents(
+            X=I_2,
+            y_t=config.y_t,
+            selected_parents=B_2_model,
+            selected_lags=selected_lags_B2_model,
+            lags=config.lags,
+            alpha=config.refit_alpha,
+            cv=config.refit_cv,
+            cv_folds=config.refit_cv_folds,
+        )
+
         result["refit_metadata"] = {
+            **full_refit_metadata,
             "v_weighting": "refit",
-            "source": "ridge_refit_per_trigger",
+            "source": "ridge_refit_full_B2",
         }
 
     else:
@@ -802,8 +983,16 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         )
 
     for x_s in T_candidates:
-        B_2_without_trigger = [
+        # Variables eligible to receive the cause label.
+        cause_candidates = [
             v for v in B_2
+            if v != x_s
+        ]
+
+        # Complete predictive model after omitting the trigger. This may retain
+        # lagged target autoregression.
+        model_variables_without_trigger = [
+            v for v in B_2_model
             if v != x_s
         ]
 
@@ -814,7 +1003,7 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
         else:
             trigger_source = "lagged_B2"
 
-        if len(B_2_without_trigger) == 0:
+        if len(cause_candidates) == 0:
             result["diagnostics"].append({
                 "trigger": x_s,
                 "cause": None,
@@ -824,8 +1013,8 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
             })
             continue
 
-        mu_before = I_1[B_2_without_trigger].mean()
-        mu_after = I_2[B_2_without_trigger].mean()
+        mu_before = I_1[cause_candidates].mean()
+        mu_after = I_2[cause_candidates].mean()
         delta_mu = (mu_after - mu_before).abs()
         x_u = delta_mu.idxmax()
 
@@ -851,25 +1040,24 @@ def run_cause_trigger(X: pd.DataFrame, config: CauseTriggerConfig):
             })
             continue
 
-        X_without_trigger = I_2[B_2_without_trigger]
+        X_without_trigger = I_2[model_variables_without_trigger]
 
         if config.v_weighting == "backend":
-            beta_without_trigger = beta_2[B_2_without_trigger]
+            beta_without_trigger = beta_2[model_variables_without_trigger]
             refit_metadata_for_trigger = {
                 "v_weighting": "backend",
                 "source": config.causal_backend,
             }
 
         else:
-            beta_without_trigger, refit_metadata_for_trigger = refit_beta_for_selected_parents(
-                X=I_2,
-                y_t=config.y_t,
-                selected_parents=B_2_without_trigger,
-                lags=config.lags,
-                alpha=config.refit_alpha,
-                cv=config.refit_cv,
-                cv_folds=config.refit_cv_folds,
-            )
+            beta_without_trigger = beta_2[model_variables_without_trigger]
+
+            refit_metadata_for_trigger = {
+                "v_weighting": "refit",
+                "source": "ridge_refit_full_B2_then_omit_trigger",
+                "omitted_trigger": x_s,
+                "remaining_variables": list(model_variables_without_trigger),
+            }
 
         V, X_without_trigger_lagged, beta_star = build_lagged_design_matrix_for_V(
             X_without_trigger.to_numpy(),
@@ -944,3 +1132,52 @@ def diagnostics_to_dataframe(result: dict) -> pd.DataFrame:
         return pd.DataFrame()
 
     return pd.DataFrame(diagnostics)
+
+def summarize_pair_recurrence(
+    pair_rows: pd.DataFrame,
+) -> pd.DataFrame:
+    if pair_rows is None or pair_rows.empty:
+        return pd.DataFrame()
+
+    def sorted_unique(values):
+        return sorted(set(values))
+
+    def has_adjacent_lags(values):
+        lags = sorted({
+            int(value)
+            for value in values
+            if pd.notna(value)
+        })
+        return any(
+            right - left == 1
+            for left, right in zip(lags, lags[1:])
+        )
+
+    grouped = (
+        pair_rows
+        .groupby(["cause", "trigger"], dropna=False)
+        .agg(
+            n_backends=("backend", "nunique"),
+            backends=("backend", sorted_unique),
+            n_lags=("lag", "nunique"),
+            lags=("lag", sorted_unique),
+            n_occurrences=("lag", "size"),
+        )
+        .reset_index()
+    )
+
+    grouped["has_adjacent_lags"] = (
+        pair_rows
+        .groupby(["cause", "trigger"])["lag"]
+        .apply(has_adjacent_lags)
+        .to_numpy()
+    )
+
+    return grouped.sort_values(
+        [
+            "n_backends",
+            "n_lags",
+            "n_occurrences",
+        ],
+        ascending=False,
+    ).reset_index(drop=True)

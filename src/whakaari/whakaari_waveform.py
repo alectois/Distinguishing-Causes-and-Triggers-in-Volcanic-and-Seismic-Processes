@@ -122,7 +122,13 @@ def get_day_trace(client, day_start, cfg):
         f"gaps_before={len(gap_groups_before)}, "
         f"gaps_after={len(gap_groups_after)}"
     )
+    remaining_nan_count = int(np.isnan(x).sum())
 
+    if remaining_nan_count > 0:
+        raise ValueError(
+            "Waveform contains unresolved long gaps after short-gap interpolation: "
+            f"{remaining_nan_count} missing samples."
+        )
     tr.data = x.astype(np.float64)
 
     tr.detrend("linear")
@@ -170,15 +176,30 @@ def hydro_rms_2_5(trace, win_sec=600):
     s.name = "hydro_2_5"
     return s
 
-# Spectral ratio 4.5–8 / 8–16 Hz
-# Whakaari-specific precursor/state variable
-def spectral_ratio_4p5_8_over_8_16(trace, win_sec=600):
-    low = band_rms_series(trace, 4.5, 8.0, win_sec=win_sec)
-    high = band_rms_series(trace, 8.0, 16.0, win_sec=win_sec)
+def spectral_log_ratio_4p5_8_over_8_16(
+    trace,
+    win_sec=600,
+    eps=1e-30,
+):
+    low = band_rms_series(
+        trace,
+        4.5,
+        8.0,
+        win_sec=win_sec,
+    )
+    high = band_rms_series(
+        trace,
+        8.0,
+        16.0,
+        win_sec=win_sec,
+    )
 
-    ratio = low / high.replace(0, np.nan)
-    ratio.name = "ratio_4p5_8_over_8_16"
-    return ratio
+    log_ratio = (
+        np.log(low.clip(lower=0) + eps)
+        - np.log(high.clip(lower=0) + eps)
+    )
+    log_ratio.name = "spectral_log_ratio_4p5_8_over_8_16"
+    return log_ratio
 
 # Continuous effect variable: eruption/tremor response energy
 # Uses 5–15 Hz to avoid directly containing hydro_2_5 as a sub-band.
@@ -253,13 +274,20 @@ def extract_features_for_day(client, day_start, cfg):
     out_freq = cfg.get("master_freq", "1h")
 
     hydro = hydro_rms_2_5(tr, win_sec=win_sec)
-    ratio = spectral_ratio_4p5_8_over_8_16(tr, win_sec=win_sec)
+    ratio = spectral_log_ratio_4p5_8_over_8_16(
+        tr,
+        win_sec=win_sec,
+    )
     hf_rate = event_rate_2_5(tr, out_freq=out_freq)
     effect = effect_tremor_rms_5_15(tr, win_sec=win_sec)
 
     hydro_h = hydro.resample(out_freq).mean()
     ratio_h = ratio.resample(out_freq).mean()
-    effect_h = effect.resample(out_freq).mean()
+    effect_quantile = cfg.get("effect_hourly_quantile", 0.90)
+
+    effect_h = effect.resample(out_freq).quantile(
+        effect_quantile
+    )
 
     df = pd.concat([hydro_h, ratio_h, hf_rate, effect_h], axis=1)
 

@@ -46,12 +46,12 @@ ETNA_AXIS_LABELS = {
         "log1p count"
     ),
 
-    "local_event_rate_anomaly": (
-        "Catalogue local event-rate anomaly (Effect)",
+    "local_event_rate_response": (
+        "Catalogue local event-rate response (Effect)",
         "log1p-count excess"
     ),
     "CO2_3": ("Soil CO₂ concentration", "%"),
-    "rain_6h_sum": ("6-hour rainfall sum", "mm"),
+    "rainfall_mm": ("Hourly precipitation", "mm"),
     "pressure_drop": ("Atmospheric pressure drop", "hPa"),
     "WindSpeed": ("Wind speed", "m s⁻¹"),
 
@@ -64,12 +64,12 @@ ETNA_AXIS_LABELS = {
         "Std. value"
     ),
 
-    "local_event_rate_anomaly_scaled": (
-        "Catalogue local event-rate anomaly (Effect)",
+    "local_event_rate_response_scaled": (
+        "Catalogue local event-rate response (Effect)",
         "Std. value"
     ),
     "CO2_3_scaled": ("Soil CO₂ concentration", "Std. value"),
-    "rain_6h_sum_scaled": ("6-hour rainfall sum", "Std. value"),
+    "rainfall_mm_scaled": ("Hourly precipitation", "Std. value"),
     "pressure_drop_scaled": ("Atmospheric pressure drop", "Std. value"),
     "WindSpeed_scaled": ("Wind speed", "Std. value"),
 }
@@ -77,16 +77,16 @@ ETNA_AXIS_LABELS = {
 ETNA_RAW_ORDER = [
     "teleseismic",
     "local_event_rate_state",
-    "local_event_rate_anomaly",
+    "local_event_rate_response",
     "CO2_3",
-    "rain_6h_sum",
+    "rainfall_mm",
     "pressure_drop",
     "WindSpeed",
 ]
 
 ETNA_EXTERNAL_COLS = [
     "CO2_3",
-    "rain_6h_sum",
+    "rainfall_mm",
     "pressure_drop",
     "WindSpeed",
 ]
@@ -94,7 +94,7 @@ ETNA_EXTERNAL_COLS = [
 ETNA_SEISMIC_COLS = [
     "teleseismic",
     "local_event_rate_state",
-    "local_event_rate_anomaly",
+    "local_event_rate_response",
 ]
 
 
@@ -852,7 +852,7 @@ FAMILY_STYLE = {
     "weather_proxy": {
         "marker": "P",
         "color": "#bcbd22",
-        "label": "Rainfall (6h sum)",
+        "label": "Hourly precipitation",
     },
     "summit": {
         "marker": "X",
@@ -994,7 +994,7 @@ def _clean_legend(ax):
         "Teleseismic station",
         "Catalogue seismicity",
         "ETNAGAS gas/meteo",
-        "Rainfall (6h sum)",
+        "Hourly precipitation",
         "Etna summit",
     ]
 

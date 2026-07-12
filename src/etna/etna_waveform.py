@@ -74,7 +74,13 @@ def preprocess_stream_safely(st: Stream, cfg: dict):
                         idx[valid],
                         x[valid]
                     )
+    remaining_nan_count = int(np.isnan(x).sum())
 
+    if remaining_nan_count > 0:
+        raise ValueError(
+            "Waveform contains unresolved long gaps after short-gap interpolation: "
+            f"{remaining_nan_count} missing samples."
+        )
     tr.data = x.astype(np.float64)
 
     tr.detrend("linear")

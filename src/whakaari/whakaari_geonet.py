@@ -1,6 +1,5 @@
 import requests
 import pandas as pd
-import numpy as np
 from io import StringIO
 from pathlib import Path
 from requests.adapters import HTTPAdapter
@@ -48,6 +47,8 @@ def load_gnss_deformation(tilde_data_base_url, start, end):
     up_rgwi = gnss_rgwi_up["value"].rename("GNSS_up_RGWI")
 
     gnss_up = pd.concat([up_rgwc, up_rgwi], axis=1).sort_index()
+    # Daily vertical-displacement difference between the two GNSS stations.
+    # This is the deformation level, not yet its temporal rate of change.
     gnss_up["GNSS_deformation"] = (
         gnss_up["GNSS_up_RGWC"] - gnss_up["GNSS_up_RGWI"]
     )
@@ -92,16 +93,6 @@ def load_weather_vars(
     cache_path=None,
     redownload=False,
 ):
-    """
-    Load Open-Meteo weather variables for Whakaari.
-
-    Returns:
-        rain_12h_sum
-        pressure_drop
-
-    Uses a local cache when available so the notebook is reproducible and does
-    not fail every time Open-Meteo is temporarily unreachable.
-    """
     if cache_path is not None:
         cache_path = Path(cache_path)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -179,17 +170,30 @@ def load_weather_vars(
     weather["pressure_change"] = weather["surface_pressure_hPa"].diff()
     weather["pressure_drop"] = -weather["pressure_change"]
 
-    # Keep first row instead of dropping it only because diff() creates one NaN.
-    weather["pressure_drop"] = weather["pressure_drop"].fillna(0)
+    # diff() creates one expected NaN only at the first valid pressure row.
+    if len(weather) > 0 and pd.isna(weather["pressure_drop"].iloc[0]):
+        weather.iloc[
+            0,
+            weather.columns.get_loc("pressure_drop"),
+        ] = 0.0
 
-    weather["rain_12h_sum"] = (
-        weather["rainfall_mm"]
-        .fillna(0)
-        .rolling(window=12, min_periods=1)
-        .sum()
-    )
+    if weather["rainfall_mm"].isna().any():
+        missing = int(weather["rainfall_mm"].isna().sum())
+        raise ValueError(
+            f"Whakaari precipitation contains {missing} missing API values."
+        )
 
-    weather_out = weather[["rain_12h_sum", "pressure_drop"]].copy()
+    remaining_pressure_missing = weather["pressure_drop"].isna().sum()
+
+    if remaining_pressure_missing:
+        raise ValueError(
+            "Whakaari pressure-drop series contains "
+            f"{remaining_pressure_missing} unexpected missing values."
+        )
+
+    weather_out = weather[
+        ["rainfall_mm", "pressure_drop"]
+    ].copy()
 
     if weather_out.isna().any().any():
         missing = weather_out.isna().sum()

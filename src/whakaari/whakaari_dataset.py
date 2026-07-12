@@ -88,18 +88,18 @@ def transform_for_cause_trigger_scaling(final: pd.DataFrame) -> pd.DataFrame:
     # Use log, not log1p, because waveform RMS values are often << 1.
     log_positive_cols = [
         "hydro_2_5",
-        "ratio_4p5_8_over_8_16",
     ]
 
     # Positive count / accumulation variables.
     log1p_cols = [
         "event_rate_2_5",
-        "rain_12h_sum",
+        "rainfall_mm",
     ]
 
     # Signed burst-like variables.
     asinh_cols = [
         "pressure_drop",
+        "GNSS_deformation_rate",
     ]
 
     for col in log_positive_cols:
@@ -185,19 +185,25 @@ def build_master_dataframe(
 
     # Replace the immediate spectral ratio with a past-only smoothed
     # spectral-state proxy. 
-    if "ratio_4p5_8_over_8_16" in wave_1h.columns:
-        wave_1h["ratio_4p5_8_over_8_16"] = past_rolling_median_state(
-            wave_1h["ratio_4p5_8_over_8_16"],
+    if "spectral_log_ratio_4p5_8_over_8_16" in wave_1h.columns:
+        wave_1h["spectral_log_ratio_4p5_8_over_8_16"] = past_rolling_median_state(
+            wave_1h["spectral_log_ratio_4p5_8_over_8_16"],
             window=6,
             min_periods=3,
         )
     weather_1h = weather_vars.resample(master_freq).mean()
+    gnss_daily = gnss.resample("1D").mean()
+
+    gnss_daily["GNSS_deformation_rate"] = (
+        gnss_daily["GNSS_deformation"]
+        .diff()
+        .shift(1)
+    )
+
     gnss_1h = (
-        gnss
-        .resample("1D")
-        .mean()
+        gnss_daily[["GNSS_deformation_rate"]]
         .resample(master_freq)
-        .ffill()
+        .ffill(limit=23)
     )
 
     # Replace raw 5--15 Hz RMS with a positive tremor-response anomaly.
@@ -212,11 +218,7 @@ def build_master_dataframe(
 
     wave_1h = wave_1h.reindex(master_index)
     weather_1h = weather_1h.reindex(master_index)
-    gnss_1h = (
-        gnss_1h
-        .reindex(master_index)
-        .ffill()
-    )
+    gnss_1h = gnss_1h.reindex(master_index)
 
     frames = [wave_1h, weather_1h, gnss_1h]
 
@@ -225,28 +227,32 @@ def build_master_dataframe(
     return whakaari_master
 
 
-def prepare_raw_analysis_dataframe(whakaari_master):
+def prepare_analysis_dataframe(whakaari_master):
     whakaari_raw = whakaari_master.copy()
 
-    if "GNSS_deformation" in whakaari_raw.columns:
-        whakaari_raw["GNSS_deformation"] = (
-            pd.to_numeric(whakaari_raw["GNSS_deformation"], errors="coerce")
-            .ffill()
+    if "GNSS_deformation_rate" in whakaari_raw.columns:
+        whakaari_raw["GNSS_deformation_rate"] = pd.to_numeric(
+            whakaari_raw["GNSS_deformation_rate"],
+            errors="coerce",
         )
 
-    required_waveform_cols = [
+    required_cols = [
         "hydro_2_5",
-        "ratio_4p5_8_over_8_16",
+        "spectral_log_ratio_4p5_8_over_8_16",
         "event_rate_2_5",
         "effect_tremor_5_15",
+        "rainfall_mm",
+        "pressure_drop",
     ]
 
     required_existing = [
-        c for c in required_waveform_cols
-        if c in whakaari_raw.columns
+        col for col in required_cols
+        if col in whakaari_raw.columns
     ]
 
-    whakaari_raw = whakaari_raw.dropna(subset=required_existing)
+    whakaari_raw = whakaari_raw.dropna(
+        subset=required_existing
+    )
 
     return whakaari_raw
 
@@ -256,7 +262,7 @@ def preprocessing_report(rawest_df, prepared_df):
 
     Compares:
     - rawest_df: output of build_master_dataframe()
-    - prepared_df: output of prepare_raw_analysis_dataframe()
+    - prepared_df: output of prepare_analysis_dataframe()
 
     It reports:
     - rows before/after
@@ -375,93 +381,30 @@ def preprocessing_report(rawest_df, prepared_df):
 
     return report
 
-def build_final_causal_dataframe(
-    whakaari_raw: pd.DataFrame,
-    include_columns: list[str] | None = None,
-    drop_columns: list[str] | None = None,
-):
+def save_whakaari_analysis_dataset(
+    analysis: pd.DataFrame,
+    output_dir: str | Path,
+) -> Path:
     """
-    Prepare the standardized Whakaari dataset for causal analysis.
-    """
-
-    analysis_input = whakaari_raw.copy()
-
-    if analysis_input.index.has_duplicates:
-        duplicates = analysis_input.index[analysis_input.index.duplicated()].unique()[:5]
-        raise ValueError(
-            f"Whakaari causal dataframe has duplicate timestamps, e.g. {list(duplicates)}"
-        )
-
-    if not analysis_input.index.is_monotonic_increasing:
-        analysis_input = analysis_input.sort_index()
-
-    if include_columns is not None:
-        missing = sorted(set(include_columns) - set(analysis_input.columns))
-        if missing:
-            raise ValueError(f"Requested columns not found: {missing}")
-
-        feature_cols = list(include_columns)
-
-    else:
-        drop_columns = [] if drop_columns is None else list(drop_columns)
-
-        feature_cols = [
-            c for c in analysis_input.columns
-            if pd.api.types.is_numeric_dtype(analysis_input[c])
-            and c not in drop_columns
-        ]
-
-    if len(feature_cols) == 0:
-        raise ValueError("No numeric columns found for Whakaari causal dataframe.")
-
-    non_numeric_cols = [
-        c for c in feature_cols
-        if not pd.api.types.is_numeric_dtype(analysis_input[c])
-    ]
-
-    if non_numeric_cols:
-        raise ValueError(
-            f"Selected columns must be numeric. Non-numeric columns: {non_numeric_cols}"
-        )
-
-    model_input = analysis_input[feature_cols].copy()
-
-    if model_input.isna().any().any():
-        missing = model_input.isna().sum()
-        missing = missing[missing > 0].sort_values(ascending=False)
-        raise ValueError(
-            "Selected Whakaari model columns still contain NaNs:\n"
-            f"{missing}"
-        )
-
-    transformed = transform_for_cause_trigger_scaling(model_input)
-
-    scaled_numeric = standard_scale_dataframe(transformed)
-
-    whakaari_final = pd.DataFrame(index=analysis_input.index)
-
-    for col in feature_cols:
-        whakaari_final[col + "_scaled"] = scaled_numeric[col]
-
-    return whakaari_final
-
-def save_whakaari_datasets(
-    whakaari_raw,
-    whakaari_final,
-    output_dir,
-):
-    """
-    Save the two final Whakaari datasets.
-
-    whakaari_raw:
-        Filled, analysis-ready dataframe in physical units.
-
-    whakaari_final:
-        Transformed and mean-zero/unit-variance standardized dataframe
-        for the causal algorithm.
+    Save the canonical hourly Whakaari analysis dataset in
+    physical or proxy units. Transformations and standardization
+    are applied later to the selected case-study interval.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    whakaari_raw.to_csv(output_dir / "whakaari_raw.csv", index_label="timestamp")
-    whakaari_final.to_csv(output_dir / "whakaari_final.csv", index_label="timestamp")
+    scaled_columns = [
+        column
+        for column in analysis.columns
+        if column.endswith("_scaled")
+    ]
+
+    if scaled_columns:
+        raise ValueError(
+            "Whakaari analysis dataset must remain unstandardized. "
+            f"Found scaled columns: {scaled_columns}"
+        )
+
+    output_path = output_dir / "whakaari_dataset.csv"
+    analysis.to_csv(output_path, index_label="timestamp")
+    return output_path

@@ -171,19 +171,23 @@ class PCMCIBackend:
                 tau0_p = p_matrix[source_idx, target_idx, 0]
                 tau0_val = val_matrix[source_idx, target_idx, 0]
 
-                # Conservative choice:
-                #   "-->" means source -> target.
-                #   "o-o" or "x-x" are unresolved/ambiguous contemporaneous adjacency.
-                # Do not use "<--", because that means target -> source in this array slot.
-                eligible_tau0_links = {"-->", "o-o", "x-x"}
+                # Store every significant contemporaneous adjacency for diagnostics.
+                # Only a directed source -> target edge is eligible for the optional
+                # contemporaneous-trigger extension.
+                if tau0_link != "" and tau0_p <= self.alpha_level:
+                    directed_source_to_target = tau0_link == "-->"
 
-                if tau0_link in eligible_tau0_links and tau0_p <= self.alpha_level:
                     contemporaneous_links[source_name] = {
                         "graph_link": tau0_link,
                         "p_value": float(tau0_p),
                         "val": float(tau0_val),
                         "tau": 0,
-                        "role": "contemporaneous_trigger_candidate_only",
+                        "directed_source_to_target": bool(
+                            directed_source_to_target
+                        ),
+                        "eligible_as_trigger_candidate": bool(
+                            directed_source_to_target
+                        ),
                     }
 
             # Lagged links tau=1..tau_max are eligible for B2.
@@ -194,8 +198,8 @@ class PCMCIBackend:
                 beta_values[tau - 1, source_idx] = val
 
                 if self.method == "pcmci_plus" and graph is not None:
-                    graph_link = graph[source_idx, target_idx, tau]
-                    is_selected = graph_link != ""
+                    graph_link = str(graph[source_idx, target_idx, tau])
+                    is_selected = graph_link == "-->"
                 else:
                     is_selected = sig_value <= self.alpha_level
 

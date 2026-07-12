@@ -20,6 +20,7 @@ WHAKAARI_WAVEFORM_CONFIG = {
     "pre_filt": (0.5, 1.0, 20.0, 25.0),
     "max_interp_gap_sec": 2.0,
     "pad_sec": 3600,
+    "effect_hourly_quantile": 0.90,
 }
 
 #whakaari geo-metadata
@@ -42,8 +43,8 @@ def whakaari_observable_metadata():
             "case": "Whakaari",
             "source_id": "WSRZ",
             "source_label": "WSRZ seismic station",
-            "observable": "ratio_4p5_8_over_8_16",
-            "observable_label": "Past-smoothed spectral ratio, 4.5–8 / 8–16 Hz",
+            "observable": "spectral_log_ratio_4p5_8_over_8_16",
+            "observable_label": "Past-smoothed log spectral contrast, 4.5–8 / 8–16 Hz",
             "family": "seismic",
             "spatial_type": "point_station",
             "lat": -37.5181,
@@ -80,8 +81,8 @@ def whakaari_observable_metadata():
             "case": "Whakaari",
             "source_id": "RGWC_RGWI",
             "source_label": "RGWC–RGWI GNSS vertical displacement difference",
-            "observable": "GNSS_deformation",
-            "observable_label": "GNSS deformation proxy",
+            "observable": "GNSS_deformation_rate",
+            "observable_label": "Lagged daily GNSS deformation change",
             "family": "deformation",
             "spatial_type": "derived_station_pair_midpoint",
 
@@ -103,8 +104,8 @@ def whakaari_observable_metadata():
             "case": "Whakaari",
             "source_id": "WHAKAARI_OPENMETEO_PROXY",
             "source_label": "Whakaari Open-Meteo proxy point",
-            "observable": "rain_12h_sum",
-            "observable_label": "12-hour rainfall sum",
+            "observable": "rainfall_mm",
+            "observable_label": "Hourly precipitation",
             "family": "weather_proxy",
             "spatial_type": "proxy_point",
             "lat": WHAKAARI_LAT,
