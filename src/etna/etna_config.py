@@ -22,7 +22,6 @@ ETNA_WAVEFORM_CONFIG = {
     "pre_filt": (0.02, 0.03, 30.0, 40.0),
     "max_interp_gap_sec": 2.0,
     "min_valid_rms_windows_per_hour": 20,
-    "max_consecutive_missing_rms_windows": 5,
 }
 
 ETNA_GAS_METEO_COLS = [

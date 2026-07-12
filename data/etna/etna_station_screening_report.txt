@@ -1,0 +1,32 @@
+Etna station availability screening
+========================================
+
+Network: IV
+Screen window: 2008-04-12T00:00:00.000000Z to 2008-05-16T00:00:00.000000Z
+Probe: 10 minutes per day at +12 h from day start
+Etna summit reference: lat=37.748, lon=14.999
+
+Ranking rule:
+1. Highest ok_fraction
+2. Shortest distance to Etna summit
+3. Best channel rank: HHZ, BHZ, EHZ, SHZ, LHZ, VHZ
+
+Best complete candidates
+----------------------------------------
+ESLN..HHZ | distance=6.45 km | successful_probes=2008-04-12 to 2008-05-15 | ok=34/34 days | mean_probe_coverage=1.000 | metadata=2005-07-10 to open/unknown | sample_rates=100.0
+ESLN..BHZ | distance=6.45 km | successful_probes=2008-04-12 to 2008-05-15 | ok=34/34 days | mean_probe_coverage=1.000 | metadata=2005-07-10 to open/unknown | sample_rates=20.0
+ESLN..LHZ | distance=6.45 km | successful_probes=2008-04-12 to 2008-05-15 | ok=34/34 days | mean_probe_coverage=1.000 | metadata=2005-07-10 to open/unknown | sample_rates=1.0
+ESLN..VHZ | distance=6.45 km | successful_probes=2008-04-12 to 2008-05-15 | ok=34/34 days | mean_probe_coverage=1.000 | metadata=2005-07-10 to open/unknown | sample_rates=0.1
+ECTS..HHZ | distance=18.41 km | successful_probes=2008-04-12 to 2008-05-15 | ok=34/34 days | mean_probe_coverage=0.995 | metadata=2007-07-18 to 2019-12-23 | sample_rates=100.0
+GIO..SHZ | distance=22.34 km | successful_probes=2008-04-12 to 2008-05-15 | ok=34/34 days | mean_probe_coverage=0.998 | metadata=2007-12-04 to 2013-03-13 | sample_rates=50.0
+
+
+Full ranked summary
+----------------------------------------
+station channel location metadata_start_date metadata_end_date successful_probe_start_date successful_probe_end_date  successful_probe_ranges missing_dates    lat    lon  distance_km  ok_days  n_days  ok_fraction  mean_probe_coverage  min_probe_coverage  n_error_days sample_rates  channel_rank
+   ESLN     HHZ                   2005-07-10      open/unknown                  2008-04-12                2008-05-15 2008-04-12 to 2008-05-15               37.693 14.974        6.445       34      34        1.000                1.000               1.000             0        100.0             1
+   ESLN     BHZ                   2005-07-10      open/unknown                  2008-04-12                2008-05-15 2008-04-12 to 2008-05-15               37.693 14.974        6.445       34      34        1.000                1.000               1.000             0         20.0             2
+   ESLN     LHZ                   2005-07-10      open/unknown                  2008-04-12                2008-05-15 2008-04-12 to 2008-05-15               37.693 14.974        6.445       34      34        1.000                1.000               1.000             0          1.0             5
+   ESLN     VHZ                   2005-07-10      open/unknown                  2008-04-12                2008-05-15 2008-04-12 to 2008-05-15               37.693 14.974        6.445       34      34        1.000                1.000               1.000             0          0.1             6
+   ECTS     HHZ                   2007-07-18        2019-12-23                  2008-04-12                2008-05-15 2008-04-12 to 2008-05-15               37.883 15.121       18.409       34      34        1.000                0.995               0.817             0        100.0             1
+    GIO     SHZ                   2007-12-04        2013-03-13                  2008-04-12                2008-05-15 2008-04-12 to 2008-05-15               37.567 15.108       22.342       34      34        1.000                0.998               0.960             0         50.0             4

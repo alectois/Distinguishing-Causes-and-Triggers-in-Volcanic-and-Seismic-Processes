@@ -307,34 +307,20 @@ def teleseismic_rms_windows(trace, config: dict) -> pd.Series:
         filter_edge_guard_sec=config.get("filter_edge_guard_sec"),
     )
 
-def _longest_true_run(mask: np.ndarray) -> int:
-    """Length of the longest consecutive run of True values."""
-    longest = 0
-    current = 0
-
-    for value in np.asarray(mask, dtype=bool):
-        if value:
-            current += 1
-            longest = max(longest, current)
-        else:
-            current = 0
-
-    return longest
-
 def hourly_teleseismic_feature(trace, config: dict) -> pd.Series:
     """
     Aggregate valid 120-second RMS windows to hourly maxima.
 
-    An hour is retained when:
-    - at least 20 RMS windows are valid; and
-    - no more than 5 consecutive RMS windows are missing.
-
-    For 120-second windows, this corresponds to:
-    - at least 40 minutes of usable waveform data; and
-    - no continuous unusable interval longer than 10 minutes.
+    An hour is retained when at least 20 of the expected 30 RMS
+    windows are valid, corresponding to at least 40 minutes of
+    usable waveform data.
     """
     windows = teleseismic_rms_windows(trace, config)
     frequency = str(config["base_freq"])
+
+    grouped = windows.resample(frequency)
+    feature = grouped.max().rename("teleseismic")
+    valid_counts = grouped.count()
 
     hour_seconds = pd.Timedelta(frequency).total_seconds()
     window_seconds = float(config["windows_sec"]["teleseismic"])
@@ -346,9 +332,6 @@ def hourly_teleseismic_feature(trace, config: dict) -> pd.Series:
     minimum_valid_windows = int(
         config.get("min_valid_rms_windows_per_hour", 20)
     )
-    maximum_missing_run = int(
-        config.get("max_consecutive_missing_rms_windows", 5)
-    )
 
     if not 1 <= minimum_valid_windows <= expected_windows:
         raise ValueError(
@@ -356,41 +339,7 @@ def hourly_teleseismic_feature(trace, config: dict) -> pd.Series:
             f"{expected_windows}."
         )
 
-    if not 0 <= maximum_missing_run < expected_windows:
-        raise ValueError(
-            "max_consecutive_missing_rms_windows must be between 0 and "
-            f"{expected_windows - 1}."
-        )
-
-    def aggregate_hour(hour_windows: pd.Series) -> float:
-        values = pd.to_numeric(
-            hour_windows,
-            errors="coerce",
-        ).to_numpy(dtype=float)
-
-        if len(values) == 0:
-            return np.nan
-
-        valid = np.isfinite(values)
-        valid_count = int(valid.sum())
-        longest_missing_run = _longest_true_run(~valid)
-
-        if valid_count < minimum_valid_windows:
-            return np.nan
-
-        if longest_missing_run > maximum_missing_run:
-            return np.nan
-
-        return float(np.nanmax(values))
-
-    feature = (
-        windows
-        .resample(frequency)
-        .apply(aggregate_hour)
-        .rename("teleseismic")
-    )
-
-    return feature
+    return feature.where(valid_counts >= minimum_valid_windows)
 
 
 def extract_etna_features_for_chunk(

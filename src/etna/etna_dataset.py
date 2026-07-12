@@ -71,7 +71,7 @@ def load_etna_event_catalog_xls(
         dataframe = pd.read_excel(Path(path), sheet_name=sheet_name)
     except ImportError as exc:
         raise ImportError(
-            "Reading the legacy .xls catalogue requires the 'xlrd' package."
+            "Reading the .xls catalogue requires the 'xlrd' package."
         ) from exc
 
     time_columns = ["YE", "MO", "DA", "HR", "MI", "SE"]

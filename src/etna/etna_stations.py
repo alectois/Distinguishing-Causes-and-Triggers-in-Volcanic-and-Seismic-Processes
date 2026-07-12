@@ -1,8 +1,3 @@
-"""
-Etna station availability screening.It discovers vertical streams, filters them by distance from the
-Etna summit, probes a short waveform segment each day, summarizes daily probe availability, and optionally exports readable CSV/TXT reports.
-"""
-
 from __future__ import annotations
 
 from math import radians, sin, cos, asin, sqrt
@@ -322,7 +317,7 @@ def run_station_screening(
     *,
     summit_lat: float = DEFAULT_ETNA_SUMMIT_LAT,
     summit_lon: float = DEFAULT_ETNA_SUMMIT_LON,
-    max_distance_km: float = 80.0,
+    max_distance_km: float = 30.0,
     channel_pattern: str = "*HZ",
     probe_offset_hours: int = 12,
     probe_duration_minutes: int = 10,
@@ -418,7 +413,7 @@ def export_station_screening_results(
     probe_offset_hours: int = 12,
     probe_duration_minutes: int = 10,
 ) -> dict[str, Path]:
-    """Export station-screening results to CSV and a readable text report."""
+    """Export the station-screening results as one readable text report."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -460,14 +455,7 @@ def export_station_screening_results(
         .reset_index(drop=True)
     )
 
-    summary_csv = out_dir / "etna_station_screening_summary.csv"
-    daily_csv = out_dir / "etna_station_screening_daily_probe.csv"
-    best_csv = out_dir / "etna_station_screening_best_complete_candidates.csv"
     report_txt = out_dir / "etna_station_screening_report.txt"
-
-    summary_export.to_csv(summary_csv, index=False)
-    daily_probe.to_csv(daily_csv, index=False)
-    best_candidates.to_csv(best_csv, index=False)
 
     with open(report_txt, "w", encoding="utf-8") as f:
         f.write("Etna station availability screening\n")
@@ -514,9 +502,4 @@ def export_station_screening_results(
             )
         )
 
-    return {
-        "summary_csv": summary_csv,
-        "daily_csv": daily_csv,
-        "best_csv": best_csv,
-        "report_txt": report_txt,
-    }
+    return {"report_txt": report_txt}
