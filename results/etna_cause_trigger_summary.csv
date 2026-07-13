@@ -1,0 +1,53 @@
+section,backend,cause,trigger,lag,metric,value,details
+design,,,,,Case interval,2008-05-09 06:00:00+00:00 to 2008-05-15 05:00:00+00:00 (144 h),
+design,,,,,Reference coverage,336/336 h (100.0%),
+design,,,,,Wenchuan arrival,2008-05-12 06:28:00+00:00,
+design,,,,,Effect maximum,2008-05-13 13:00:00+00:00 (1 days 06:32:00),
+design,,,,,Automatic split,"2008-05-13 06:00:00+00:00; I1=96 h, I2=48 h",
+design,,,,,Split status,Boundary solution; 0 days 23:32:00 after Wenchuan,
+design,,,,,VAR lag references,AIC=12 h; BIC=1 h,
+lag_reference,,,,12.0,AIC,12 h,"{""distribution"": ""gaussian"", ""maximum_lag_tested"": 12}"
+lag_reference,,,,1.0,BIC,1 h,"{""distribution"": ""gaussian"", ""maximum_lag_tested"": 12}"
+backend_stability,HMML,,,,result,Accepted pair(s) at 10 lag(s),"{""Successful runs"": ""12/12"", ""Post-split parents"": ""11/12"", ""Trigger candidates"": ""11/12"", ""Accepted-pair lags"": ""10/12"", ""τ=0-link lags"": ""0/12""}"
+backend_stability,PCMCI,,,,result,Candidates found; none passed moderation,"{""Successful runs"": ""12/12"", ""Post-split parents"": ""5/12"", ""Trigger candidates"": ""5/12"", ""Accepted-pair lags"": ""0/12"", ""τ=0-link lags"": ""0/12""}"
+backend_stability,PCMCI+ τ=0,,,,result,Accepted pair(s) at 1 lag(s),"{""Successful runs"": ""12/12"", ""Post-split parents"": ""5/12"", ""Trigger candidates"": ""6/12"", ""Accepted-pair lags"": ""1/12"", ""τ=0-link lags"": ""8/12""}"
+pair_stability,HMML,Past local seismicity,Teleseismic RMS,,accepted_lags,"[2, 3, 5, 6, 7, 9, 10]","{""lag_support"": ""7/12"", ""longest_adjacent_run"": 3}"
+pair_stability,HMML,Past local seismicity,Soil CO₂,,accepted_lags,"[2, 8]","{""lag_support"": ""2/12"", ""longest_adjacent_run"": 1}"
+pair_stability,HMML,Soil CO₂,Past local seismicity,,accepted_lags,[10],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
+pair_stability,HMML,Rainfall,Past local seismicity,,accepted_lags,[7],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
+pair_stability,HMML,Rainfall,Teleseismic RMS,,accepted_lags,[4],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
+pair_stability,HMML,Teleseismic RMS,Past local seismicity,,accepted_lags,[11],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
+pair_stability,PCMCI+ τ=0,Teleseismic RMS,Past local seismicity,,accepted_lags,[3],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
+delayed_lag_scan,,,,0.0,correlation,0.3698680148453089,"{""aligned_rows"": 144, ""descriptive_only"": true}"
+delayed_lag_scan,,,,1.0,correlation,0.37847680364097164,"{""aligned_rows"": 143, ""descriptive_only"": true}"
+delayed_lag_scan,,,,2.0,correlation,0.3512581309482146,"{""aligned_rows"": 142, ""descriptive_only"": true}"
+delayed_lag_scan,,,,3.0,correlation,0.31034111507866363,"{""aligned_rows"": 141, ""descriptive_only"": true}"
+delayed_lag_scan,,,,4.0,correlation,0.2582438525414843,"{""aligned_rows"": 140, ""descriptive_only"": true}"
+delayed_lag_scan,,,,5.0,correlation,0.18478626365991127,"{""aligned_rows"": 139, ""descriptive_only"": true}"
+delayed_lag_scan,,,,6.0,correlation,0.07319542372445893,"{""aligned_rows"": 138, ""descriptive_only"": true}"
+delayed_lag_scan,,,,7.0,correlation,-0.015269836759905583,"{""aligned_rows"": 137, ""descriptive_only"": true}"
+delayed_lag_scan,,,,8.0,correlation,-0.10454340556065192,"{""aligned_rows"": 136, ""descriptive_only"": true}"
+delayed_lag_scan,,,,9.0,correlation,-0.16814428080280963,"{""aligned_rows"": 135, ""descriptive_only"": true}"
+delayed_lag_scan,,,,10.0,correlation,-0.20968955761775104,"{""aligned_rows"": 134, ""descriptive_only"": true}"
+delayed_lag_scan,,,,11.0,correlation,-0.2195526439676174,"{""aligned_rows"": 133, ""descriptive_only"": true}"
+delayed_lag_scan,,,,12.0,correlation,-0.21447767061022968,"{""aligned_rows"": 132, ""descriptive_only"": true}"
+delayed_lag_scan,,,,13.0,correlation,-0.20650290560247042,"{""aligned_rows"": 131, ""descriptive_only"": true}"
+delayed_lag_scan,,,,14.0,correlation,-0.20797296301211748,"{""aligned_rows"": 130, ""descriptive_only"": true}"
+delayed_lag_scan,,,,15.0,correlation,-0.20577860518714777,"{""aligned_rows"": 129, ""descriptive_only"": true}"
+delayed_lag_scan,,,,16.0,correlation,-0.1884065858379792,"{""aligned_rows"": 128, ""descriptive_only"": true}"
+delayed_lag_scan,,,,17.0,correlation,-0.16865577178570534,"{""aligned_rows"": 127, ""descriptive_only"": true}"
+delayed_lag_scan,,,,18.0,correlation,-0.11746990137704928,"{""aligned_rows"": 126, ""descriptive_only"": true}"
+delayed_lag_scan,,,,19.0,correlation,-0.049080728300559165,"{""aligned_rows"": 125, ""descriptive_only"": true}"
+delayed_lag_scan,,,,20.0,correlation,0.01223178173307662,"{""aligned_rows"": 124, ""descriptive_only"": true}"
+delayed_lag_scan,,,,21.0,correlation,0.040775292341694906,"{""aligned_rows"": 123, ""descriptive_only"": true}"
+delayed_lag_scan,,,,22.0,correlation,0.0764797555112368,"{""aligned_rows"": 122, ""descriptive_only"": true}"
+delayed_lag_scan,,,,23.0,correlation,0.1344595928825949,"{""aligned_rows"": 121, ""descriptive_only"": true}"
+delayed_lag_scan,,,,24.0,correlation,0.21764207600040777,"{""aligned_rows"": 120, ""descriptive_only"": true}"
+delayed_lag_scan,,,,25.0,correlation,0.3156230371566172,"{""aligned_rows"": 119, ""descriptive_only"": true}"
+delayed_lag_scan,,,,26.0,correlation,0.4135610956426276,"{""aligned_rows"": 118, ""descriptive_only"": true}"
+delayed_lag_scan,,,,27.0,correlation,0.47766691775271913,"{""aligned_rows"": 117, ""descriptive_only"": true}"
+delayed_lag_scan,,,,28.0,correlation,0.4890428149785223,"{""aligned_rows"": 116, ""descriptive_only"": true}"
+delayed_lag_scan,,,,29.0,correlation,0.4869948504483255,"{""aligned_rows"": 115, ""descriptive_only"": true}"
+delayed_lag_scan,,,,30.0,correlation,0.4641533466383363,"{""aligned_rows"": 114, ""descriptive_only"": true}"
+execution,,,,,error_count,0,
+interpretation,,,,,conclusion,Exploratory HMML-specific cause–trigger candidate; no backend-consistent identification of Wenchuan as a trigger under the current split-based architecture.,

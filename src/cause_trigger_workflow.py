@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional, Sequence
+from typing import Optional, Sequence
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -16,15 +15,8 @@ from cause_trigger import (
     standard_scale_from_reference,
     validate_regular_time_index,
 )
+from cause_trigger_cases import CaseSpec
 from parameter_extraction import select_var_lag
-from whakaari.whakaari_dataset import (
-    fit_cause_trigger_transform_parameters,
-    standard_scale_dataframe,
-    transform_for_cause_trigger_scaling,
-)
-
-
-EFFECT = "effect_tremor_5_15_scaled"
 
 
 # PCMCI+ extension that also tests eligible directed tau=0 links.
@@ -40,8 +32,10 @@ COMPACT_RUN_SPECS = (
 
 
 @dataclass(frozen=True)
-class WhakaariWorkflowConfig:
-    effect: str = EFFECT
+class WorkflowConfig:
+    """Shared Cause–Trigger experiment settings for either case study."""
+
+    effect: str
     alpha: float = 0.05
     selected_lag: int = 1
     min_I1_length: int = 48
@@ -67,22 +61,27 @@ class WhakaariWorkflowConfig:
 
 
 def _resolve_time_column(
-    df: pd.DataFrame,
+    dataframe: pd.DataFrame,
     requested_time_col: str,
 ) -> str:
-    if requested_time_col in df.columns:
+    if requested_time_col in dataframe.columns:
         return requested_time_col
 
-    for candidate in ("timestamp", "time", "datetime", "date"):
-        if candidate in df.columns:
+    for candidate in ("time", "timestamp", "datetime", "date"):
+        if candidate in dataframe.columns:
             return candidate
 
-    unnamed = [column for column in df.columns if str(column).startswith("Unnamed:")]
+    unnamed = [
+        column
+        for column in dataframe.columns
+        if str(column).startswith("Unnamed:")
+    ]
     if len(unnamed) == 1:
         return unnamed[0]
 
     raise ValueError(
-        f"Could not find a time column. Available columns: {list(df.columns)}"
+        "Could not find a time column. "
+        f"Available columns: {list(dataframe.columns)}"
     )
 
 
@@ -90,33 +89,39 @@ def load_model_frame(
     csv_path: str | Path,
     *,
     time_col: str = "time",
+    index_name: str = "time",
     drop_columns: Sequence[str] = ("station",),
     include_columns: Optional[Sequence[str]] = None,
     require_complete: bool = True,
 ) -> pd.DataFrame:
-    """Load the numeric raw-variable frame indexed by UTC time."""
+    """Load the numeric unscaled model frame indexed by UTC time."""
     csv_path = Path(csv_path)
-    df = pd.read_csv(csv_path)
-    time_col = _resolve_time_column(df, time_col)
+    dataframe = pd.read_csv(csv_path)
+    resolved_time_col = _resolve_time_column(dataframe, time_col)
 
-    df[time_col] = pd.to_datetime(df[time_col], utc=True, errors="coerce")
-    if df[time_col].isna().any():
+    dataframe[resolved_time_col] = pd.to_datetime(
+        dataframe[resolved_time_col],
+        utc=True,
+        errors="coerce",
+    )
+    if dataframe[resolved_time_col].isna().any():
         raise ValueError(f"Invalid timestamps in {csv_path}.")
 
     if include_columns is not None:
-        required = [time_col, *include_columns]
-        missing = sorted(set(required) - set(df.columns))
+        required = [resolved_time_col, *include_columns]
+        missing = sorted(set(required) - set(dataframe.columns))
         if missing:
             raise ValueError(f"Missing requested columns: {missing}")
-        df = df[required]
+        dataframe = dataframe[required]
 
     model = (
-        df.drop(columns=list(drop_columns), errors="ignore")
-        .set_index(time_col)
+        dataframe
+        .drop(columns=list(drop_columns), errors="ignore")
+        .set_index(resolved_time_col)
         .sort_index()
         .select_dtypes(include=[np.number])
     )
-    model.index.name = "timestamp"
+    model.index.name = index_name
 
     if model.index.has_duplicates:
         raise ValueError("Model dataframe has duplicate timestamps.")
@@ -134,6 +139,7 @@ def pre_case_reference_interval(
     *,
     reference_days: int = 14,
     min_coverage: float = 0.90,
+    case_name: str = "Case",
 ) -> pd.DataFrame:
     """Return the adjacent pre-case reference interval."""
     case_start = pd.Timestamp(case_start)
@@ -150,7 +156,7 @@ def pre_case_reference_interval(
 
     if coverage < min_coverage:
         raise ValueError(
-            f"Insufficient Whakaari reference coverage: "
+            f"Insufficient {case_name} reference coverage: "
             f"{len(reference)}/{expected_rows} ({coverage:.1%})."
         )
     if reference.isna().any().any():
@@ -170,38 +176,47 @@ def pre_case_reference_interval(
 def prepare_case_frames(
     raw_case: pd.DataFrame,
     reference_raw: pd.DataFrame,
+    *,
+    case: CaseSpec,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Construct aligned frames:
-    - X_model: case-standardized for causal modelling and moderation.
-    - X_mean: reference-standardized for Steps 4, 9, and 13.
+    Construct aligned case- and reference-standardized frames.
+
+    ``X_model`` is case-standardized for causal discovery and moderation.
+    ``X_mean`` uses the pre-case reference distribution for mean comparisons.
     """
     validate_regular_time_index(raw_case, expected_step="1h")
 
     if raw_case.isna().any().any():
-        raise ValueError("Whakaari case interval contains missing values.")
+        raise ValueError(
+            f"{case.name} case interval contains missing values."
+        )
     if reference_raw.empty:
-        raise ValueError("Whakaari reference interval is empty.")
+        raise ValueError(f"{case.name} reference interval is empty.")
     if reference_raw.isna().any().any():
-        raise ValueError("Whakaari reference interval contains missing values.")
+        raise ValueError(
+            f"{case.name} reference interval contains missing values."
+        )
     if list(reference_raw.columns) != list(raw_case.columns):
         raise ValueError(
             "Reference and case intervals must have identical column order."
         )
     if reference_raw.index.max() >= raw_case.index.min():
-        raise ValueError("Reference interval must end before the case interval.")
+        raise ValueError(
+            "Reference interval must end before the case interval."
+        )
 
-    parameters = fit_cause_trigger_transform_parameters(reference_raw)
-    transformed_reference = transform_for_cause_trigger_scaling(
+    parameters = case.fit_transform_parameters(reference_raw)
+    transformed_reference = case.transform_for_scaling(
         reference_raw.copy(),
         transform_parameters=parameters,
     )
-    transformed_case = transform_for_cause_trigger_scaling(
+    transformed_case = case.transform_for_scaling(
         raw_case.copy(),
         transform_parameters=parameters,
     )
 
-    X_model = standard_scale_dataframe(transformed_case)
+    X_model = case.standard_scale_dataframe(transformed_case)
     X_mean, report = standard_scale_from_reference(
         transformed_reference,
         transformed_case,
@@ -233,7 +248,7 @@ def case_study_interval(
     pre_days: int,
     post_hours: int,
 ) -> pd.DataFrame:
-    """Return a complete hourly case grid around the event."""
+    """Return a complete hourly case grid around the contextual event."""
     event_hour = pd.Timestamp(event_time).floor("h")
     start = event_hour - pd.Timedelta(days=int(pre_days))
     end = event_hour + pd.Timedelta(hours=int(post_hours))
@@ -244,7 +259,7 @@ def case_study_interval(
 
 
 def reference_parameter_table(
-    df: pd.DataFrame,
+    dataframe: pd.DataFrame,
     effect: str,
     *,
     max_lags: int = 12,
@@ -252,30 +267,28 @@ def reference_parameter_table(
     fallback_lag: int = 1,
 ) -> pd.DataFrame:
     """Return AIC/BIC VAR lag references; HMML remains Gaussian."""
-    if effect not in df.columns:
+    if effect not in dataframe.columns:
         raise ValueError(f"Effect variable {effect!r} is absent.")
 
     rows = []
     for criterion in criteria:
         lag = select_var_lag(
-            df,
+            dataframe,
             max_lags=max_lags,
             criterion=criterion,
             fallback_lag=fallback_lag,
         )
-        rows.append(
-            {
-                "criterion": criterion.upper(),
-                "selected_lag": int(lag),
-                "distribution": "gaussian",
-                "max_lags": int(max_lags),
-            }
-        )
+        rows.append({
+            "criterion": criterion.upper(),
+            "selected_lag": int(lag),
+            "distribution": "gaussian",
+            "max_lags": int(max_lags),
+        })
     return pd.DataFrame(rows)
 
 
 def split_diagnostics(
-    df: pd.DataFrame,
+    dataframe: pd.DataFrame,
     effect: str,
     *,
     event_time: Optional[pd.Timestamp] = None,
@@ -284,7 +297,7 @@ def split_diagnostics(
 ) -> dict:
     """Return one concise description of the algorithmic split."""
     split = find_effect_split(
-        df[effect],
+        dataframe[effect],
         min_I1_length=min_I1_length,
         min_I2_length=min_I2_length,
         return_info=True,
@@ -304,15 +317,15 @@ def split_diagnostics(
             "distance_to_event": None,
         }
 
-    split_time = df.index[split_index]
-    mean_1 = float(df[effect].iloc[:split_index].mean())
-    mean_2 = float(df[effect].iloc[split_index:].mean())
+    split_time = dataframe.index[split_index]
+    mean_1 = float(dataframe[effect].iloc[:split_index].mean())
+    mean_2 = float(dataframe[effect].iloc[split_index:].mean())
     return {
         "effect": effect,
         "split_index": split_index,
         "split_time": split_time,
         "I1_length": split_index,
-        "I2_length": len(df) - split_index,
+        "I2_length": len(dataframe) - split_index,
         "abs_mean_I1": abs(mean_1),
         "abs_mean_I2": abs(mean_2),
         "split_score": split["score"],
@@ -326,7 +339,7 @@ def split_diagnostics(
 
 
 def make_cause_trigger_config(
-    workflow: WhakaariWorkflowConfig,
+    workflow: WorkflowConfig,
     *,
     backend: str,
     lag: Optional[int] = None,
@@ -370,7 +383,7 @@ def make_cause_trigger_config(
 def run_one(
     df_model: pd.DataFrame,
     df_mean: pd.DataFrame,
-    workflow: WhakaariWorkflowConfig,
+    workflow: WorkflowConfig,
     *,
     run_name: str,
     backend: str,
@@ -378,6 +391,7 @@ def run_one(
     cond_ind_test: Optional[str] = None,
     use_contemporaneous_triggers: Optional[bool] = None,
 ) -> tuple[dict, pd.DataFrame]:
+    """Run one backend/lag combination and return result diagnostics."""
     config = make_cause_trigger_config(
         workflow,
         backend=backend,
@@ -393,43 +407,3 @@ def run_one(
         diagnostics.insert(2, "lag", config.lags)
 
     return result, diagnostics
-
-
-def plot_effect_with_split(
-    df: pd.DataFrame,
-    effect: str,
-    result_or_split: Mapping[str, object],
-    *,
-    event_time: Optional[pd.Timestamp] = None,
-    title: Optional[str] = None,
-    event_label: str = "Known eruption time",
-) -> None:
-    """Plot the effect, detected split, and optional contextual event time."""
-    _, ax = plt.subplots(figsize=(16, 4))
-    ax.plot(df.index, df[effect], label=effect, linewidth=0.8)
-
-    split_time = (
-        result_or_split.get("split_timestamp")
-        or result_or_split.get("split_time")
-    )
-    if split_time is not None:
-        ax.axvline(
-            pd.Timestamp(split_time),
-            linestyle="--",
-            label="Detected split",
-        )
-    if event_time is not None:
-        ax.axvline(
-            pd.Timestamp(event_time),
-            linestyle=":",
-            label=event_label,
-        )
-
-    ax.set(
-        title=title or f"{effect}: automatic split with eruption shown for context",
-        xlabel="Time",
-        ylabel="Scaled value",
-    )
-    ax.legend()
-    plt.tight_layout()
-    plt.show()

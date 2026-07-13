@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 import warnings
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -14,6 +15,113 @@ BACKEND_LABELS = {
     "pcmci": "PCMCI",
     "pcmci_plus": "PCMCI+ τ=0",
 }
+
+
+
+def _save_figure(
+    figure,
+    *,
+    filename: str | None,
+    save_dir: str | Path | None,
+    formats: str | Sequence[str] = ("pdf", "png"),
+    dpi: int = 450,
+) -> list[Path]:
+    """Save a figure in one or more formats and return the written paths."""
+    if filename is None or save_dir is None:
+        return []
+
+    output_directory = Path(save_dir)
+    output_directory.mkdir(parents=True, exist_ok=True)
+    output_formats = (
+        (formats,)
+        if isinstance(formats, str)
+        else tuple(formats)
+    )
+    stem = Path(filename).stem
+    saved_paths = []
+
+    for file_format in output_formats:
+        extension = str(file_format).lstrip(".")
+        path = output_directory / f"{stem}.{extension}"
+        figure.savefig(
+            path,
+            bbox_inches="tight",
+            pad_inches=0.055,
+            dpi=dpi,
+            facecolor="white",
+        )
+        saved_paths.append(path)
+
+    return saved_paths
+
+
+def plot_effect_with_split(
+    dataframe: pd.DataFrame,
+    effect: str,
+    result_or_split: Mapping[str, object],
+    *,
+    event_time: pd.Timestamp | None = None,
+    title: str | None = None,
+    event_label: str = "Known event time",
+    filename: str | None = None,
+    save_dir: str | Path | None = None,
+    formats: str | Sequence[str] = ("pdf", "png"),
+    dpi: int = 450,
+):
+    """
+    Plot the effect, automatic split, and optional contextual event time.
+
+    The detected split is dashed and the contextual event is dotted. When
+    ``filename`` and ``save_dir`` are supplied, the same figure is saved in all
+    requested formats before display.
+    """
+    figure, axis = plt.subplots(figsize=(16, 4))
+    axis.plot(
+        dataframe.index,
+        dataframe[effect],
+        label=effect,
+        linewidth=0.8,
+    )
+
+    split_time = result_or_split.get("split_timestamp")
+    if split_time is None:
+        split_time = result_or_split.get("split_time")
+
+    if split_time is not None:
+        axis.axvline(
+            pd.Timestamp(split_time),
+            linestyle="--",
+            label="Detected split",
+        )
+
+    if event_time is not None:
+        axis.axvline(
+            pd.Timestamp(event_time),
+            linestyle=":",
+            label=event_label,
+        )
+
+    axis.set(
+        title=(
+            title
+            or f"{effect}: automatic split with event shown for context"
+        ),
+        xlabel="Time",
+        ylabel="Scaled value",
+    )
+    axis.legend()
+    figure.tight_layout()
+
+    saved_paths = _save_figure(
+        figure,
+        filename=filename,
+        save_dir=save_dir,
+        formats=formats,
+        dpi=dpi,
+    )
+
+    plt.show()
+    return figure, axis, saved_paths
 
 
 def show_table(
