@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Mapping, Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -26,11 +26,6 @@ from whakaari.whakaari_dataset import (
 
 EFFECT = "effect_tremor_5_15_scaled"
 
-DEFAULT_RUN_SPECS = (
-    {"run": "hmml", "backend": "hmml"},
-    {"run": "pcmci", "backend": "pcmci"},
-    {"run": "pcmci_plus", "backend": "pcmci_plus"},
-)
 
 # PCMCI+ extension that also tests eligible directed tau=0 links.
 COMPACT_RUN_SPECS = (
@@ -47,10 +42,8 @@ COMPACT_RUN_SPECS = (
 @dataclass(frozen=True)
 class WhakaariWorkflowConfig:
     effect: str = EFFECT
-    event_time: Optional[pd.Timestamp] = None
     alpha: float = 0.05
     selected_lag: int = 1
-    max_lags: int = 12
     min_I1_length: int = 48
     min_I2_length: int = 48
     distribution: str = "gaussian"
@@ -71,8 +64,6 @@ class WhakaariWorkflowConfig:
     pcmci_contemp_collider_rule: str = "majority"
     pcmci_conflict_resolution: bool = True
     pcmci_plus_use_contemporaneous_triggers: bool = False
-
-    run_specs: Sequence[Mapping[str, object]] = DEFAULT_RUN_SPECS
 
 
 def _resolve_time_column(
@@ -252,25 +243,6 @@ def case_study_interval(
     return case
 
 
-def model_overview(df: pd.DataFrame, effect: str) -> dict:
-    """Return the basic model-frame information needed in the notebook."""
-    if effect not in df.columns:
-        raise ValueError(f"Effect variable {effect!r} is absent.")
-
-    target = df[effect]
-    return {
-        "n_rows": len(df),
-        "n_variables": df.shape[1],
-        "start": df.index.min(),
-        "end": df.index.max(),
-        "frequency": pd.infer_freq(df.index),
-        "effect": effect,
-        "effect_min": float(target.min()),
-        "effect_mean": float(target.mean()),
-        "effect_max": float(target.max()),
-    }
-
-
 def reference_parameter_table(
     df: pd.DataFrame,
     effect: str,
@@ -395,33 +367,6 @@ def make_cause_trigger_config(
     )
 
 
-def result_to_row(run_name: str, result: dict, effect: str) -> dict:
-    """Convert a result to the main one-row notebook summary."""
-    return {
-        "run": run_name,
-        "effect": effect,
-        "backend": result.get("backend"),
-        "lag": result.get("lag"),
-        "split_timestamp": result.get("split_timestamp"),
-        "I1_length": result.get("I1_length"),
-        "I2_length": result.get("I2_length"),
-        "B1": result.get("B_1"),
-        "B2": result.get("B_2"),
-        "trigger_candidates": result.get("T_candidates"),
-        "lagged_candidates": result.get("T_candidates_lagged"),
-        "contemporaneous_candidates": result.get(
-            "T_candidates_contemporaneous"
-        ),
-        "accepted_triggers": result.get("T"),
-        "causes": result.get("C"),
-        "pairs": result.get("pairs"),
-        "n_contemporaneous_links": len(
-            result.get("contemporaneous_links", {})
-        ),
-        "stop_reason": result.get("stop_reason"),
-    }
-
-
 def run_one(
     df_model: pd.DataFrame,
     df_mean: pd.DataFrame,
@@ -432,7 +377,7 @@ def run_one(
     lag: Optional[int] = None,
     cond_ind_test: Optional[str] = None,
     use_contemporaneous_triggers: Optional[bool] = None,
-) -> tuple[dict, pd.DataFrame, dict]:
+) -> tuple[dict, pd.DataFrame]:
     config = make_cause_trigger_config(
         workflow,
         backend=backend,
@@ -447,237 +392,7 @@ def run_one(
         diagnostics.insert(1, "backend", backend)
         diagnostics.insert(2, "lag", config.lags)
 
-    return (
-        result,
-        diagnostics,
-        result_to_row(run_name, result, workflow.effect),
-    )
-
-
-def run_suite(
-    df_model: pd.DataFrame,
-    df_mean: pd.DataFrame,
-    workflow: WhakaariWorkflowConfig,
-    *,
-    run_specs: Optional[Sequence[Mapping[str, object]]] = None,
-    lag: Optional[int] = None,
-    cond_ind_test: Optional[str] = None,
-) -> tuple[dict[str, dict], pd.DataFrame, pd.DataFrame]:
-    """Run the selected backends at one lag."""
-    specs = workflow.run_specs if run_specs is None else run_specs
-    results = {}
-    rows = []
-    diagnostics = []
-
-    for spec in specs:
-        run_name = str(spec["run"])
-        backend = str(spec["backend"])
-        result, diag, row = run_one(
-            df_model,
-            df_mean,
-            workflow,
-            run_name=run_name,
-            backend=backend,
-            lag=lag,
-            cond_ind_test=spec.get("cond_ind_test", cond_ind_test),
-            use_contemporaneous_triggers=spec.get(
-                "use_contemporaneous_triggers"
-            ),
-        )
-        results[run_name] = result
-        rows.append(row)
-        if not diag.empty:
-            diagnostics.append(diag)
-
-    return (
-        results,
-        pd.DataFrame(rows),
-        (
-            pd.concat(diagnostics, ignore_index=True)
-            if diagnostics
-            else pd.DataFrame()
-        ),
-    )
-
-
-def run_sensitivity_grid(
-    df_model: pd.DataFrame,
-    df_mean: pd.DataFrame,
-    workflow: WhakaariWorkflowConfig,
-    *,
-    run_specs: Optional[Sequence[Mapping[str, object]]] = None,
-    lags: Iterable[int] = (1, 2, 3),
-    cond_ind_test: Optional[str] = None,
-) -> pd.DataFrame:
-    """Run a concise backend-by-lag sensitivity grid."""
-    specs = workflow.run_specs if run_specs is None else run_specs
-    rows = []
-
-    for spec in specs:
-        run_name = str(spec["run"])
-        backend = str(spec["backend"])
-        for lag in lags:
-            try:
-                result, diagnostics, _ = run_one(
-                    df_model,
-                    df_mean,
-                    workflow,
-                    run_name=run_name,
-                    backend=backend,
-                    lag=int(lag),
-                    cond_ind_test=spec.get(
-                        "cond_ind_test",
-                        cond_ind_test,
-                    ),
-                    use_contemporaneous_triggers=spec.get(
-                        "use_contemporaneous_triggers"
-                    ),
-                )
-                rows.append(
-                    {
-                        "run": run_name,
-                        "backend": backend,
-                        "lag": int(lag),
-                        "split_timestamp": result.get("split_timestamp"),
-                        "I1_length": result.get("I1_length"),
-                        "I2_length": result.get("I2_length"),
-                        "B_1": result.get("B_1"),
-                        "B_2": result.get("B_2"),
-                        "trigger_candidates": result.get("T_candidates"),
-                        "T_candidates_lagged": result.get(
-                            "T_candidates_lagged"
-                        ),
-                        "T_candidates_contemporaneous": result.get(
-                            "T_candidates_contemporaneous"
-                        ),
-                        "accepted_triggers": result.get("T"),
-                        "causes": result.get("C"),
-                        "pairs": result.get("pairs"),
-                        "n_contemporaneous_links": len(
-                            result.get("contemporaneous_links", {})
-                        ),
-                        "n_diagnostics": len(diagnostics),
-                        "error": None,
-                    }
-                )
-            except Exception as exc:
-                rows.append(
-                    {
-                        "run": run_name,
-                        "backend": backend,
-                        "lag": int(lag),
-                        "error": str(exc),
-                    }
-                )
-
-    return pd.DataFrame(rows)
-
-
-SUMMARY_COLUMNS = [
-    "run",
-    "backend",
-    "lag",
-    "split_timestamp",
-    "I1_length",
-    "I2_length",
-    "B2",
-    "trigger_candidates",
-    "lagged_candidates",
-    "contemporaneous_candidates",
-    "accepted_triggers",
-    "causes",
-    "pairs",
-    "n_contemporaneous_links",
-    "stop_reason",
-]
-
-DIAGNOSTIC_COLUMNS = [
-    "run",
-    "backend",
-    "lag",
-    "trigger",
-    "trigger_source",
-    "cause",
-    "accepted",
-    "p_value",
-    "f_stat",
-    "critical_f",
-    "rss_reduction_ratio",
-    "gamma_2",
-    "reason",
-]
-
-SENSITIVITY_COLUMNS = [
-    "run",
-    "backend",
-    "lag",
-    "split_timestamp",
-    "B_2",
-    "trigger_candidates",
-    "T_candidates_lagged",
-    "T_candidates_contemporaneous",
-    "accepted_triggers",
-    "causes",
-    "pairs",
-    "n_contemporaneous_links",
-    "error",
-]
-
-
-def _select_columns(df: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    return df[[column for column in columns if column in df.columns]].copy()
-
-
-def compact_comparison(comparison: pd.DataFrame) -> pd.DataFrame:
-    return _select_columns(comparison, SUMMARY_COLUMNS)
-
-
-def compact_diagnostics(diagnostics: pd.DataFrame) -> pd.DataFrame:
-    return _select_columns(diagnostics, DIAGNOSTIC_COLUMNS)
-
-
-def compact_sensitivity(sensitivity: pd.DataFrame) -> pd.DataFrame:
-    return _select_columns(sensitivity, SENSITIVITY_COLUMNS)
-
-
-def compact_grid_outputs(
-    sensitivity: pd.DataFrame,
-    *,
-    mode: str = "pairs",
-) -> pd.DataFrame:
-    """Return sensitivity rows containing pairs or any discovered signal."""
-    out = compact_sensitivity(sensitivity)
-    if out.empty:
-        return out
-
-    def nonempty(value) -> bool:
-        return isinstance(value, (list, tuple, set, dict)) and len(value) > 0
-
-    if mode == "pairs":
-        mask = out["pairs"].apply(nonempty)
-    elif mode == "signals":
-        mask = (
-            out["B_2"].apply(nonempty)
-            | out["trigger_candidates"].apply(nonempty)
-            | out["pairs"].apply(nonempty)
-            | (out["n_contemporaneous_links"].fillna(0) > 0)
-        )
-    else:
-        raise ValueError("mode must be 'pairs' or 'signals'.")
-
-    return out.loc[mask].reset_index(drop=True)
-
-
-def compact_grid_errors(sensitivity: pd.DataFrame) -> pd.DataFrame:
-    out = compact_sensitivity(sensitivity)
-    if out.empty or "error" not in out.columns:
-        return pd.DataFrame()
-    mask = out["error"].apply(
-        lambda value: isinstance(value, str) and bool(value)
-    )
-    return out.loc[mask].reset_index(drop=True)
+    return result, diagnostics
 
 
 def plot_effect_with_split(
