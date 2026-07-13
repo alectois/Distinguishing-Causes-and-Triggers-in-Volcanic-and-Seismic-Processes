@@ -666,11 +666,10 @@ def build_summary_export(
     lag_references: pd.DataFrame,
     backend_summary: pd.DataFrame,
     pair_summary: pd.DataFrame,
-    conclusion: str,
     errors: pd.DataFrame,
     delayed_scan: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Build one tidy summary of design, stability, and interpretation."""
+    """Build one tidy summary of design, stability."""
     rows = []
 
     for _, row in design.iterrows():
@@ -740,11 +739,6 @@ def build_summary_export(
             "metric": "error_count",
             "value": int(len(errors)),
         },
-        {
-            "section": "interpretation",
-            "metric": "conclusion",
-            "value": conclusion,
-        },
     ])
 
     return pd.DataFrame(rows).reindex(columns=[
@@ -769,7 +763,6 @@ def export_audit_csvs(
     lag_references: pd.DataFrame,
     backend_summary: pd.DataFrame,
     pair_summary: pd.DataFrame,
-    conclusion: str,
     variable_labels: Mapping[str, str] | None = None,
     delayed_scan: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
@@ -839,7 +832,6 @@ def export_audit_csvs(
         lag_references=lag_references,
         backend_summary=backend_summary,
         pair_summary=pair_summary,
-        conclusion=conclusion,
         errors=errors,
         delayed_scan=delayed_scan,
     )
@@ -877,7 +869,7 @@ def export_audit_csvs(
 
     summary_description = (
         "Design, split, lag references, backend stability, "
-        "pair stability, and conclusion."
+        "pair stability."
     )
     if delayed_scan is not None:
         summary_description = (

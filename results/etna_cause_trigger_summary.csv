@@ -3,21 +3,23 @@ design,,,,,Case interval,2008-05-09 06:00:00+00:00 to 2008-05-15 05:00:00+00:00 
 design,,,,,Reference coverage,336/336 h (100.0%),
 design,,,,,Wenchuan arrival,2008-05-12 06:28:00+00:00,
 design,,,,,Effect maximum,2008-05-13 13:00:00+00:00 (1 days 06:32:00),
-design,,,,,Automatic split,"2008-05-13 06:00:00+00:00; I1=96 h, I2=48 h",
-design,,,,,Split status,Boundary solution; 0 days 23:32:00 after Wenchuan,
+design,,,,,Automatic split,"2008-05-12 06:00:00+00:00; I1=72 h, I2=72 h",
+design,,,,,Split status,Boundary solution; -1 days +23:32:00 after Wenchuan,
 design,,,,,VAR lag references,AIC=12 h; BIC=1 h,
 lag_reference,,,,12.0,AIC,12 h,"{""distribution"": ""gaussian"", ""maximum_lag_tested"": 12}"
 lag_reference,,,,1.0,BIC,1 h,"{""distribution"": ""gaussian"", ""maximum_lag_tested"": 12}"
-backend_stability,HMML,,,,result,Accepted pair(s) at 10 lag(s),"{""Successful runs"": ""12/12"", ""Post-split parents"": ""11/12"", ""Trigger candidates"": ""11/12"", ""Accepted-pair lags"": ""10/12"", ""τ=0-link lags"": ""0/12""}"
-backend_stability,PCMCI,,,,result,Candidates found; none passed moderation,"{""Successful runs"": ""12/12"", ""Post-split parents"": ""5/12"", ""Trigger candidates"": ""5/12"", ""Accepted-pair lags"": ""0/12"", ""τ=0-link lags"": ""0/12""}"
-backend_stability,PCMCI+ τ=0,,,,result,Accepted pair(s) at 1 lag(s),"{""Successful runs"": ""12/12"", ""Post-split parents"": ""5/12"", ""Trigger candidates"": ""6/12"", ""Accepted-pair lags"": ""1/12"", ""τ=0-link lags"": ""8/12""}"
-pair_stability,HMML,Past local seismicity,Teleseismic RMS,,accepted_lags,"[2, 3, 5, 6, 7, 9, 10]","{""lag_support"": ""7/12"", ""longest_adjacent_run"": 3}"
-pair_stability,HMML,Past local seismicity,Soil CO₂,,accepted_lags,"[2, 8]","{""lag_support"": ""2/12"", ""longest_adjacent_run"": 1}"
-pair_stability,HMML,Soil CO₂,Past local seismicity,,accepted_lags,[10],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
-pair_stability,HMML,Rainfall,Past local seismicity,,accepted_lags,[7],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
-pair_stability,HMML,Rainfall,Teleseismic RMS,,accepted_lags,[4],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
-pair_stability,HMML,Teleseismic RMS,Past local seismicity,,accepted_lags,[11],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
-pair_stability,PCMCI+ τ=0,Teleseismic RMS,Past local seismicity,,accepted_lags,[3],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
+backend_stability,HMML,,,,result,Accepted pair(s) at 6 lag(s),"{""Successful runs"": ""12/12"", ""Post-split parents"": ""7/12"", ""Trigger candidates"": ""7/12"", ""Accepted-pair lags"": ""6/12"", ""τ=0-link lags"": ""0/12""}"
+backend_stability,PCMCI,,,,result,Accepted pair(s) at 4 lag(s),"{""Successful runs"": ""12/12"", ""Post-split parents"": ""9/12"", ""Trigger candidates"": ""9/12"", ""Accepted-pair lags"": ""4/12"", ""τ=0-link lags"": ""0/12""}"
+backend_stability,PCMCI+ τ=0,,,,result,Accepted pair(s) at 5 lag(s),"{""Successful runs"": ""12/12"", ""Post-split parents"": ""7/12"", ""Trigger candidates"": ""7/12"", ""Accepted-pair lags"": ""5/12"", ""τ=0-link lags"": ""2/12""}"
+pair_stability,HMML,Past local seismicity,Teleseismic RMS,,accepted_lags,"[6, 7, 8, 9, 10]","{""lag_support"": ""5/12"", ""longest_adjacent_run"": 5}"
+pair_stability,PCMCI,Soil CO₂,Teleseismic RMS,,accepted_lags,"[6, 7, 8, 10]","{""lag_support"": ""4/12"", ""longest_adjacent_run"": 3}"
+pair_stability,PCMCI,Teleseismic RMS,Soil CO₂,,accepted_lags,"[6, 7, 8, 10]","{""lag_support"": ""4/12"", ""longest_adjacent_run"": 3}"
+pair_stability,PCMCI+ τ=0,Soil CO₂,Teleseismic RMS,,accepted_lags,"[4, 5, 11]","{""lag_support"": ""3/12"", ""longest_adjacent_run"": 2}"
+pair_stability,PCMCI+ τ=0,Teleseismic RMS,Soil CO₂,,accepted_lags,"[4, 5, 11]","{""lag_support"": ""3/12"", ""longest_adjacent_run"": 2}"
+pair_stability,PCMCI+ τ=0,Soil CO₂,Past local seismicity,,accepted_lags,"[6, 10]","{""lag_support"": ""2/12"", ""longest_adjacent_run"": 1}"
+pair_stability,HMML,Soil CO₂,Past local seismicity,,accepted_lags,[11],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
+pair_stability,HMML,Soil CO₂,Teleseismic RMS,,accepted_lags,[11],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
+pair_stability,HMML,Past local seismicity,Soil CO₂,,accepted_lags,[11],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
 delayed_lag_scan,,,,0.0,correlation,0.3698680148453089,"{""aligned_rows"": 144, ""descriptive_only"": true}"
 delayed_lag_scan,,,,1.0,correlation,0.37847680364097164,"{""aligned_rows"": 143, ""descriptive_only"": true}"
 delayed_lag_scan,,,,2.0,correlation,0.3512581309482146,"{""aligned_rows"": 142, ""descriptive_only"": true}"
@@ -50,4 +52,3 @@ delayed_lag_scan,,,,28.0,correlation,0.4890428149785223,"{""aligned_rows"": 116,
 delayed_lag_scan,,,,29.0,correlation,0.4869948504483255,"{""aligned_rows"": 115, ""descriptive_only"": true}"
 delayed_lag_scan,,,,30.0,correlation,0.4641533466383363,"{""aligned_rows"": 114, ""descriptive_only"": true}"
 execution,,,,,error_count,0,
-interpretation,,,,,conclusion,Exploratory HMML-specific cause–trigger candidate; no backend-consistent identification of Wenchuan as a trigger under the current split-based architecture.,

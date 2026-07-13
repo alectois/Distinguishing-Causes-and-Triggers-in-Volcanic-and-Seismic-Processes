@@ -3,16 +3,12 @@ design,,,,,Case interval,2019-11-25 01:00:00+00:00 to 2019-12-12 00:00:00+00:00 
 design,,,,,Reference coverage,327/336 h (97.3%),
 design,,,,,Eruption time,2019-12-09 01:11:00+00:00,
 design,,,,,Effect maximum,2019-12-09 01:00:00+00:00 (-1 days +23:49:00),
-design,,,,,Automatic split,"2019-12-10 01:00:00+00:00; I1=360 h, I2=48 h",
-design,,,,,Split status,Boundary solution; None after eruption,
+design,,,,,Automatic split,"2019-12-09 01:00:00+00:00; I1=336 h, I2=72 h",
+design,,,,,Split status,Boundary solution; -1 days +23:49:00 after eruption,
 design,,,,,VAR lag references,AIC=6 h; BIC=2 h,
 lag_reference,,,,6.0,AIC,6 h,"{""distribution"": ""gaussian"", ""maximum_lag_tested"": 12}"
 lag_reference,,,,2.0,BIC,2 h,"{""distribution"": ""gaussian"", ""maximum_lag_tested"": 12}"
-backend_stability,HMML,,,,result,Accepted pair(s) at 5 lag(s),"{""Successful runs"": ""12/12"", ""Post-split parents"": ""8/12"", ""Trigger candidates"": ""8/12"", ""Accepted-pair lags"": ""5/12"", ""τ=0-link lags"": ""0/12""}"
+backend_stability,HMML,,,,result,No post-split candidate structure,"{""Successful runs"": ""12/12"", ""Post-split parents"": ""0/12"", ""Trigger candidates"": ""0/12"", ""Accepted-pair lags"": ""0/12"", ""τ=0-link lags"": ""0/12""}"
 backend_stability,PCMCI,,,,result,Candidates found; none passed moderation,"{""Successful runs"": ""12/12"", ""Post-split parents"": ""7/12"", ""Trigger candidates"": ""7/12"", ""Accepted-pair lags"": ""0/12"", ""τ=0-link lags"": ""0/12""}"
-backend_stability,PCMCI+ τ=0,,,,result,Candidates found; none passed moderation,"{""Successful runs"": ""12/12"", ""Post-split parents"": ""7/12"", ""Trigger candidates"": ""7/12"", ""Accepted-pair lags"": ""0/12"", ""τ=0-link lags"": ""1/12""}"
-pair_stability,HMML,Hydrothermal RMS (2–5 Hz),Past spectral contrast,,accepted_lags,"[5, 6, 7, 9, 10]","{""lag_support"": ""5/12"", ""longest_adjacent_run"": 3}"
-pair_stability,HMML,Past spectral contrast,Hydrothermal RMS (2–5 Hz),,accepted_lags,"[5, 6, 7]","{""lag_support"": ""3/12"", ""longest_adjacent_run"": 3}"
-pair_stability,HMML,Hydrothermal RMS (2–5 Hz),GNSS deformation,,accepted_lags,[9],"{""lag_support"": ""1/12"", ""longest_adjacent_run"": 1}"
+backend_stability,PCMCI+ τ=0,,,,result,No post-split candidate structure,"{""Successful runs"": ""12/12"", ""Post-split parents"": ""0/12"", ""Trigger candidates"": ""0/12"", ""Accepted-pair lags"": ""0/12"", ""τ=0-link lags"": ""2/12""}"
 execution,,,,,error_count,0,
-interpretation,,,,,conclusion,Coherent HMML-specific coupling between hydrothermal RMS and past spectral contrast; no backend-consistent or directionally unique cause–trigger pair.,
