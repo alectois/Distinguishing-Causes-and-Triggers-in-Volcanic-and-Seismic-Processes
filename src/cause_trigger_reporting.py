@@ -68,13 +68,6 @@ def plot_effect_with_split(
     formats: str | Sequence[str] = ("pdf", "png"),
     dpi: int = 450,
 ):
-    """
-    Plot the effect, automatic split, and optional contextual event time.
-
-    The detected split is dashed and the contextual event is dotted. When
-    ``filename`` and ``save_dir`` are supplied, the same figure is saved in all
-    requested formats before display.
-    """
     figure, axis = plt.subplots(figsize=(16, 4))
     axis.plot(
         dataframe.index,
@@ -128,7 +121,6 @@ def show_table(
     frame: pd.DataFrame,
     caption: str | None = None,
 ):
-    """Display a compact dataframe table in a notebook."""
     from IPython.display import display
 
     styler = (
@@ -195,7 +187,6 @@ def readable_name(
     value,
     variable_labels: Mapping[str, str] | None = None,
 ):
-    """Return a readable variable label while preserving missing values."""
     if value is None:
         return value
     if isinstance(value, (float, np.floating)) and np.isnan(value):
@@ -501,6 +492,161 @@ def pair_stability_summary(
     }).reset_index(drop=True)
 
 
+
+
+def min_i2_pair_stability_summary(
+    grid: pd.DataFrame,
+    *,
+    min_i2_values: Sequence[int],
+    primary_min_i2: int,
+    variable_labels: Mapping[str, str] | None = None,
+    backend_labels: Mapping[str, str] = BACKEND_LABELS,
+) -> pd.DataFrame:
+    """Summarize accepted-pair recurrence across minimum-I2 settings."""
+    columns = [
+        "Backend",
+        "Lag",
+        "Cause",
+        "Trigger",
+        "Accepted MIN_I2 lengths",
+        "MIN_I2 support",
+        "Primary setting supported",
+    ]
+    required = {"run", "backend", "lag", "min_I2_length", "pairs", "error"}
+    if grid.empty or not required.issubset(grid.columns):
+        return pd.DataFrame(columns=columns)
+
+    records = []
+    successful = grid.loc[grid["error"].isna()]
+    for _, row in successful.iterrows():
+        pairs = row.get("pairs")
+        if not isinstance(pairs, list):
+            continue
+
+        for pair in pairs:
+            if (
+                not isinstance(pair, (list, tuple))
+                or len(pair) != 2
+            ):
+                continue
+            records.append({
+                "run": row["run"],
+                "backend": row["backend"],
+                "lag": int(row["lag"]),
+                "min_I2_length": int(row["min_I2_length"]),
+                "cause": pair[0],
+                "trigger": pair[1],
+            })
+
+    if not records:
+        return pd.DataFrame(columns=columns)
+
+    summary = (
+        pd.DataFrame(records)
+        .drop_duplicates()
+        .groupby(
+            ["run", "backend", "lag", "cause", "trigger"],
+            as_index=False,
+            sort=False,
+        )
+        .agg(
+            min_i2_lengths=(
+                "min_I2_length",
+                lambda values: sorted(
+                    {int(value) for value in values}
+                ),
+            ),
+        )
+    )
+    summary["n_settings"] = summary["min_i2_lengths"].map(len)
+    summary["primary_supported"] = summary["min_i2_lengths"].map(
+        lambda values: int(primary_min_i2) in values
+    )
+    summary = summary.sort_values(
+        [
+            "n_settings",
+            "primary_supported",
+            "backend",
+            "lag",
+            "cause",
+            "trigger",
+        ],
+        ascending=[False, False, True, True, True, True],
+    )
+
+    labels = {} if variable_labels is None else variable_labels
+    denominator = len(tuple(min_i2_values))
+
+    return pd.DataFrame({
+        "Backend": summary["backend"].map(
+            lambda value: backend_labels.get(str(value), str(value))
+        ),
+        "Lag": summary["lag"].astype(int),
+        "Cause": summary["cause"].map(
+            lambda value: readable_name(value, labels)
+        ),
+        "Trigger": summary["trigger"].map(
+            lambda value: readable_name(value, labels)
+        ),
+        "Accepted MIN_I2 lengths": summary["min_i2_lengths"].astype(str),
+        "MIN_I2 support": (
+            summary["n_settings"].astype(int).astype(str)
+            + f"/{denominator}"
+        ),
+        "Primary setting supported": summary["primary_supported"],
+    }).reset_index(drop=True)
+
+
+def build_min_i2_summary_export(
+    split_sensitivity: pd.DataFrame,
+    pair_sensitivity: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build tidy summary rows for the minimum-I2 sensitivity experiment."""
+    rows = []
+
+    for _, row in split_sensitivity.iterrows():
+        rows.append({
+            "section": "min_i2_split_sensitivity",
+            "metric": f"min_I2={int(row['min_I2_length'])} h",
+            "value": row.get("split_time"),
+            "details": {
+                "I1_length": row.get("I1_length"),
+                "I2_length": row.get("I2_length"),
+                "split_score": row.get("split_score"),
+                "boundary_split": row.get("boundary_split"),
+                "distance_to_event": row.get("distance_to_event"),
+            },
+        })
+
+    for _, row in pair_sensitivity.iterrows():
+        rows.append({
+            "section": "min_i2_pair_sensitivity",
+            "backend": row.get("Backend"),
+            "cause": row.get("Cause"),
+            "trigger": row.get("Trigger"),
+            "lag": row.get("Lag"),
+            "metric": "accepted_min_I2_lengths",
+            "value": row.get("Accepted MIN_I2 lengths"),
+            "details": {
+                "min_I2_support": row.get("MIN_I2 support"),
+                "primary_setting_supported": row.get(
+                    "Primary setting supported"
+                ),
+            },
+        })
+
+    return pd.DataFrame(rows).reindex(columns=[
+        "section",
+        "backend",
+        "cause",
+        "trigger",
+        "lag",
+        "metric",
+        "value",
+        "details",
+    ])
+
+
 def reference_criteria_by_lag(
     lag_references: pd.DataFrame,
 ) -> dict[int, str]:
@@ -765,6 +911,7 @@ def export_audit_csvs(
     pair_summary: pd.DataFrame,
     variable_labels: Mapping[str, str] | None = None,
     delayed_scan: pd.DataFrame | None = None,
+    extra_summary: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Write exactly three audit CSVs and return a concise file manifest."""
     results_dir = Path(results_dir)
@@ -813,15 +960,26 @@ def export_audit_csvs(
                 lambda value: readable_name(value, labels)
             )
         )
-        moderation_export = moderation_export.sort_values(
-            [
+        sort_columns = [
+            column
+            for column in (
+                "experiment_type",
+                "min_I2_length",
                 "backend",
                 "lag",
                 "accepted",
                 "cause",
                 "trigger",
-            ],
-            ascending=[True, True, False, True, True],
+            )
+            if column in moderation_export.columns
+        ]
+        ascending = [
+            False if column == "accepted" else True
+            for column in sort_columns
+        ]
+        moderation_export = moderation_export.sort_values(
+            sort_columns,
+            ascending=ascending,
         )
 
     errors = lag_grid.loc[
@@ -835,6 +993,14 @@ def export_audit_csvs(
         errors=errors,
         delayed_scan=delayed_scan,
     )
+    if extra_summary is not None and not extra_summary.empty:
+        summary_export = pd.concat(
+            [
+                summary_export,
+                extra_summary.reindex(columns=summary_export.columns),
+            ],
+            ignore_index=True,
+        )
 
     paths = {
         "runs": (
@@ -868,9 +1034,14 @@ def export_audit_csvs(
     )
 
     summary_description = (
-        "Design, split, lag references, backend stability, "
+        "Design, primary split, lag references, backend stability, "
         "pair stability."
     )
+    if extra_summary is not None and not extra_summary.empty:
+        summary_description = (
+            summary_description[:-1]
+            + ", plus targeted minimum-I2 sensitivity summaries."
+        )
     if delayed_scan is not None:
         summary_description = (
             summary_description[:-1]
