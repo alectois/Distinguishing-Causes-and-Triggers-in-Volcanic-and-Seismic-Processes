@@ -86,15 +86,15 @@ WHAKAARI_LOG_Y_COLS = {
 WHAKAARI_AXIS_LABELS = {
     "hydro_2_5": (
         "Hydrothermal RMS, 2–5 Hz",
-        "RMS velocity"
+        "RMS ground velocity (m s⁻¹)",
     ),
     "spectral_log_ratio_4p5_8_over_8_16": (
         "Past-smoothed spectral contrast, 4.5–8 / 8–16 Hz",
-        "Log amplitude ratio",
+        "Log RMS-amplitude contrast",
     ),
     "effect_tremor_5_15": (
         "Tremor anomaly (Effect), 5–15 Hz",
-        "log-RMS excess"
+        "log-RMS excess",
     ),
     "rainfall_mm": (
         "Hourly precipitation",
@@ -102,7 +102,7 @@ WHAKAARI_AXIS_LABELS = {
     ),
     "pressure_drop": (
         "Atmospheric pressure drop",
-        "hPa"
+        "hPa",
     ),
     "GNSS_deformation_rate": (
         "Lagged daily GNSS deformation change",
