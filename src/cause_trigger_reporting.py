@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
@@ -11,11 +12,10 @@ import pandas as pd
 
 
 BACKEND_LABELS = {
-    "hmml": "HMML",
+    "hmml": "HMML (baseline)",
     "pcmci": "PCMCI",
     "pcmci_plus": "PCMCI+ τ=0",
 }
-
 
 
 def _save_figure(
@@ -38,7 +38,7 @@ def _save_figure(
         else tuple(formats)
     )
     stem = Path(filename).stem
-    saved_paths = []
+    saved_paths: list[Path] = []
 
     for file_format in output_formats:
         extension = str(file_format).lstrip(".")
@@ -55,19 +55,27 @@ def _save_figure(
     return saved_paths
 
 
-def plot_effect_with_split(
+def plot_effect_with_splits(
     dataframe: pd.DataFrame,
     effect: str,
-    result_or_split: Mapping[str, object],
+    split_summary: pd.DataFrame,
     *,
     event_time: pd.Timestamp | None = None,
     title: str | None = None,
-    event_label: str = "Known event time",
+    event_label: str = "Contextual event time",
     filename: str | None = None,
     save_dir: str | Path | None = None,
     formats: str | Sequence[str] = ("pdf", "png"),
     dpi: int = 450,
 ):
+    """Plot the effect with all distinct splits induced by the MIN_I2 grid."""
+    required = {"min_I2_length", "split_time"}
+    missing = sorted(required - set(split_summary.columns))
+    if missing:
+        raise ValueError(
+            f"split_summary is missing required columns: {missing}"
+        )
+
     figure, axis = plt.subplots(figsize=(16, 4))
     axis.plot(
         dataframe.index,
@@ -76,31 +84,43 @@ def plot_effect_with_split(
         linewidth=0.8,
     )
 
-    split_time = result_or_split.get("split_timestamp")
-    if split_time is None:
-        split_time = result_or_split.get("split_time")
-
-    if split_time is not None:
-        axis.axvline(
-            pd.Timestamp(split_time),
-            linestyle="--",
-            label="Detected split",
+    valid_splits = split_summary.dropna(subset=["split_time"]).copy()
+    if not valid_splits.empty:
+        valid_splits["split_time"] = pd.to_datetime(
+            valid_splits["split_time"],
+            utc=True,
         )
+
+        grouped = (
+            valid_splits
+            .groupby("split_time", sort=True)["min_I2_length"]
+            .apply(lambda values: sorted({int(value) for value in values}))
+        )
+
+        for split_time, min_i2_values in grouped.items():
+            values_text = ", ".join(str(value) for value in min_i2_values)
+            axis.axvline(
+                split_time,
+                linestyle="--",
+                linewidth=1.0,
+                label=f"Detected split (min I2: {values_text} h)",
+            )
 
     if event_time is not None:
         axis.axvline(
             pd.Timestamp(event_time),
             linestyle=":",
+            linewidth=1.0,
             label=event_label,
         )
 
     axis.set(
         title=(
             title
-            or f"{effect}: automatic split with event shown for context"
+            or f"{effect}: splits across the minimum-I2 grid"
         ),
         xlabel="Time",
-        ylabel="Scaled value",
+        ylabel="Reference-standardised value",
     )
     axis.legend()
     figure.tight_layout()
@@ -121,6 +141,7 @@ def show_table(
     frame: pd.DataFrame,
     caption: str | None = None,
 ):
+    """Display a compact dataframe table in a notebook."""
     from IPython.display import display
 
     styler = (
@@ -199,23 +220,27 @@ def readable_name(
     )
 
 
-def run_complete_grid(
+def run_parameter_grid(
     df_model: pd.DataFrame,
     df_mean: pd.DataFrame,
-    workflow,
+    workflow_template,
     *,
     run_one: Callable,
     run_specs: Sequence[Mapping[str, object]],
+    min_i2_values: Sequence[int],
     lags: Sequence[int],
     cond_ind_test: str,
+    metadata: Mapping[str, object] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Run every backend–lag combination once and collect all diagnostics.
+    Run the complete MIN_I2 × backend × maximum-lag-order experiment.
 
-    Failed combinations are retained as rows so the audit output is complete.
+    Every requested configuration is retained, including failed or empty runs.
+    ``workflow_template.min_I2_length`` is overwritten for every grid value.
     """
     rows: list[dict] = []
     diagnostic_frames: list[pd.DataFrame] = []
+    metadata = {} if metadata is None else dict(metadata)
 
     with warnings.catch_warnings():
         warnings.filterwarnings(
@@ -225,77 +250,134 @@ def run_complete_grid(
             module=r"scipy\.optimize\._optimize",
         )
 
-        for spec in run_specs:
-            run_name = str(spec["run"])
-            backend = str(spec["backend"])
+        for min_i2_length in min_i2_values:
+            current_workflow = replace(
+                workflow_template,
+                min_I2_length=int(min_i2_length),
+            )
 
-            for lag in lags:
-                try:
-                    output = run_one(
-                        df_model,
-                        df_mean,
-                        workflow,
-                        run_name=run_name,
-                        backend=backend,
-                        lag=int(lag),
-                        cond_ind_test=spec.get(
-                            "cond_ind_test",
-                            cond_ind_test,
-                        ),
-                        use_contemporaneous_triggers=spec.get(
-                            "use_contemporaneous_triggers"
-                        ),
-                    )
-                    result, diagnostics = output[:2]
+            for spec in run_specs:
+                run_name = str(spec["run"])
+                backend = str(spec["backend"])
 
-                    rows.append({
+                for lag in lags:
+                    common = {
+                        "experiment_type": (
+                            "min_I2_backend_max_lag_grid"
+                        ),
+                        "min_I2_length": int(min_i2_length),
                         "run": run_name,
                         "backend": backend,
                         "lag": int(lag),
-                        "split_timestamp": result.get(
-                            "split_timestamp"
-                        ),
-                        "I1_length": result.get("I1_length"),
-                        "I2_length": result.get("I2_length"),
-                        "B_1": result.get("B_1"),
-                        "B_2": result.get("B_2"),
-                        "trigger_candidates": result.get(
-                            "T_candidates"
-                        ),
-                        "T_candidates_lagged": result.get(
-                            "T_candidates_lagged"
-                        ),
-                        "T_candidates_contemporaneous": result.get(
-                            "T_candidates_contemporaneous"
-                        ),
-                        "accepted_triggers": result.get("T"),
-                        "causes": result.get("C"),
-                        "pairs": result.get("pairs"),
-                        "n_contemporaneous_links": len(
-                            result.get(
-                                "contemporaneous_links",
-                                {},
+                        **metadata,
+                    }
+
+                    try:
+                        result, diagnostics = run_one(
+                            df_model,
+                            df_mean,
+                            current_workflow,
+                            run_name=run_name,
+                            backend=backend,
+                            lag=int(lag),
+                            cond_ind_test=spec.get(
+                                "cond_ind_test",
+                                cond_ind_test,
+                            ),
+                            use_contemporaneous_triggers=spec.get(
+                                "use_contemporaneous_triggers"
+                            ),
+                        )
+
+                        rows.append({
+                            **common,
+                            "split_timestamp": result.get(
+                                "split_timestamp"
+                            ),
+                            "split_score": result.get("split_score"),
+                            "boundary_split": result.get(
+                                "boundary_split"
+                            ),
+                            "I1_length": result.get("I1_length"),
+                            "I2_length": result.get("I2_length"),
+                            "B_1": result.get("B_1"),
+                            "B_2": result.get("B_2"),
+                            "trigger_candidates": result.get(
+                                "T_candidates"
+                            ),
+                            "T_candidates_lagged": result.get(
+                                "T_candidates_lagged"
+                            ),
+                            "T_candidates_contemporaneous": result.get(
+                                "T_candidates_contemporaneous"
+                            ),
+                            "accepted_triggers": result.get("T"),
+                            "causes": result.get("C"),
+                            "pairs": result.get("pairs"),
+                            "n_contemporaneous_links": len(
+                                result.get(
+                                    "contemporaneous_links",
+                                    {},
+                                )
+                            ),
+                            "n_diagnostics": len(diagnostics),
+                            "stop_reason": result.get("stop_reason"),
+                            "error": None,
+                        })
+
+                        if not diagnostics.empty:
+                            diagnostic_frames.append(
+                                diagnostics.assign(
+                                    experiment_type=common[
+                                        "experiment_type"
+                                    ],
+                                    min_I2_length=int(
+                                        min_i2_length
+                                    ),
+                                    **metadata,
+                                )
                             )
-                        ),
-                        "n_diagnostics": len(diagnostics),
-                        "stop_reason": result.get("stop_reason"),
-                        "error": None,
-                    })
 
-                    if not diagnostics.empty:
-                        diagnostic_frames.append(diagnostics)
+                    except Exception as exc:
+                        rows.append({
+                            **common,
+                            "error": str(exc),
+                        })
 
-                except Exception as exc:
-                    rows.append({
-                        "run": run_name,
-                        "backend": backend,
-                        "lag": int(lag),
-                        "error": str(exc),
-                    })
+    grid_columns = [
+        "experiment_type",
+        "min_I2_length",
+        "run",
+        "backend",
+        "lag",
+        *metadata.keys(),
+        "split_timestamp",
+        "split_score",
+        "boundary_split",
+        "I1_length",
+        "I2_length",
+        "B_1",
+        "B_2",
+        "trigger_candidates",
+        "T_candidates_lagged",
+        "T_candidates_contemporaneous",
+        "accepted_triggers",
+        "causes",
+        "pairs",
+        "n_contemporaneous_links",
+        "n_diagnostics",
+        "stop_reason",
+        "error",
+    ]
+    grid = pd.DataFrame(rows).reindex(columns=grid_columns)
+    if grid.empty:
+        return grid, pd.DataFrame()
 
-    grid = pd.DataFrame(rows)
     grid["effective_I2_rows"] = (
-        pd.to_numeric(grid.get("I2_length"), errors="coerce")
+        pd.to_numeric(
+            grid.get("I2_length"),
+            errors="coerce",
+        )
         - pd.to_numeric(grid["lag"], errors="coerce")
     )
 
@@ -316,22 +398,76 @@ def run_complete_grid(
             "rss_reduction_ratio",
             "gamma_2",
             "reason",
+            "experiment_type",
+            "min_I2_length",
+            *metadata.keys(),
         ])
     )
+
+    backend_order = {
+        str(spec["backend"]): position
+        for position, spec in enumerate(run_specs)
+    }
+    grid["_backend_order"] = grid["backend"].map(backend_order)
+    grid = (
+        grid
+        .sort_values(
+            ["min_I2_length", "_backend_order", "lag"],
+            kind="stable",
+        )
+        .drop(columns="_backend_order")
+        .reset_index(drop=True)
+    )
+
+    if not diagnostics.empty:
+        diagnostics["_backend_order"] = diagnostics["backend"].map(
+            backend_order
+        )
+        diagnostics = (
+            diagnostics
+            .sort_values(
+                [
+                    "min_I2_length",
+                    "_backend_order",
+                    "lag",
+                    "accepted",
+                    "cause",
+                    "trigger",
+                ],
+                ascending=[True, True, True, False, True, True],
+                kind="stable",
+            )
+            .drop(columns="_backend_order")
+            .reset_index(drop=True)
+        )
+
     return grid, diagnostics
 
 
-def backend_stability_summary(
+def backend_min_i2_summary(
     grid: pd.DataFrame,
     *,
     lag_count: int,
     backend_labels: Mapping[str, str] = BACKEND_LABELS,
 ) -> pd.DataFrame:
-    """Summarize signal progression for each causal-discovery backend."""
-    rows = []
+    """Summarise each backend separately at every minimum-I2 setting."""
+    columns = [
+        "Backend",
+        "Minimum I2 (h)",
+        "Successful runs",
+        "Post-split parents",
+        "Trigger candidates",
+        "Accepted-pair lag orders",
+        "τ=0-link lag orders",
+        "Result",
+    ]
+    required = {"run", "backend", "lag", "min_I2_length", "error"}
+    if grid.empty or not required.issubset(grid.columns):
+        return pd.DataFrame(columns=columns)
 
-    for (_, backend), group in grid.groupby(
-        ["run", "backend"],
+    rows = []
+    for (_, backend, min_i2), group in grid.groupby(
+        ["run", "backend", "min_I2_length"],
         dropna=False,
         sort=False,
     ):
@@ -370,149 +506,59 @@ def backend_stability_summary(
         )
 
         if n_pairs:
-            result = f"Accepted pair(s) at {n_pairs} lag(s)"
+            result = f"Accepted pair(s) at {n_pairs} lag order(s)"
         elif n_candidates:
             result = "Candidates found; none passed moderation"
+        elif n_b2:
+            result = "Post-split parents found; no trigger candidates"
         else:
-            result = "No post-split candidate structure"
+            result = "No post-split parent structure"
 
         rows.append({
             "Backend": backend_labels.get(
                 str(backend),
                 str(backend),
             ),
-            "Successful runs": (
-                f"{len(successful)}/{lag_count}"
-            ),
+            "Minimum I2 (h)": int(min_i2),
+            "Successful runs": f"{len(successful)}/{lag_count}",
             "Post-split parents": f"{n_b2}/{lag_count}",
-            "Trigger candidates": (
-                f"{n_candidates}/{lag_count}"
-            ),
-            "Accepted-pair lags": f"{n_pairs}/{lag_count}",
-            "τ=0-link lags": f"{n_tau0}/{lag_count}",
+            "Trigger candidates": f"{n_candidates}/{lag_count}",
+            "Accepted-pair lag orders": f"{n_pairs}/{lag_count}",
+            "τ=0-link lag orders": f"{n_tau0}/{lag_count}",
             "Result": result,
         })
 
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows).reindex(columns=columns)
 
 
-def pair_stability_summary(
-    grid: pd.DataFrame,
-    *,
-    lag_count: int,
-    variable_labels: Mapping[str, str] | None = None,
-    backend_labels: Mapping[str, str] = BACKEND_LABELS,
-) -> pd.DataFrame:
-    """Summarize accepted pair recurrence and adjacent-lag stability."""
-    records = []
-
-    for _, row in grid.loc[grid["error"].isna()].iterrows():
-        pairs = row.get("pairs")
-        if not isinstance(pairs, list):
-            continue
-
-        for pair in pairs:
-            if (
-                not isinstance(pair, (list, tuple))
-                or len(pair) != 2
-            ):
-                continue
-            records.append({
-                "run": row["run"],
-                "backend": row["backend"],
-                "lag": int(row["lag"]),
-                "cause": pair[0],
-                "trigger": pair[1],
-            })
-
-    columns = [
-        "Backend",
-        "Cause",
-        "Trigger",
-        "Accepted lags",
-        "Lag support",
-        "Longest adjacent run",
-    ]
-    if not records:
-        return pd.DataFrame(columns=columns)
-
-    summary = (
-        pd.DataFrame(records)
-        .drop_duplicates()
-        .groupby(
-            ["run", "backend", "cause", "trigger"],
-            as_index=False,
-            sort=False,
-        )
-        .agg(
-            n_lags=("lag", "nunique"),
-            lags=(
-                "lag",
-                lambda x: sorted(
-                    {int(value) for value in x}
-                ),
-            ),
-        )
-    )
-    summary["longest"] = summary["lags"].apply(
-        _longest_consecutive_run
-    )
-    summary = summary.sort_values(
-        [
-            "n_lags",
-            "longest",
-            "backend",
-            "cause",
-            "trigger",
-        ],
-        ascending=[False, False, True, True, True],
-    )
-
-    labels = {} if variable_labels is None else variable_labels
-
-    return pd.DataFrame({
-        "Backend": summary["backend"].map(
-            lambda value: backend_labels.get(
-                str(value),
-                str(value),
-            )
-        ),
-        "Cause": summary["cause"].map(
-            lambda value: readable_name(value, labels)
-        ),
-        "Trigger": summary["trigger"].map(
-            lambda value: readable_name(value, labels)
-        ),
-        "Accepted lags": summary["lags"].astype(str),
-        "Lag support": (
-            summary["n_lags"].astype(int).astype(str)
-            + f"/{lag_count}"
-        ),
-        "Longest adjacent run": summary["longest"].astype(int),
-    }).reset_index(drop=True)
-
-
-
-
-def min_i2_pair_stability_summary(
+def pair_grid_stability_summary(
     grid: pd.DataFrame,
     *,
     min_i2_values: Sequence[int],
-    primary_min_i2: int,
+    lags: Sequence[int],
     variable_labels: Mapping[str, str] | None = None,
     backend_labels: Mapping[str, str] = BACKEND_LABELS,
 ) -> pd.DataFrame:
-    """Summarize accepted-pair recurrence across minimum-I2 settings."""
+    """Summarise accepted-pair recurrence over the full two-parameter grid."""
     columns = [
         "Backend",
-        "Lag",
         "Cause",
         "Trigger",
-        "Accepted MIN_I2 lengths",
-        "MIN_I2 support",
-        "Primary setting supported",
+        "Grid support",
+        "Minimum-I2 lengths",
+        "Minimum-I2 support",
+        "Maximum lag orders",
+        "Lag-order support",
+        "Longest adjacent lag run",
     ]
-    required = {"run", "backend", "lag", "min_I2_length", "pairs", "error"}
+    required = {
+        "run",
+        "backend",
+        "lag",
+        "min_I2_length",
+        "pairs",
+        "error",
+    }
     if grid.empty or not required.issubset(grid.columns):
         return pd.DataFrame(columns=columns)
 
@@ -541,192 +587,98 @@ def min_i2_pair_stability_summary(
     if not records:
         return pd.DataFrame(columns=columns)
 
+    accepted = pd.DataFrame(records).drop_duplicates()
     summary = (
-        pd.DataFrame(records)
-        .drop_duplicates()
+        accepted
         .groupby(
-            ["run", "backend", "lag", "cause", "trigger"],
+            ["run", "backend", "cause", "trigger"],
             as_index=False,
             sort=False,
         )
         .agg(
+            accepted_cells=(
+                "lag",
+                "size",
+            ),
             min_i2_lengths=(
                 "min_I2_length",
                 lambda values: sorted(
                     {int(value) for value in values}
                 ),
             ),
+            lag_orders=(
+                "lag",
+                lambda values: sorted(
+                    {int(value) for value in values}
+                ),
+            ),
         )
     )
-    summary["n_settings"] = summary["min_i2_lengths"].map(len)
-    summary["primary_supported"] = summary["min_i2_lengths"].map(
-        lambda values: int(primary_min_i2) in values
+    summary["n_min_i2"] = summary["min_i2_lengths"].map(len)
+    summary["n_lags"] = summary["lag_orders"].map(len)
+    summary["longest"] = summary["lag_orders"].map(
+        _longest_consecutive_run
     )
     summary = summary.sort_values(
         [
-            "n_settings",
-            "primary_supported",
+            "accepted_cells",
+            "n_min_i2",
+            "n_lags",
+            "longest",
             "backend",
-            "lag",
             "cause",
             "trigger",
         ],
-        ascending=[False, False, True, True, True, True],
+        ascending=[False, False, False, False, True, True, True],
     )
 
     labels = {} if variable_labels is None else variable_labels
-    denominator = len(tuple(min_i2_values))
+    grid_size = len(tuple(min_i2_values)) * len(tuple(lags))
 
     return pd.DataFrame({
         "Backend": summary["backend"].map(
-            lambda value: backend_labels.get(str(value), str(value))
+            lambda value: backend_labels.get(
+                str(value),
+                str(value),
+            )
         ),
-        "Lag": summary["lag"].astype(int),
         "Cause": summary["cause"].map(
             lambda value: readable_name(value, labels)
         ),
         "Trigger": summary["trigger"].map(
             lambda value: readable_name(value, labels)
         ),
-        "Accepted MIN_I2 lengths": summary["min_i2_lengths"].astype(str),
-        "MIN_I2 support": (
-            summary["n_settings"].astype(int).astype(str)
-            + f"/{denominator}"
+        "Grid support": (
+            summary["accepted_cells"].astype(int).astype(str)
+            + f"/{grid_size}"
         ),
-        "Primary setting supported": summary["primary_supported"],
+        "Minimum-I2 lengths": summary["min_i2_lengths"].astype(str),
+        "Minimum-I2 support": (
+            summary["n_min_i2"].astype(int).astype(str)
+            + f"/{len(tuple(min_i2_values))}"
+        ),
+        "Maximum lag orders": summary["lag_orders"].astype(str),
+        "Lag-order support": (
+            summary["n_lags"].astype(int).astype(str)
+            + f"/{len(tuple(lags))}"
+        ),
+        "Longest adjacent lag run": summary["longest"].astype(int),
     }).reset_index(drop=True)
-
-
-def build_min_i2_summary_export(
-    split_sensitivity: pd.DataFrame,
-    pair_sensitivity: pd.DataFrame,
-) -> pd.DataFrame:
-    """Build tidy summary rows for the minimum-I2 sensitivity experiment."""
-    rows = []
-
-    for _, row in split_sensitivity.iterrows():
-        rows.append({
-            "section": "min_i2_split_sensitivity",
-            "metric": f"min_I2={int(row['min_I2_length'])} h",
-            "value": row.get("split_time"),
-            "details": {
-                "I1_length": row.get("I1_length"),
-                "I2_length": row.get("I2_length"),
-                "split_score": row.get("split_score"),
-                "boundary_split": row.get("boundary_split"),
-                "distance_to_event": row.get("distance_to_event"),
-            },
-        })
-
-    for _, row in pair_sensitivity.iterrows():
-        rows.append({
-            "section": "min_i2_pair_sensitivity",
-            "backend": row.get("Backend"),
-            "cause": row.get("Cause"),
-            "trigger": row.get("Trigger"),
-            "lag": row.get("Lag"),
-            "metric": "accepted_min_I2_lengths",
-            "value": row.get("Accepted MIN_I2 lengths"),
-            "details": {
-                "min_I2_support": row.get("MIN_I2 support"),
-                "primary_setting_supported": row.get(
-                    "Primary setting supported"
-                ),
-            },
-        })
-
-    return pd.DataFrame(rows).reindex(columns=[
-        "section",
-        "backend",
-        "cause",
-        "trigger",
-        "lag",
-        "metric",
-        "value",
-        "details",
-    ])
 
 
 def reference_criteria_by_lag(
     lag_references: pd.DataFrame,
 ) -> dict[int, str]:
-    """Map each reference lag to its joined information criteria."""
+    """Map each conventional reference lag to its information criterion."""
+    if lag_references.empty:
+        return {}
+
     return (
         lag_references
         .groupby("selected_lag")["criterion"]
-        .apply(lambda values: "/".join(sorted(values)))
+        .apply(lambda values: "/".join(sorted(set(values))))
         .to_dict()
     )
-
-
-def reference_moderation_table(
-    diagnostics: pd.DataFrame,
-    lag_references: pd.DataFrame,
-    *,
-    variable_labels: Mapping[str, str] | None = None,
-    backend_labels: Mapping[str, str] = BACKEND_LABELS,
-) -> pd.DataFrame:
-    """Return accepted moderation tests at the AIC/BIC reference lags."""
-    columns = [
-        "Criterion",
-        "Backend",
-        "Lag",
-        "Cause",
-        "Trigger",
-        "p-value",
-        "RSS reduction",
-        "Interaction coefficient",
-    ]
-    if diagnostics.empty:
-        return pd.DataFrame(columns=columns)
-
-    criteria_by_lag = reference_criteria_by_lag(
-        lag_references
-    )
-    reference_lags = set(criteria_by_lag)
-
-    accepted = diagnostics.loc[
-        diagnostics["lag"].isin(reference_lags)
-        & diagnostics["accepted"].eq(True)
-    ].copy()
-
-    if accepted.empty:
-        return pd.DataFrame(columns=columns)
-
-    labels = {} if variable_labels is None else variable_labels
-    accepted["Criterion"] = accepted["lag"].map(
-        criteria_by_lag
-    )
-    accepted["Backend"] = accepted["backend"].map(
-        lambda value: backend_labels.get(
-            str(value),
-            str(value),
-        )
-    )
-    accepted["Cause"] = accepted["cause"].map(
-        lambda value: readable_name(value, labels)
-    )
-    accepted["Trigger"] = accepted["trigger"].map(
-        lambda value: readable_name(value, labels)
-    )
-
-    return accepted[
-        [
-            "Criterion",
-            "Backend",
-            "lag",
-            "Cause",
-            "Trigger",
-            "p_value",
-            "rss_reduction_ratio",
-            "gamma_2",
-        ]
-    ].rename(columns={
-        "lag": "Lag",
-        "p_value": "p-value",
-        "rss_reduction_ratio": "RSS reduction",
-        "gamma_2": "Interaction coefficient",
-    })
 
 
 def delayed_lag_correlation(
@@ -736,7 +688,7 @@ def delayed_lag_correlation(
     predictor: str,
     max_lag: int,
 ) -> pd.DataFrame:
-    """Descriptive predictor(t-lag)–effect(t) correlation scan."""
+    """Descriptive predictor(t-lag)-effect(t) correlation scan."""
     rows = []
 
     for lag in range(int(max_lag) + 1):
@@ -777,7 +729,7 @@ def _json_ready(value):
 
 
 def csv_ready(frame: pd.DataFrame) -> pd.DataFrame:
-    """Serialize nested structures consistently before CSV export."""
+    """Serialise nested structures consistently before CSV export."""
     output = frame.copy()
 
     for column in output.columns:
@@ -810,12 +762,13 @@ def build_summary_export(
     *,
     design: pd.DataFrame,
     lag_references: pd.DataFrame,
+    split_summary: pd.DataFrame,
     backend_summary: pd.DataFrame,
     pair_summary: pd.DataFrame,
     errors: pd.DataFrame,
     delayed_scan: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Build one tidy summary of design, stability."""
+    """Build one tidy summary of the complete parameter-grid experiment."""
     rows = []
 
     for _, row in design.iterrows():
@@ -834,34 +787,64 @@ def build_summary_export(
             "details": {
                 "distribution": row.get("distribution"),
                 "maximum_lag_tested": row.get("max_lags"),
+                "diagnostic_only": True,
+            },
+        })
+
+    for _, row in split_summary.iterrows():
+        rows.append({
+            "section": "split_grid",
+            "metric": f"min_I2={int(row['min_I2_length'])} h",
+            "value": row.get("split_time"),
+            "details": {
+                "I1_length": row.get("I1_length"),
+                "I2_length": row.get("I2_length"),
+                "split_score": row.get("split_score"),
+                "boundary_split": row.get("boundary_split"),
+                "distance_to_event": row.get("distance_to_event"),
             },
         })
 
     for _, row in backend_summary.iterrows():
         rows.append({
-            "section": "backend_stability",
+            "section": "backend_by_min_i2",
             "backend": row["Backend"],
-            "metric": "result",
+            "metric": f"min_I2={int(row['Minimum I2 (h)'])} h",
             "value": row["Result"],
             "details": {
                 key: row[key]
                 for key in backend_summary.columns
-                if key not in {"Backend", "Result"}
+                if key not in {
+                    "Backend",
+                    "Minimum I2 (h)",
+                    "Result",
+                }
             },
         })
 
     for _, row in pair_summary.iterrows():
         rows.append({
-            "section": "pair_stability",
+            "section": "pair_grid_stability",
             "backend": row["Backend"],
             "cause": row["Cause"],
             "trigger": row["Trigger"],
-            "metric": "accepted_lags",
-            "value": row["Accepted lags"],
+            "metric": "accepted_configuration_support",
+            "value": row["Grid support"],
             "details": {
-                "lag_support": row["Lag support"],
-                "longest_adjacent_run": int(
-                    row["Longest adjacent run"]
+                "minimum_I2_lengths": row[
+                    "Minimum-I2 lengths"
+                ],
+                "minimum_I2_support": row[
+                    "Minimum-I2 support"
+                ],
+                "maximum_lag_orders": row[
+                    "Maximum lag orders"
+                ],
+                "lag_order_support": row[
+                    "Lag-order support"
+                ],
+                "longest_adjacent_lag_run": int(
+                    row["Longest adjacent lag run"]
                 ),
             },
         })
@@ -879,13 +862,11 @@ def build_summary_export(
                 },
             })
 
-    rows.extend([
-        {
-            "section": "execution",
-            "metric": "error_count",
-            "value": int(len(errors)),
-        },
-    ])
+    rows.append({
+        "section": "execution",
+        "metric": "error_count",
+        "value": int(len(errors)),
+    })
 
     return pd.DataFrame(rows).reindex(columns=[
         "section",
@@ -903,17 +884,17 @@ def export_audit_csvs(
     *,
     results_dir: str | Path,
     case_prefix: str,
-    lag_grid: pd.DataFrame,
+    experiment_grid: pd.DataFrame,
     diagnostics: pd.DataFrame,
     design: pd.DataFrame,
     lag_references: pd.DataFrame,
+    split_summary: pd.DataFrame,
     backend_summary: pd.DataFrame,
     pair_summary: pd.DataFrame,
     variable_labels: Mapping[str, str] | None = None,
     delayed_scan: pd.DataFrame | None = None,
-    extra_summary: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Write exactly three audit CSVs and return a concise file manifest."""
+    """Write exactly three audit CSVs for the complete grid experiment."""
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
 
@@ -922,7 +903,7 @@ def export_audit_csvs(
     )
     labels = {} if variable_labels is None else variable_labels
 
-    runs_export = lag_grid.copy()
+    runs_export = experiment_grid.copy()
     runs_export["backend_label"] = runs_export["backend"].map(
         lambda value: BACKEND_LABELS.get(
             str(value),
@@ -933,6 +914,10 @@ def export_audit_csvs(
         runs_export["lag"]
         .map(criteria_by_lag)
         .fillna("")
+    )
+    runs_export = runs_export.sort_values(
+        ["min_I2_length", "backend", "lag"],
+        kind="stable",
     )
 
     moderation_export = diagnostics.copy()
@@ -960,47 +945,31 @@ def export_audit_csvs(
                 lambda value: readable_name(value, labels)
             )
         )
-        sort_columns = [
-            column
-            for column in (
-                "experiment_type",
+        moderation_export = moderation_export.sort_values(
+            [
                 "min_I2_length",
                 "backend",
                 "lag",
                 "accepted",
                 "cause",
                 "trigger",
-            )
-            if column in moderation_export.columns
-        ]
-        ascending = [
-            False if column == "accepted" else True
-            for column in sort_columns
-        ]
-        moderation_export = moderation_export.sort_values(
-            sort_columns,
-            ascending=ascending,
+            ],
+            ascending=[True, True, True, False, True, True],
+            kind="stable",
         )
 
-    errors = lag_grid.loc[
-        lag_grid["error"].notna()
+    errors = experiment_grid.loc[
+        experiment_grid["error"].notna()
     ].copy()
     summary_export = build_summary_export(
         design=design,
         lag_references=lag_references,
+        split_summary=split_summary,
         backend_summary=backend_summary,
         pair_summary=pair_summary,
         errors=errors,
         delayed_scan=delayed_scan,
     )
-    if extra_summary is not None and not extra_summary.empty:
-        summary_export = pd.concat(
-            [
-                summary_export,
-                extra_summary.reindex(columns=summary_export.columns),
-            ],
-            ignore_index=True,
-        )
 
     paths = {
         "runs": (
@@ -1034,14 +1003,10 @@ def export_audit_csvs(
     )
 
     summary_description = (
-        "Design, primary split, lag references, backend stability, "
-        "pair stability."
+        "Design, AIC/BIC references, split results across the "
+        "minimum-I2 grid, backend-by-minimum-I2 stability, and "
+        "accepted-pair support across the full parameter grid."
     )
-    if extra_summary is not None and not extra_summary.empty:
-        summary_description = (
-            summary_description[:-1]
-            + ", plus targeted minimum-I2 sensitivity summaries."
-        )
     if delayed_scan is not None:
         summary_description = (
             summary_description[:-1]
@@ -1052,18 +1017,19 @@ def export_audit_csvs(
         {
             "File": paths["runs"].name,
             "Contents": (
-                "Every backend × lag run, including empty "
-                "results, candidate sets, accepted pairs, "
-                "effective sample size, stop reasons, and errors."
+                "Every minimum-I2 × backend × maximum-lag-order "
+                "configuration, including empty results, candidate "
+                "sets, accepted pairs, effective sample size, stop "
+                "reasons, and errors."
             ),
             "Rows": len(runs_export),
         },
         {
             "File": paths["moderation"].name,
             "Contents": (
-                "Every evaluated cause–trigger combination, "
+                "Every evaluated cause-trigger combination, "
                 "accepted or rejected, with complete test "
-                "statistics and reasons."
+                "statistics, reasons, and grid metadata."
             ),
             "Rows": len(moderation_export),
         },

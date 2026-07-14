@@ -1,8 +1,0 @@
-run,backend,lag,trigger,cause,trigger_source,accepted,reason,backend_label,reference_criterion,cause_label,trigger_label
-pcmci,pcmci,4,GNSS_deformation_rate_scaled,,lagged,False,No B2 cause candidate remains after removing trigger.,PCMCI,,,GNSS deformation
-pcmci,pcmci,5,GNSS_deformation_rate_scaled,,lagged,False,No B2 cause candidate remains after removing trigger.,PCMCI,,,GNSS deformation
-pcmci,pcmci,6,GNSS_deformation_rate_scaled,,lagged,False,No B2 cause candidate remains after removing trigger.,PCMCI,AIC,,GNSS deformation
-pcmci,pcmci,7,GNSS_deformation_rate_scaled,,lagged,False,No B2 cause candidate remains after removing trigger.,PCMCI,,,GNSS deformation
-pcmci,pcmci,8,GNSS_deformation_rate_scaled,,lagged,False,No B2 cause candidate remains after removing trigger.,PCMCI,,,GNSS deformation
-pcmci,pcmci,9,GNSS_deformation_rate_scaled,,lagged,False,No B2 cause candidate remains after removing trigger.,PCMCI,,,GNSS deformation
-pcmci,pcmci,10,GNSS_deformation_rate_scaled,,lagged,False,No B2 cause candidate remains after removing trigger.,PCMCI,,,GNSS deformation
