@@ -127,12 +127,14 @@ def transform_for_cause_trigger_scaling(
         )
 
     if "rainfall_mm" in transformed.columns:
-        transformed["rainfall_mm"] = np.log1p(
-            _numeric_series(
-                transformed,
-                "rainfall_mm",
-            ).clip(lower=0)
-        )
+        rainfall = _numeric_series(transformed, "rainfall_mm")
+
+        if (rainfall.dropna() < 0).any():
+            raise ValueError(
+                "Expected non-negative values in 'rainfall_mm' before log1p."
+            )
+
+        transformed["rainfall_mm"] = np.log1p(rainfall)
 
     for column in ("pressure_drop", "GNSS_deformation_rate"):
         if column in transformed.columns:
@@ -270,12 +272,6 @@ def prepare_analysis_dataframe(
     *,
     required_columns: list[str] | None = None,
 ) -> pd.DataFrame:
-    """
-    Keep all retained variables and remove only rows unresolved in any of them.
-
-    Missing waveform hours are not interpolated. They remain explicit missing
-    timestamps in the canonical complete-case dataframe.
-    """
     analysis = _utc_index(master, "time")
 
     if required_columns is None:

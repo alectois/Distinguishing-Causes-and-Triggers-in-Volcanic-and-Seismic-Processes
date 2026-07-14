@@ -212,7 +212,7 @@ def load_weather_vars(
     if weather_out.isna().any().any():
         missing = weather_out.isna().sum()
         raise ValueError(
-            "Whakaari weather variables contain missing API values:\n"
+            "Whakaari weather variables contain missing values:\n"
             f"{missing[missing > 0]}"
         )
 

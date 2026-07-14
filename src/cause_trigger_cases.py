@@ -78,7 +78,7 @@ WHAKAARI_CASE = CaseSpec(
         "effect_tremor_5_15_scaled": "Tremor anomaly (effect)",
         "rainfall_mm_scaled": "Rainfall",
         "pressure_drop_scaled": "Pressure drop",
-        "GNSS_deformation_rate_scaled": "GNSS deformation",
+        "GNSS_deformation_rate_scaled": "Lagged GNSS deformation change",
     },
     fit_transform_parameters=fit_whakaari_transform_parameters,
     transform_for_scaling=transform_whakaari_for_scaling,
