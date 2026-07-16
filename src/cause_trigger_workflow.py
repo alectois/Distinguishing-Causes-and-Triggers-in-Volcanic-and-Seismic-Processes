@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -19,7 +19,9 @@ from cause_trigger_cases import CaseSpec
 from parameter_extraction import select_var_lag
 
 
-# PCMCI+ extension that also tests eligible directed tau=0 links.
+# HMML is the baseline. PCMCI and PCMCI+ are causal-discovery extensions.
+# The PCMCI+ specification also tests eligible directed tau=0 links as
+# same-hour trigger candidates.
 COMPACT_RUN_SPECS = (
     {"run": "hmml", "backend": "hmml"},
     {"run": "pcmci", "backend": "pcmci"},
@@ -33,7 +35,7 @@ COMPACT_RUN_SPECS = (
 
 @dataclass(frozen=True)
 class WorkflowConfig:
-    """Shared Cause–Trigger experiment settings for either case study."""
+    """Shared Cause–Trigger settings for one case-study analysis."""
 
     effect: str
     alpha: float = 0.05
@@ -58,6 +60,23 @@ class WorkflowConfig:
     pcmci_contemp_collider_rule: str = "majority"
     pcmci_conflict_resolution: bool = True
     pcmci_plus_use_contemporaneous_triggers: bool = False
+
+
+@dataclass
+class PreparedCaseAnalysis:
+    """All prepared objects required by the compact analysis notebooks."""
+
+    X_full_raw: pd.DataFrame
+    X_case_raw: pd.DataFrame
+    reference_raw: pd.DataFrame
+    X_model: pd.DataFrame
+    X_mean: pd.DataFrame
+    scaling_report: pd.DataFrame
+    lag_references: pd.DataFrame
+    split_summary: pd.DataFrame
+    unique_splits: pd.DataFrame
+    design_summary: pd.DataFrame
+    workflow_template: WorkflowConfig
 
 
 def _resolve_time_column(
@@ -180,31 +199,26 @@ def prepare_case_frames(
     case: CaseSpec,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Construct aligned case- and reference-standardized frames.
+    Construct aligned case- and reference-standardised frames.
 
-    ``X_model`` is case-standardized for causal discovery and moderation.
-    ``X_mean`` uses the pre-case reference distribution for mean comparisons.
+    ``X_model`` is case-standardised for causal discovery and moderation.
+    ``X_mean`` uses the pre-case reference distribution for split and
+    mean-increase comparisons.
     """
     validate_regular_time_index(raw_case, expected_step="1h")
 
     if raw_case.isna().any().any():
-        raise ValueError(
-            f"{case.name} case interval contains missing values."
-        )
+        raise ValueError(f"{case.name} case interval contains missing values.")
     if reference_raw.empty:
         raise ValueError(f"{case.name} reference interval is empty.")
     if reference_raw.isna().any().any():
-        raise ValueError(
-            f"{case.name} reference interval contains missing values."
-        )
+        raise ValueError(f"{case.name} reference interval contains missing values.")
     if list(reference_raw.columns) != list(raw_case.columns):
         raise ValueError(
             "Reference and case intervals must have identical column order."
         )
     if reference_raw.index.max() >= raw_case.index.min():
-        raise ValueError(
-            "Reference interval must end before the case interval."
-        )
+        raise ValueError("Reference interval must end before the case interval.")
 
     parameters = case.fit_transform_parameters(reference_raw)
     transformed_reference = case.transform_for_scaling(
@@ -222,10 +236,7 @@ def prepare_case_frames(
         transformed_case,
     )
 
-    scaled_columns = [
-        f"{column}_scaled"
-        for column in transformed_case.columns
-    ]
+    scaled_columns = [f"{column}_scaled" for column in transformed_case.columns]
     X_model.columns = scaled_columns
     X_mean.columns = scaled_columns
     X_model.index = raw_case.index
@@ -246,12 +257,15 @@ def case_study_interval(
     event_time: pd.Timestamp,
     *,
     pre_days: int,
-    post_hours: int,
+    post_days: int | None = None,
 ) -> pd.DataFrame:
     """Return a complete hourly case grid around the contextual event."""
+    if (post_days is None):
+        raise ValueError("Specify the number of days after the event.")
+
     event_hour = pd.Timestamp(event_time).floor("h")
     start = event_hour - pd.Timedelta(days=int(pre_days))
-    end = event_hour + pd.Timedelta(hours=int(post_hours))
+    end = event_hour + pd.Timedelta(days=int(post_days))
     index = pd.date_range(start, end, freq="1h", inclusive="left")
     case = df_full.reindex(index)
     case.index.name = df_full.index.name
@@ -266,7 +280,7 @@ def reference_parameter_table(
     criteria: Sequence[str] = ("aic", "bic"),
     fallback_lag: int = 1,
 ) -> pd.DataFrame:
-    """Return AIC/BIC VAR lag references; HMML remains Gaussian."""
+    """Return conventional VAR AIC/BIC lag-order references."""
     if effect not in dataframe.columns:
         raise ValueError(f"Effect variable {effect!r} is absent.")
 
@@ -283,6 +297,7 @@ def reference_parameter_table(
             "selected_lag": int(lag),
             "distribution": "gaussian",
             "max_lags": int(max_lags),
+            "search_boundary": int(lag) == int(max_lags),
         })
     return pd.DataFrame(rows)
 
@@ -295,7 +310,7 @@ def split_diagnostics(
     min_I1_length: int = 48,
     min_I2_length: int = 48,
 ) -> dict:
-    """Return one concise description of the algorithmic split."""
+    """Return a concise description of one algorithmic split."""
     split = find_effect_split(
         dataframe[effect],
         min_I1_length=min_I1_length,
@@ -322,10 +337,10 @@ def split_diagnostics(
     mean_2 = float(dataframe[effect].iloc[split_index:].mean())
     return {
         "effect": effect,
-        "split_index": split_index,
+        "split_index": int(split_index),
         "split_time": split_time,
-        "I1_length": split_index,
-        "I2_length": len(dataframe) - split_index,
+        "I1_length": int(split_index),
+        "I2_length": int(len(dataframe) - split_index),
         "abs_mean_I1": abs(mean_1),
         "abs_mean_I2": abs(mean_2),
         "split_score": split["score"],
@@ -336,6 +351,58 @@ def split_diagnostics(
             else None
         ),
     }
+
+
+def identify_unique_splits(split_summary: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Assign stable split IDs and return one row per unique partition."""
+    required = {
+        "min_I2_length",
+        "split_time",
+        "split_index",
+        "I1_length",
+        "I2_length",
+    }
+    missing = sorted(required - set(split_summary.columns))
+    if missing:
+        raise ValueError(f"split_summary is missing required columns: {missing}")
+
+    annotated = split_summary.copy()
+    key_columns = ["split_time", "split_index", "I1_length", "I2_length"]
+
+    key_order = (
+        annotated[key_columns]
+        .drop_duplicates()
+        .sort_values(key_columns, kind="stable", na_position="last")
+        .reset_index(drop=True)
+    )
+    key_order["split_id"] = [f"S{index + 1}" for index in range(len(key_order))]
+    annotated = annotated.merge(key_order, on=key_columns, how="left", validate="many_to_one")
+
+    support = (
+        annotated
+        .groupby("split_id", as_index=False, sort=False)
+        .agg(
+            supported_min_I2_lengths=(
+                "min_I2_length",
+                lambda values: sorted({int(value) for value in values}),
+            ),
+            representative_min_I2_length=("min_I2_length", "min"),
+            any_boundary_split=("boundary_split", "any"),
+            all_boundary_splits=("boundary_split", "all"),
+        )
+    )
+    support["n_supporting_min_I2_values"] = support[
+        "supported_min_I2_lengths"
+    ].map(len)
+    annotated = annotated.merge(support, on="split_id", how="left", validate="many_to_one")
+
+    unique = (
+        annotated
+        .sort_values(["split_id", "min_I2_length"], kind="stable")
+        .drop_duplicates("split_id", keep="first")
+        .reset_index(drop=True)
+    )
+    return annotated, unique
 
 
 def make_cause_trigger_config(
@@ -374,9 +441,7 @@ def make_cause_trigger_config(
         pcmci_verbosity=workflow.pcmci_verbosity,
         pcmci_contemp_collider_rule=workflow.pcmci_contemp_collider_rule,
         pcmci_conflict_resolution=workflow.pcmci_conflict_resolution,
-        pcmci_plus_use_contemporaneous_triggers=(
-            use_contemporaneous_triggers
-        ),
+        pcmci_plus_use_contemporaneous_triggers=use_contemporaneous_triggers,
     )
 
 
@@ -407,3 +472,194 @@ def run_one(
         diagnostics.insert(2, "lag", config.lags)
 
     return result, diagnostics
+
+
+def prepare_case_analysis(
+    *,
+    data_path: str | Path,
+    case: CaseSpec,
+    event_time: pd.Timestamp,
+    event_label: str,
+    case_pre_days: int,
+    case_post_days: int,
+    reference_days: int,
+    reference_min_coverage: float,
+    min_I1_length: int,
+    min_I2_values: Sequence[int],
+    lag_grid: Sequence[int],
+    alpha: float = 0.05,
+    pcmci_pc_alpha: float = 0.05,
+    pcmci_alpha_level: float = 0.05,
+    pcmci_fdr_method: str | None = "fdr_bh",
+    cond_ind_test: str = "robust_parcorr",
+    run_specs: Sequence[Mapping[str, object]] = COMPACT_RUN_SPECS,
+) -> PreparedCaseAnalysis:
+    """Prepare data, splits, conventional lag references, and design tables."""
+    lag_grid = tuple(int(value) for value in lag_grid)
+    min_I2_values = tuple(int(value) for value in min_I2_values)
+    if not lag_grid:
+        raise ValueError("lag_grid cannot be empty.")
+    if not min_I2_values:
+        raise ValueError("min_I2_values cannot be empty.")
+
+    X_full_raw = load_model_frame(
+        data_path,
+        include_columns=case.model_columns,
+        require_complete=False,
+        index_name=case.index_name,
+    )
+    X_case_raw = case_study_interval(
+        X_full_raw,
+        event_time,
+        pre_days=case_pre_days,
+        post_days=case_post_days,
+    )
+    reference_raw = pre_case_reference_interval(
+        X_full_raw,
+        case_start=X_case_raw.index.min(),
+        reference_days=reference_days,
+        min_coverage=reference_min_coverage,
+        case_name=case.name,
+    )
+    X_model, X_mean, scaling_report = prepare_case_frames(
+        X_case_raw,
+        reference_raw,
+        case=case,
+    )
+
+    max_lags = max(lag_grid)
+    lag_references = reference_parameter_table(
+        X_model,
+        case.effect,
+        max_lags=max_lags,
+        fallback_lag=min(lag_grid),
+    )
+
+    workflow_template = WorkflowConfig(
+        effect=case.effect,
+        alpha=alpha,
+        selected_lag=min(lag_grid),
+        min_I1_length=int(min_I1_length),
+        min_I2_length=min(min_I2_values),
+        distribution="gaussian",
+        refit_alpha=1.0,
+        refit_cv=True,
+        refit_cv_folds=3,
+        pcmci_pc_alpha=pcmci_pc_alpha,
+        pcmci_alpha_level=pcmci_alpha_level,
+        pcmci_fdr_method=pcmci_fdr_method,
+        pcmci_cond_ind_test=cond_ind_test,
+        pcmci_plus_use_contemporaneous_triggers=False,
+    )
+
+    split_raw = pd.DataFrame([
+        {
+            "min_I2_length": min_i2,
+            **split_diagnostics(
+                X_mean,
+                case.effect,
+                event_time=event_time,
+                min_I1_length=min_I1_length,
+                min_I2_length=min_i2,
+            ),
+        }
+        for min_i2 in min_I2_values
+    ])
+    split_raw["in_causal_grid"] = split_raw["min_I2_length"].isin(min_I2_values)
+    split_raw["_display_order"] = range(len(split_raw))
+
+    causal_rows, unique_splits = identify_unique_splits(
+        split_raw.loc[split_raw["in_causal_grid"]].copy()
+    )
+    diagnostic_rows = split_raw.loc[~split_raw["in_causal_grid"]].copy()
+    if not diagnostic_rows.empty:
+        diagnostic_rows["split_id"] = "split-only"
+        diagnostic_rows["supported_min_I2_lengths"] = diagnostic_rows[
+            "min_I2_length"
+        ].map(lambda value: [int(value)])
+        diagnostic_rows["representative_min_I2_length"] = diagnostic_rows[
+            "min_I2_length"
+        ]
+        diagnostic_rows["n_supporting_min_I2_values"] = 1
+        diagnostic_rows["any_boundary_split"] = diagnostic_rows["boundary_split"]
+        diagnostic_rows["all_boundary_splits"] = diagnostic_rows["boundary_split"]
+
+    split_summary = (
+        pd.concat([causal_rows, diagnostic_rows], ignore_index=True, sort=False)
+        .sort_values("_display_order", kind="stable")
+        .drop(columns="_display_order")
+        .reset_index(drop=True)
+    )
+
+    case_end_exclusive = X_case_raw.index.max() + pd.Timedelta("1h")
+    effect_peak = X_case_raw[case.raw_effect].idxmax()
+    requested_runs = len(min_I2_values) * len(lag_grid) * len(run_specs)
+    unique_runs = len(unique_splits) * len(lag_grid) * len(run_specs)
+
+    design_summary = pd.DataFrame([
+        {
+            "Item": "Dataset coverage",
+            "Value": (
+                f"{X_full_raw.index.min()} to {X_full_raw.index.max()} "
+                f"({len(X_full_raw)} retained hourly rows)"
+            ),
+        },
+        {
+            "Item": "Causal-analysis interval",
+            "Value": (
+                f"[{X_case_raw.index.min()}, {case_end_exclusive}) "
+                f"({len(X_case_raw)} h; {case_pre_days} d before and "
+                f"{case_post_days} d after the event hour)"
+            ),
+        },
+        {
+            "Item": "Reference-standardisation interval",
+            "Value": (
+                f"[{reference_raw.attrs['reference_start']}, "
+                f"{reference_raw.attrs['reference_end']}); "
+                f"{len(reference_raw)}/{reference_raw.attrs['expected_rows']} h "
+                f"({reference_raw.attrs['coverage']:.1%} coverage)"
+            ),
+        },
+        {"Item": event_label, "Value": str(pd.Timestamp(event_time))},
+        {
+            "Item": "Effect maximum",
+            "Value": f"{effect_peak} ({effect_peak - pd.Timestamp(event_time)} from event)",
+        },
+        {
+            "Item": "Minimum interval design",
+            "Value": f"I1 >= {min_I1_length} h; minimum-I2 grid = {min_I2_values} h",
+        },
+        {
+            "Item": "Maximum-lag-order design",
+            "Value": f"d = {min(lag_grid)}-{max(lag_grid)} h for HMML, PCMCI, and PCMCI+",
+        },
+        {
+            "Item": "Unique split partitions",
+            "Value": (
+                f"{len(unique_splits)} unique causal partition(s) from "
+                f"{len(min_I2_values)} causal minimum-I2 settings; "
+            ),
+        },
+        {
+            "Item": "Causal run count",
+            "Value": (
+                f"{unique_runs} unique runs after split deduplication "
+                f"({requested_runs} rows would be produced without deduplication)"
+            ),
+        },
+    ])
+
+    return PreparedCaseAnalysis(
+        X_full_raw=X_full_raw,
+        X_case_raw=X_case_raw,
+        reference_raw=reference_raw,
+        X_model=X_model,
+        X_mean=X_mean,
+        scaling_report=scaling_report,
+        lag_references=lag_references,
+        split_summary=split_summary,
+        unique_splits=unique_splits,
+        design_summary=design_summary,
+        workflow_template=workflow_template,
+    )

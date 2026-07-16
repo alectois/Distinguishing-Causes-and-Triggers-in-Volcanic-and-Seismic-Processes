@@ -1,53 +1,77 @@
-section,backend,cause,trigger,lag,metric,value,details
-design,,,,,Dataset coverage,2008-04-11 14:00:00+00:00 to 2008-05-19 06:00:00+00:00 (905 retained hourly rows),
-design,,,,,Causal-analysis interval,"[2008-05-09 06:00:00+00:00, 2008-05-18 06:00:00+00:00) (216 h)",
-design,,,,,Reference-standardisation interval,"[2008-04-25 06:00:00+00:00, 2008-05-09 06:00:00+00:00); 336/336 h (100.0% coverage)",
-design,,,,,Wenchuan earthquake origin time,2008-05-12 06:28:00+00:00,
-design,,,,,Effect maximum,2008-05-13 13:00:00+00:00 (1 days 06:32:00 from event time),
-design,,,,,Primary automatic split,"2008-05-13 10:00:00+00:00; I1=100 h, I2=116 h",
-design,,,,,Primary split status,Interior solution; 1 days 03:32:00 relative to Wenchuan origin,
-design,,,,,Minimum interval design,"Primary: I1 >= 48 h, I2 >= 72 h; I2 sensitivity: (48, 60, 72, 84, 96) h",
-design,,,,,Maximum-lag-order design,"Primary: HMML, PCMCI, and PCMCI+ over d=1-12 h; minimum-I2 sensitivity: PCMCI+ over the same d=1-12 h grid",
-design,,,,,VAR lag references,AIC=2 h; BIC=1 h,
-lag_reference,,,,2.0,AIC,2 h,"{""distribution"": ""gaussian"", ""maximum_lag_tested"": 12}"
-lag_reference,,,,1.0,BIC,1 h,"{""distribution"": ""gaussian"", ""maximum_lag_tested"": 12}"
-backend_stability,HMML,,,,result,Candidates found; none passed moderation,"{""Successful runs"": ""12/12"", ""Post-split parents"": ""12/12"", ""Trigger candidates"": ""8/12"", ""Accepted-pair lags"": ""0/12"", ""τ=0-link lags"": ""0/12""}"
-backend_stability,PCMCI,,,,result,No post-split candidate structure,"{""Successful runs"": ""12/12"", ""Post-split parents"": ""5/12"", ""Trigger candidates"": ""0/12"", ""Accepted-pair lags"": ""0/12"", ""τ=0-link lags"": ""0/12""}"
-backend_stability,PCMCI+ τ=0,,,,result,Candidates found; none passed moderation,"{""Successful runs"": ""12/12"", ""Post-split parents"": ""11/12"", ""Trigger candidates"": ""2/12"", ""Accepted-pair lags"": ""0/12"", ""τ=0-link lags"": ""7/12""}"
-delayed_lag_scan,,,,0.0,correlation,0.39112353854739595,"{""aligned_rows"": 216, ""descriptive_only"": true}"
-delayed_lag_scan,,,,1.0,correlation,0.3959618641590548,"{""aligned_rows"": 215, ""descriptive_only"": true}"
-delayed_lag_scan,,,,2.0,correlation,0.3743569943856088,"{""aligned_rows"": 214, ""descriptive_only"": true}"
-delayed_lag_scan,,,,3.0,correlation,0.3452295949295653,"{""aligned_rows"": 213, ""descriptive_only"": true}"
-delayed_lag_scan,,,,4.0,correlation,0.30522087503316575,"{""aligned_rows"": 212, ""descriptive_only"": true}"
-delayed_lag_scan,,,,5.0,correlation,0.24793124607060388,"{""aligned_rows"": 211, ""descriptive_only"": true}"
-delayed_lag_scan,,,,6.0,correlation,0.16076068402094607,"{""aligned_rows"": 210, ""descriptive_only"": true}"
-delayed_lag_scan,,,,7.0,correlation,0.09206893551022595,"{""aligned_rows"": 209, ""descriptive_only"": true}"
-delayed_lag_scan,,,,8.0,correlation,0.020421464652287814,"{""aligned_rows"": 208, ""descriptive_only"": true}"
-delayed_lag_scan,,,,9.0,correlation,-0.027793155990641236,"{""aligned_rows"": 207, ""descriptive_only"": true}"
-delayed_lag_scan,,,,10.0,correlation,-0.05926613940832987,"{""aligned_rows"": 206, ""descriptive_only"": true}"
-delayed_lag_scan,,,,11.0,correlation,-0.06805595641368875,"{""aligned_rows"": 205, ""descriptive_only"": true}"
-delayed_lag_scan,,,,12.0,correlation,-0.0699538623617718,"{""aligned_rows"": 204, ""descriptive_only"": true}"
-delayed_lag_scan,,,,13.0,correlation,-0.06833348789010836,"{""aligned_rows"": 203, ""descriptive_only"": true}"
-delayed_lag_scan,,,,14.0,correlation,-0.0743084782956352,"{""aligned_rows"": 202, ""descriptive_only"": true}"
-delayed_lag_scan,,,,15.0,correlation,-0.07679200297879303,"{""aligned_rows"": 201, ""descriptive_only"": true}"
-delayed_lag_scan,,,,16.0,correlation,-0.06494362765425103,"{""aligned_rows"": 200, ""descriptive_only"": true}"
-delayed_lag_scan,,,,17.0,correlation,-0.05432158494244291,"{""aligned_rows"": 199, ""descriptive_only"": true}"
-delayed_lag_scan,,,,18.0,correlation,-0.0214346436564082,"{""aligned_rows"": 198, ""descriptive_only"": true}"
-delayed_lag_scan,,,,19.0,correlation,0.02074513271233996,"{""aligned_rows"": 197, ""descriptive_only"": true}"
-delayed_lag_scan,,,,20.0,correlation,0.0619447206839677,"{""aligned_rows"": 196, ""descriptive_only"": true}"
-delayed_lag_scan,,,,21.0,correlation,0.07943312268763339,"{""aligned_rows"": 195, ""descriptive_only"": true}"
-delayed_lag_scan,,,,22.0,correlation,0.10222336092724393,"{""aligned_rows"": 194, ""descriptive_only"": true}"
-delayed_lag_scan,,,,23.0,correlation,0.14440573791858063,"{""aligned_rows"": 193, ""descriptive_only"": true}"
-delayed_lag_scan,,,,24.0,correlation,0.20706414915280816,"{""aligned_rows"": 192, ""descriptive_only"": true}"
-delayed_lag_scan,,,,25.0,correlation,0.2796494862351973,"{""aligned_rows"": 191, ""descriptive_only"": true}"
-delayed_lag_scan,,,,26.0,correlation,0.354284165788443,"{""aligned_rows"": 190, ""descriptive_only"": true}"
-delayed_lag_scan,,,,27.0,correlation,0.4063940125019472,"{""aligned_rows"": 189, ""descriptive_only"": true}"
-delayed_lag_scan,,,,28.0,correlation,0.4156804942269104,"{""aligned_rows"": 188, ""descriptive_only"": true}"
-delayed_lag_scan,,,,29.0,correlation,0.4138212105177797,"{""aligned_rows"": 187, ""descriptive_only"": true}"
-delayed_lag_scan,,,,30.0,correlation,0.3926309815063425,"{""aligned_rows"": 186, ""descriptive_only"": true}"
-execution,,,,,error_count,0,
-min_i2_split_sensitivity,,,,,min_I2=48 h,2008-05-13T10:00:00+00:00,"{""I1_length"": 100, ""I2_length"": 116, ""split_score"": 0.20745884211802043, ""boundary_split"": false, ""distance_to_event"": ""1 days 03:32:00""}"
-min_i2_split_sensitivity,,,,,min_I2=60 h,2008-05-13T10:00:00+00:00,"{""I1_length"": 100, ""I2_length"": 116, ""split_score"": 0.20745884211802043, ""boundary_split"": false, ""distance_to_event"": ""1 days 03:32:00""}"
-min_i2_split_sensitivity,,,,,min_I2=72 h,2008-05-13T10:00:00+00:00,"{""I1_length"": 100, ""I2_length"": 116, ""split_score"": 0.20745884211802043, ""boundary_split"": false, ""distance_to_event"": ""1 days 03:32:00""}"
-min_i2_split_sensitivity,,,,,min_I2=84 h,2008-05-13T10:00:00+00:00,"{""I1_length"": 100, ""I2_length"": 116, ""split_score"": 0.20745884211802043, ""boundary_split"": false, ""distance_to_event"": ""1 days 03:32:00""}"
-min_i2_split_sensitivity,,,,,min_I2=96 h,2008-05-13T10:00:00+00:00,"{""I1_length"": 100, ""I2_length"": 116, ""split_score"": 0.20745884211802043, ""boundary_split"": false, ""distance_to_event"": ""1 days 03:32:00""}"
+section,backend,partition,cause,trigger,trigger_source,lag,metric,value,details
+design,,,,,,,Dataset coverage,2008-04-11 14:00:00+00:00 to 2008-05-19 06:00:00+00:00 (905 retained hourly rows),
+design,,,,,,,Causal-analysis interval,"[2008-05-09 06:00:00+00:00, 2008-05-15 06:00:00+00:00) (144 h; 3 d before and 3 d after the event hour)",
+design,,,,,,,Reference-standardisation interval,"[2008-04-25 06:00:00+00:00, 2008-05-09 06:00:00+00:00); 336/336 h (100.0% coverage)",
+design,,,,,,,Wenchuan earthquake origin time,2008-05-12 06:28:00+00:00,
+design,,,,,,,Effect maximum,2008-05-13 13:00:00+00:00 (1 days 06:32:00 from event),
+design,,,,,,,Minimum interval design,"I1 >= 48 h; minimum-I2 grid = (24, 36, 48) h",
+design,,,,,,,Maximum-lag-order design,"d = 1-12 h for HMML, PCMCI, and PCMCI+",
+design,,,,,,,Unique split partitions,2 unique causal partition(s) from 3 causal minimum-I2 settings; ,
+design,,,,,,,Causal run count,72 unique runs after split deduplication (108 rows would be produced without deduplication),
+automatic_lag_reference,,,,,,12.0,AIC,12 h,"{""maximum_lag_tested"": 12, ""search_boundary"": true}"
+automatic_lag_reference,,,,,,1.0,BIC,1 h,"{""maximum_lag_tested"": 12, ""search_boundary"": false}"
+automatic_lag_outcome,HMML (baseline),S1,,,,12.0,AIC,Trigger candidates found; no accepted moderation result,"{""minimum_I2_support"": ""[48]"", ""search_boundary"": true}"
+automatic_lag_outcome,PCMCI,S1,,,,12.0,AIC,No lagged non-target B2 variables are available to construct V.,"{""minimum_I2_support"": ""[48]"", ""search_boundary"": true}"
+automatic_lag_outcome,PCMCI+ with eligible τ=0 triggers,S1,,,,12.0,AIC,No lagged non-target B2 variables are available to construct V.,"{""minimum_I2_support"": ""[48]"", ""search_boundary"": true}"
+automatic_lag_outcome,HMML (baseline),S2,,,,12.0,AIC,Trigger candidates found; no accepted moderation result,"{""minimum_I2_support"": ""[24, 36]"", ""search_boundary"": true}"
+automatic_lag_outcome,PCMCI,S2,,,,12.0,AIC,No lagged non-target B2 variables are available to construct V.,"{""minimum_I2_support"": ""[24, 36]"", ""search_boundary"": true}"
+automatic_lag_outcome,PCMCI+ with eligible τ=0 triggers,S2,,,,12.0,AIC,No lagged non-target B2 variables are available to construct V.,"{""minimum_I2_support"": ""[24, 36]"", ""search_boundary"": true}"
+automatic_lag_outcome,HMML (baseline),S1,,,,1.0,BIC,No lagged non-target B2 variables are available to construct V.,"{""minimum_I2_support"": ""[48]"", ""search_boundary"": false}"
+automatic_lag_outcome,PCMCI,S1,,,,1.0,BIC,No lagged non-target B2 variables are available to construct V.,"{""minimum_I2_support"": ""[48]"", ""search_boundary"": false}"
+automatic_lag_outcome,PCMCI+ with eligible τ=0 triggers,S1,,,,1.0,BIC,No lagged non-target B2 variables are available to construct V.,"{""minimum_I2_support"": ""[48]"", ""search_boundary"": false}"
+automatic_lag_outcome,HMML (baseline),S2,,,,1.0,BIC,Trigger candidates found; no accepted moderation result,"{""minimum_I2_support"": ""[24, 36]"", ""search_boundary"": false}"
+automatic_lag_outcome,PCMCI,S2,,,,1.0,BIC,No lagged non-target B2 variables are available to construct V.,"{""minimum_I2_support"": ""[24, 36]"", ""search_boundary"": false}"
+automatic_lag_outcome,PCMCI+ with eligible τ=0 triggers,S2,,,,1.0,BIC,No lagged non-target B2 variables are available to construct V.,"{""minimum_I2_support"": ""[24, 36]"", ""search_boundary"": false}"
+split_grid,,S2,,,,,min_I2=24 h,2008-05-13T07:00:00+00:00,"{""I1_length"": 97, ""I2_length"": 47, ""split_score"": 0.8973347845114023, ""boundary_split"": false, ""distance_to_event"": ""1 days 00:32:00""}"
+split_grid,,S2,,,,,min_I2=36 h,2008-05-13T07:00:00+00:00,"{""I1_length"": 97, ""I2_length"": 47, ""split_score"": 0.8973347845114023, ""boundary_split"": false, ""distance_to_event"": ""1 days 00:32:00""}"
+split_grid,,S1,,,,,min_I2=48 h,2008-05-13T06:00:00+00:00,"{""I1_length"": 96, ""I2_length"": 48, ""split_score"": 0.8942965549024273, ""boundary_split"": true, ""distance_to_event"": ""0 days 23:32:00""}"
+backend_by_unique_split,HMML (baseline),S1,,,,,result,Accepted pair(s) at 10 maximum-lag order(s),"{""Minimum-I2 support"": ""[48]"", ""Successful runs"": ""12/12"", ""Post-split parent lags"": ""11/12"", ""Trigger-candidate lags"": ""11/12"", ""Accepted-pair lags"": ""10/12"", ""τ=0-link lags"": ""0/12"", ""Warning runs"": ""12/12""}"
+backend_by_unique_split,PCMCI,S1,,,,,result,Candidates found; none passed moderation,"{""Minimum-I2 support"": ""[48]"", ""Successful runs"": ""12/12"", ""Post-split parent lags"": ""5/12"", ""Trigger-candidate lags"": ""5/12"", ""Accepted-pair lags"": ""0/12"", ""τ=0-link lags"": ""0/12"", ""Warning runs"": ""0/12""}"
+backend_by_unique_split,PCMCI+ with eligible τ=0 triggers,S1,,,,,result,Accepted pair(s) at 1 maximum-lag order(s),"{""Minimum-I2 support"": ""[48]"", ""Successful runs"": ""12/12"", ""Post-split parent lags"": ""5/12"", ""Trigger-candidate lags"": ""6/12"", ""Accepted-pair lags"": ""1/12"", ""τ=0-link lags"": ""8/12"", ""Warning runs"": ""0/12""}"
+backend_by_unique_split,HMML (baseline),S2,,,,,result,Accepted pair(s) at 8 maximum-lag order(s),"{""Minimum-I2 support"": ""[24, 36]"", ""Successful runs"": ""12/12"", ""Post-split parent lags"": ""12/12"", ""Trigger-candidate lags"": ""12/12"", ""Accepted-pair lags"": ""8/12"", ""τ=0-link lags"": ""0/12"", ""Warning runs"": ""12/12""}"
+backend_by_unique_split,PCMCI,S2,,,,,result,Candidates found; none passed moderation,"{""Minimum-I2 support"": ""[24, 36]"", ""Successful runs"": ""12/12"", ""Post-split parent lags"": ""5/12"", ""Trigger-candidate lags"": ""5/12"", ""Accepted-pair lags"": ""0/12"", ""τ=0-link lags"": ""0/12"", ""Warning runs"": ""0/12""}"
+backend_by_unique_split,PCMCI+ with eligible τ=0 triggers,S2,,,,,result,Candidates found; none passed moderation,"{""Minimum-I2 support"": ""[24, 36]"", ""Successful runs"": ""12/12"", ""Post-split parent lags"": ""3/12"", ""Trigger-candidate lags"": ""4/12"", ""Accepted-pair lags"": ""0/12"", ""τ=0-link lags"": ""7/12"", ""Warning runs"": ""0/12""}"
+pair_stability,HMML (baseline),,Past local seismicity,Teleseismic RMS,Lagged,,accepted_split_lag_support,10/24,"{""BH-supported cells"": ""10/24"", ""Partitions"": ""['S1', 'S2']"", ""Partition support"": ""2/2"", ""Minimum-I2 values"": ""[24, 36, 48]"", ""Maximum lag orders"": ""[2, 3, 5, 6, 7, 8, 9, 10]"", ""Lag-order support"": ""8/12"", ""Longest adjacent lag run"": 6}"
+pair_stability,HMML (baseline),,Past local seismicity,Soil CO₂,Lagged,,accepted_split_lag_support,4/24,"{""BH-supported cells"": ""3/24"", ""Partitions"": ""['S1', 'S2']"", ""Partition support"": ""2/2"", ""Minimum-I2 values"": ""[24, 36, 48]"", ""Maximum lag orders"": ""[2, 8, 9]"", ""Lag-order support"": ""3/12"", ""Longest adjacent lag run"": 2}"
+pair_stability,HMML (baseline),,Rainfall,Past local seismicity,Lagged,,accepted_split_lag_support,3/24,"{""BH-supported cells"": ""2/24"", ""Partitions"": ""['S1', 'S2']"", ""Partition support"": ""2/2"", ""Minimum-I2 values"": ""[24, 36, 48]"", ""Maximum lag orders"": ""[5, 6, 7]"", ""Lag-order support"": ""3/12"", ""Longest adjacent lag run"": 3}"
+pair_stability,HMML (baseline),,Soil CO₂,Past local seismicity,Lagged,,accepted_split_lag_support,2/24,"{""BH-supported cells"": ""2/24"", ""Partitions"": ""['S1', 'S2']"", ""Partition support"": ""2/2"", ""Minimum-I2 values"": ""[24, 36, 48]"", ""Maximum lag orders"": ""[7, 10]"", ""Lag-order support"": ""2/12"", ""Longest adjacent lag run"": 1}"
+pair_stability,HMML (baseline),,Rainfall,Teleseismic RMS,Lagged,,accepted_split_lag_support,2/24,"{""BH-supported cells"": ""2/24"", ""Partitions"": ""['S1', 'S2']"", ""Partition support"": ""2/2"", ""Minimum-I2 values"": ""[24, 36, 48]"", ""Maximum lag orders"": ""[4]"", ""Lag-order support"": ""1/12"", ""Longest adjacent lag run"": 1}"
+pair_stability,HMML (baseline),,Teleseismic RMS,Past local seismicity,Lagged,,accepted_split_lag_support,2/24,"{""BH-supported cells"": ""2/24"", ""Partitions"": ""['S1', 'S2']"", ""Partition support"": ""2/2"", ""Minimum-I2 values"": ""[24, 36, 48]"", ""Maximum lag orders"": ""[11]"", ""Lag-order support"": ""1/12"", ""Longest adjacent lag run"": 1}"
+pair_stability,PCMCI+ with eligible τ=0 triggers,,Teleseismic RMS,Past local seismicity,Same-hour PCMCI+ link (τ=0),,accepted_split_lag_support,1/24,"{""BH-supported cells"": ""0/24"", ""Partitions"": ""['S1']"", ""Partition support"": ""1/2"", ""Minimum-I2 values"": ""[48]"", ""Maximum lag orders"": ""[3]"", ""Lag-order support"": ""1/12"", ""Longest adjacent lag run"": 1}"
+warnings,HMML (baseline),S1,,,,,warning_count,528,"{""runs_with_warnings"": 12, ""messages"": ""invalid value encountered in scalar divide; divide by zero encountered in scalar divide; Perfect separation or prediction detected, parameter may not be identified""}"
+warnings,HMML (baseline),S2,,,,,warning_count,501,"{""runs_with_warnings"": 12, ""messages"": ""invalid value encountered in scalar divide; divide by zero encountered in scalar divide; Perfect separation or prediction detected, parameter may not be identified""}"
+multiplicity_audit,,,,,,,fitted_moderation_tests,57,
+multiplicity_audit,,,,,,,f_accepted_tests,24,
+multiplicity_audit,,,,,,,BH_supported_tests,21,
+delayed_lag_scan,,,,,,0.0,correlation,0.37028379494374847,"{""aligned_rows"": 144, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,1.0,correlation,0.37890381380915955,"{""aligned_rows"": 143, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,2.0,correlation,0.3516578732069823,"{""aligned_rows"": 142, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,3.0,correlation,0.31046770774432053,"{""aligned_rows"": 141, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,4.0,correlation,0.2583197053194161,"{""aligned_rows"": 140, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,5.0,correlation,0.18478921573227342,"{""aligned_rows"": 139, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,6.0,correlation,0.073798355911578,"{""aligned_rows"": 138, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,7.0,correlation,-0.014755159399976733,"{""aligned_rows"": 137, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,8.0,correlation,-0.10412032719379294,"{""aligned_rows"": 136, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,9.0,correlation,-0.16778697131104123,"{""aligned_rows"": 135, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,10.0,correlation,-0.20954446428313145,"{""aligned_rows"": 134, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,11.0,correlation,-0.21942003478016395,"{""aligned_rows"": 133, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,12.0,correlation,-0.21434226708776208,"{""aligned_rows"": 132, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,13.0,correlation,-0.20670349351677034,"{""aligned_rows"": 131, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,14.0,correlation,-0.2088007117043549,"{""aligned_rows"": 130, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,15.0,correlation,-0.2066489237173556,"{""aligned_rows"": 129, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,16.0,correlation,-0.18936116245588983,"{""aligned_rows"": 128, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,17.0,correlation,-0.16976823770841734,"{""aligned_rows"": 127, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,18.0,correlation,-0.11939646930546159,"{""aligned_rows"": 126, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,19.0,correlation,-0.05162034659681315,"{""aligned_rows"": 125, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,20.0,correlation,0.008651244018884703,"{""aligned_rows"": 124, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,21.0,correlation,0.036338004877571925,"{""aligned_rows"": 123, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,22.0,correlation,0.07196919440350301,"{""aligned_rows"": 122, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,23.0,correlation,0.1299519527056727,"{""aligned_rows"": 121, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,24.0,correlation,0.21318802106957596,"{""aligned_rows"": 120, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,25.0,correlation,0.3114392978078201,"{""aligned_rows"": 119, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,26.0,correlation,0.41012433376674734,"{""aligned_rows"": 118, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,27.0,correlation,0.4751919366807586,"{""aligned_rows"": 117, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,28.0,correlation,0.4870365009914598,"{""aligned_rows"": 116, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,29.0,correlation,0.48565382483785347,"{""aligned_rows"": 115, ""descriptive_only"": true}"
+delayed_lag_scan,,,,,,30.0,correlation,0.46375946967434106,"{""aligned_rows"": 114, ""descriptive_only"": true}"
+execution,,,,,,,error_count,0,

@@ -74,7 +74,7 @@ WHAKAARI_CASE = CaseSpec(
     ),
     variable_labels={
         "hydro_2_5_scaled": "Hydrothermal RMS (2–5 Hz)",
-        "spectral_log_ratio_4p5_8_over_8_16_scaled": "Past spectral contrast",
+        "spectral_log_ratio_4p5_8_over_8_16_scaled": "Past-smoothed spectral contrast (4.5–8 / 8–16 Hz)",
         "effect_tremor_5_15_scaled": "Tremor anomaly (effect)",
         "rainfall_mm_scaled": "Rainfall",
         "pressure_drop_scaled": "Pressure drop",
