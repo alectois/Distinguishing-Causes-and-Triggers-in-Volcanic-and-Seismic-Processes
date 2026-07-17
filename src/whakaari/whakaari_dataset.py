@@ -198,13 +198,13 @@ def _full_day_hourly_index(
     )
 
 
-def build_master_dataframe(
+def build_main_dataframe(
     wave: pd.DataFrame,
     weather_vars: pd.DataFrame,
     gnss: pd.DataFrame,
     start,
     end,
-    master_freq: str = "1h",
+    main_freq: str = "1h",
 ) -> pd.DataFrame:
     """
     Align waveform, weather, and past-only GNSS variables on one hourly grid.
@@ -212,10 +212,10 @@ def build_master_dataframe(
     The GNSS value assigned to day D is the displacement change from D-2 to
     D-1, so the entire hourly step for D uses information available before D.
     """
-    master_index = _full_day_hourly_index(start, end, master_freq)
+    main_index = _full_day_hourly_index(start, end, main_freq)
 
-    wave_hourly = _utc_index(wave, "time").resample(master_freq).mean()
-    wave_hourly = wave_hourly.reindex(master_index)
+    wave_hourly = _utc_index(wave, "time").resample(main_freq).mean()
+    wave_hourly = wave_hourly.reindex(main_index)
 
     if "spectral_log_ratio_4p5_8_over_8_16" in wave_hourly.columns:
         wave_hourly["spectral_log_ratio_4p5_8_over_8_16"] = (
@@ -235,9 +235,9 @@ def build_master_dataframe(
 
     weather_hourly = (
         _utc_index(weather_vars, "timestamp")
-        .resample(master_freq)
+        .resample(main_freq)
         .mean()
-        .reindex(master_index)
+        .reindex(main_index)
     )
 
     gnss_daily = _utc_index(gnss, "timestamp").resample("1D").mean()
@@ -254,25 +254,25 @@ def build_master_dataframe(
     # the final daily timestamp and previously created 23 artificial end NaNs.
     gnss_hourly = (
         gnss_daily[["GNSS_deformation_rate"]]
-        .reindex(master_index)
+        .reindex(main_index)
         .ffill(limit=23)
     )
 
-    master = pd.concat(
+    main = pd.concat(
         [wave_hourly, weather_hourly, gnss_hourly],
         axis=1,
     )
-    master.index = master_index
-    master.index.name = "time"
-    return master
+    main.index = main_index
+    main.index.name = "time"
+    return main
 
 
 def prepare_analysis_dataframe(
-    master: pd.DataFrame,
+    main: pd.DataFrame,
     *,
     required_columns: list[str] | None = None,
 ) -> pd.DataFrame:
-    analysis = _utc_index(master, "time")
+    analysis = _utc_index(main, "time")
 
     if required_columns is None:
         required_columns = [
@@ -287,7 +287,7 @@ def prepare_analysis_dataframe(
     missing_columns = sorted(set(required_columns) - set(analysis.columns))
     if missing_columns:
         raise ValueError(
-            f"Whakaari master dataframe is missing columns: {missing_columns}"
+            f"Whakaari main dataframe is missing columns: {missing_columns}"
         )
 
     analysis = analysis[required_columns].apply(
@@ -341,14 +341,14 @@ def preprocessing_report(
     prepared_df: pd.DataFrame,
 ) -> dict[str, pd.DataFrame]:
     """Return compact construction, missing-value, and dropped-range tables."""
-    master = _utc_index(rawest_df, "time")
+    main = _utc_index(rawest_df, "time")
     prepared = _utc_index(prepared_df, "time")
-    dropped = master.index.difference(prepared.index)
+    dropped = main.index.difference(prepared.index)
 
     summary = pd.DataFrame(
         [
             {
-                "master_rows": len(master),
+                "main_rows": len(main),
                 "analysis_rows": len(prepared),
                 "rows_removed": len(dropped),
                 "analysis_start": prepared.index.min(),
@@ -361,9 +361,9 @@ def preprocessing_report(
 
     missing_by_variable = pd.DataFrame(
         {
-            "missing_in_master": master.isna().sum(),
+            "missing_in_main": main.isna().sum(),
             "missing_in_analysis": prepared.isna().sum().reindex(
-                master.columns,
+                main.columns,
                 fill_value=0,
             ),
         }

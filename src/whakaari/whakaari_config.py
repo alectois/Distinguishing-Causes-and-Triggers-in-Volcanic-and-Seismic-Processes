@@ -17,7 +17,7 @@ WHAKAARI_WAVEFORM_CONFIG = {
     "station": "WSRZ",
     "location": "10",
     "channel": "HHZ",
-    "master_freq": "1h",
+    "main_freq": "1h",
     "rms_window_sec": 600,
     "response_output": "VEL",
     "pre_filt": (0.5, 1.0, 20.0, 25.0),

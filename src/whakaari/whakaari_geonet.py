@@ -91,7 +91,7 @@ def load_gnss_deformation(
     Load daily vertical displacement for RGWC and RGWI and return their difference.
 
     The returned series is a deformation level. The past-only daily change is
-    constructed later in ``build_master_dataframe``.
+    constructed later in ``build_main_dataframe``.
     """
     if cache_path is not None:
         cache_path = Path(cache_path)

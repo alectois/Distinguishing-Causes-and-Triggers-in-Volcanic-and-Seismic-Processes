@@ -240,7 +240,7 @@ def extract_features_for_day(
     stream, coverage = get_day_stream(client, day_start, cfg)
 
     window_seconds = int(cfg.get("rms_window_sec", 600))
-    output_frequency = str(cfg.get("master_freq", "1h"))
+    output_frequency = str(cfg.get("main_freq", "1h"))
     output_index = pd.date_range(
         pd.Timestamp(day_start.datetime, tz="UTC"),
         periods=24,
