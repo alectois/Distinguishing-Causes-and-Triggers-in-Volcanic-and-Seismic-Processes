@@ -38,8 +38,8 @@ class PCMCIBackend:
             )
         if fdr_method not in {None, "fdr_bh"}:
             raise ValueError("fdr_method must be None or 'fdr_bh'.")
-        if not 0 < pc_alpha < 1 or not 0 < alpha_level < 1:
-            raise ValueError("pc_alpha and alpha_level must be between 0 and 1.")
+        if pc_alpha is not None and not 0 < pc_alpha < 1:
+            raise ValueError("pc_alpha and alpha_level must be None or between 0 and 1.")
 
         self.tau_max = tau_max
         self.pc_alpha = pc_alpha

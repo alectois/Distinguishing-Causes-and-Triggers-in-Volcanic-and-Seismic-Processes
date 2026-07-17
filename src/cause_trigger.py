@@ -1,17 +1,12 @@
 """
 Cause–Trigger algorithm implementation for thesis experiments.
 
-This file is adapted from the Cause–Trigger algorithm code accompanying:
+This algorithm is adapted from the Cause–Trigger algorithm code accompanying:
 Hlaváčková-Schindler, K., Wöß, R., Pecorino, V., & Schindler, P. (2025).
 "Cause or Trigger? From Philosophy to Causal Modeling."
 Zenodo. DOI: 10.5281/zenodo.15109084
 
 Original material: CC BY 4.0.
-Modifications: refactoring, paper-compatible statistic update, volcanic-data adaptation,
-diagnostic outputs, and optional causal-discovery backends.
-
-Given a standardized time-series dataframe X and a target y_t,
-return causes, trigger candidates, accepted triggers, cause-trigger pairs, and diagnostics.
 """ 
 
 from __future__ import annotations
@@ -142,7 +137,8 @@ class CauseTriggerConfig:
     refit_cv_folds: int = 3
 
     # PCMCI / PCMCI+.
-    pcmci_pc_alpha: float = 0.05
+    pcmci_pc_alpha: float = 0.2
+    pcmci_plus_pc_alpha: float = 0.01
     pcmci_alpha_level: float = 0.05
     pcmci_fdr_method: str | None = "fdr_bh"
     pcmci_cond_ind_test: str = "parcorr"
@@ -204,10 +200,16 @@ class HMMLBackend:
 def make_causal_backend(config: CauseTriggerConfig):
     if config.causal_backend == "hmml":
         return HMMLBackend(config.lags, config.distribution)
+    
+    pc_alpha = (
+        config.pcmci_plus_pc_alpha
+        if config.causal_backend == "pcmci_plus"
+        else config.pcmci_pc_alpha
+    )
 
     return PCMCIBackend(
         tau_max=config.lags,
-        pc_alpha=config.pcmci_pc_alpha,
+        pc_alpha=pc_alpha,
         alpha_level=config.pcmci_alpha_level,
         fdr_method=config.pcmci_fdr_method,
         cond_ind_test=config.pcmci_cond_ind_test,

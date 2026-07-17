@@ -50,10 +50,13 @@ class WorkflowConfig:
     refit_cv_folds: int = 3
 
     # PCMCI / PCMCI+.
-    pcmci_pc_alpha: float = 0.05
+    # pc_alpha controls preliminary condition/graph selection and is
+    # method-specific. pcmci_alpha_level is the final PCMCI link threshold.
+    pcmci_pc_alpha: float = 0.20
+    pcmci_plus_pc_alpha: float = 0.01
     pcmci_alpha_level: float = 0.05
     pcmci_fdr_method: Optional[str] = "fdr_bh"
-    pcmci_cond_ind_test: str = "parcorr"
+    pcmci_cond_ind_test: str = "robust_parcorr"
     pcmci_verbosity: int = 0
 
     # PCMCI+ contemporaneous-link settings.
@@ -431,6 +434,7 @@ def make_cause_trigger_config(
         refit_cv=workflow.refit_cv,
         refit_cv_folds=workflow.refit_cv_folds,
         pcmci_pc_alpha=workflow.pcmci_pc_alpha,
+        pcmci_plus_pc_alpha=workflow.pcmci_plus_pc_alpha,
         pcmci_alpha_level=workflow.pcmci_alpha_level,
         pcmci_fdr_method=workflow.pcmci_fdr_method,
         pcmci_cond_ind_test=(
@@ -488,7 +492,8 @@ def prepare_case_analysis(
     min_I2_values: Sequence[int],
     lag_grid: Sequence[int],
     alpha: float = 0.05,
-    pcmci_pc_alpha: float = 0.05,
+    pcmci_pc_alpha: float = 0.2,
+    pcmci_plus_pc_alpha: float = 0.01,
     pcmci_alpha_level: float = 0.05,
     pcmci_fdr_method: str | None = "fdr_bh",
     cond_ind_test: str = "robust_parcorr",
@@ -546,6 +551,7 @@ def prepare_case_analysis(
         refit_cv=True,
         refit_cv_folds=3,
         pcmci_pc_alpha=pcmci_pc_alpha,
+        pcmci_plus_pc_alpha=pcmci_plus_pc_alpha,
         pcmci_alpha_level=pcmci_alpha_level,
         pcmci_fdr_method=pcmci_fdr_method,
         pcmci_cond_ind_test=cond_ind_test,
@@ -633,6 +639,16 @@ def prepare_case_analysis(
         {
             "Item": "Maximum-lag-order design",
             "Value": f"d = {min(lag_grid)}-{max(lag_grid)} h for HMML, PCMCI, and PCMCI+",
+        },
+        {
+            "Item": "PCMCI extension settings",
+            "Value": (
+                f"PCMCI pc_alpha={pcmci_pc_alpha}; "
+                f"PCMCI+ pc_alpha={pcmci_plus_pc_alpha}; "
+                f"link alpha={pcmci_alpha_level}; "
+                f"FDR={pcmci_fdr_method}; "
+                f"conditional-independence test={cond_ind_test}"
+            ),
         },
         {
             "Item": "Unique split partitions",

@@ -751,43 +751,6 @@ def multiplicity_audit_summary(diagnostics: pd.DataFrame) -> pd.DataFrame:
         "BH-supported": int(adjusted.sum()),
     }])
 
-def delayed_lag_correlation(
-    frame: pd.DataFrame,
-    *,
-    effect: str,
-    predictor: str,
-    max_lag: int,
-) -> pd.DataFrame:
-    rows = []
-    for lag in range(int(max_lag) + 1):
-        aligned = pd.concat(
-            [
-                frame[effect].rename("effect"),
-                frame[predictor].shift(lag).rename("predictor_lagged"),
-            ],
-            axis=1,
-        ).dropna()
-        rows.append({
-            "lag_hours": lag,
-            "correlation": aligned["effect"].corr(aligned["predictor_lagged"]),
-            "n_aligned": len(aligned),
-        })
-    return pd.DataFrame(rows)
-
-
-
-def top_delayed_lags(scan: pd.DataFrame, *, n: int = 8) -> pd.DataFrame:
-    """Return the strongest absolute correlations from a delayed-lag scan."""
-    if scan.empty:
-        return scan.copy()
-    return (
-        scan.assign(_absolute=scan["correlation"].abs())
-        .nlargest(int(n), "_absolute")
-        .drop(columns="_absolute")
-        .sort_values("lag_hours", kind="stable")
-        .reset_index(drop=True)
-    )
-
 def _json_ready(value):
     if isinstance(value, dict):
         return {str(key): _json_ready(item) for key, item in value.items()}
@@ -826,7 +789,6 @@ def build_summary_export(
     warning_table: pd.DataFrame,
     diagnostics: pd.DataFrame,
     errors: pd.DataFrame,
-    delayed_scan: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     rows: list[dict] = []
 
@@ -942,16 +904,6 @@ def build_summary_export(
             },
         ])
 
-    if delayed_scan is not None and not delayed_scan.empty:
-        for _, row in delayed_scan.iterrows():
-            rows.append({
-                "section": "delayed_lag_scan",
-                "lag": int(row["lag_hours"]),
-                "metric": "correlation",
-                "value": float(row["correlation"]),
-                "details": {"aligned_rows": int(row["n_aligned"]), "descriptive_only": True},
-            })
-
     rows.append({"section": "execution", "metric": "error_count", "value": int(len(errors))})
 
     return pd.DataFrame(rows).reindex(columns=[
@@ -982,7 +934,6 @@ def export_audit_csvs(
     pair_summary: pd.DataFrame,
     warning_table: pd.DataFrame,
     variable_labels: Mapping[str, str] | None = None,
-    delayed_scan: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Write exactly three auditable CSV outputs."""
     results_dir = Path(results_dir)
@@ -1031,7 +982,6 @@ def export_audit_csvs(
         warning_table=warning_table,
         diagnostics=diagnostics,
         errors=errors,
-        delayed_scan=delayed_scan,
     )
 
     paths = {
@@ -1047,9 +997,7 @@ def export_audit_csvs(
         "Design, split stability, automatic AIC/BIC outcomes, backend behaviour, "
         "pair stability, warning audit, and descriptive multiplicity audit."
     )
-    if delayed_scan is not None:
-        summary_description = summary_description[:-1] + ", plus the delayed-lag scan."
-
+    
     return pd.DataFrame([
         {
             "File": paths["runs"].name,
