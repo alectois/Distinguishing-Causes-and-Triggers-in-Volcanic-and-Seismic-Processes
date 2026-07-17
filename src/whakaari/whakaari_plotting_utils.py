@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 def _save_current_figure(fig, filename, save_dir="figures", formats=("pdf", "png"), dpi=450):
-    """Save every figure as PDF and PNG under figures/ by default."""
     if save_dir is None or filename is None:
         return
 
@@ -112,7 +111,6 @@ WHAKAARI_AXIS_LABELS = {
 
 
 def dataset_health_report(df: pd.DataFrame, name: str = "Whakaari dataset") -> pd.DataFrame:
-    """Return a one-row structural audit for an indexed or time-column dataframe."""
     frame = df.copy()
 
     if isinstance(frame.index, pd.DatetimeIndex):
@@ -306,7 +304,7 @@ def plot_whakaari_loglog_distributions(
     filename: str = "whakaari_loglog_raw_variables",
     save_dir: str | Path | None = "figures",
 ):
-    """Plot positive-subset log-log densities for all canonical Whakaari variables."""
+    """Plot positive-subset log-log densities for all Whakaari variables."""
     if columns is None:
         columns = [
             column
@@ -514,10 +512,7 @@ def plot_whakaari_thesis_figures(
     return seismic, external
 
 
-
-
 def distribution_summary(df, name=None):
-    """Summary statistics useful for checking skewness, tails, constants, and missingness."""
     cols = [
         c for c in df.columns
         if c not in ["timestamp", "time", "station"]
@@ -764,12 +759,6 @@ def _make_source_variable_table(df):
     return pd.DataFrame(rows).sort_values("Source").reset_index(drop=True)
 
 def _collapse_to_source_markers(df):
-    """
-    Collapse observable-level metadata to one displayed marker per source.
-
-    The returned variable table still lists all observables at each source, but
-    the map itself shows source locations rather than one symbol per variable.
-    """
     rows = []
 
     family_by_source = {

@@ -24,7 +24,7 @@ from pcmci_runner import PCMCIBackend
 
 
 def paper_abs_mean_increase(mean_after: float, mean_before: float) -> bool:
-    """Return the paper condition |E[x] in I2| > |E[x] in I1|."""
+    """Return the condition |E[x] in I2| > |E[x] in I1|."""
     mean_after = float(mean_after)
     mean_before = float(mean_before)
     difference = abs(mean_after) - abs(mean_before)
@@ -37,7 +37,6 @@ def validate_regular_time_index(
     df: pd.DataFrame,
     expected_step: str = "1h",
 ) -> None:
-    """Require a sorted, duplicate-free, complete regular time grid."""
     if not isinstance(df.index, pd.DatetimeIndex):
         raise TypeError("Expected a pandas DatetimeIndex.")
     if not df.index.is_monotonic_increasing:
@@ -244,7 +243,7 @@ def find_effect_split(
 ):
     """
     Select the split maximizing |mean(I2)| - |mean(I1)|, subject to the
-    paper's strict increase condition and minimum interval lengths.
+    increase condition and minimum interval lengths.
     """
     y = pd.to_numeric(pd.Series(y), errors="coerce")
     if y.isna().any():
@@ -764,5 +763,4 @@ def run_cause_trigger(
 
 
 def diagnostics_to_dataframe(result: dict) -> pd.DataFrame:
-    """Return result diagnostics as a dataframe."""
     return pd.DataFrame(result.get("diagnostics", []))

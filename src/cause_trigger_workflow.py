@@ -67,8 +67,6 @@ class WorkflowConfig:
 
 @dataclass
 class PreparedCaseAnalysis:
-    """All prepared objects required by the compact analysis notebooks."""
-
     X_full_raw: pd.DataFrame
     X_case_raw: pd.DataFrame
     reference_raw: pd.DataFrame
@@ -204,8 +202,8 @@ def prepare_case_frames(
     """
     Construct aligned case- and reference-standardised frames.
 
-    ``X_model`` is case-standardised for causal discovery and moderation.
-    ``X_mean`` uses the pre-case reference distribution for split and
+    X_model is case-standardised for causal discovery and moderation.
+    X_mean uses the pre-case reference distribution for split and
     mean-increase comparisons.
     """
     validate_regular_time_index(raw_case, expected_step="1h")
@@ -283,7 +281,7 @@ def reference_parameter_table(
     criteria: Sequence[str] = ("aic", "bic"),
     fallback_lag: int = 1,
 ) -> pd.DataFrame:
-    """Return conventional VAR AIC/BIC lag-order references."""
+    """Return VAR AIC/BIC lag-order references."""
     if effect not in dataframe.columns:
         raise ValueError(f"Effect variable {effect!r} is absent.")
 
@@ -313,7 +311,6 @@ def split_diagnostics(
     min_I1_length: int = 48,
     min_I2_length: int = 48,
 ) -> dict:
-    """Return a concise description of one algorithmic split."""
     split = find_effect_split(
         dataframe[effect],
         min_I1_length=min_I1_length,

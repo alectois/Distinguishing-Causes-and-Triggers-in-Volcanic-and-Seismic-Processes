@@ -1,6 +1,4 @@
 """
-Parameter extraction for Cause–Trigger thesis experiments.
-
 This file is adapted from the Cause–Trigger algorithm code accompanying:
 Hlaváčková-Schindler, K., Wöß, R., Pecorino, V., & Schindler, P. (2025).
 "Cause or Trigger? From Philosophy to Causal Modeling."
@@ -15,9 +13,7 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.api import VAR
 
-
 _VALID_CRITERIA = {"aic", "bic", "hqic", "fpe"}
-
 
 def select_var_lag(
     df: pd.DataFrame,

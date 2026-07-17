@@ -7,7 +7,6 @@ from obspy import Stream, UTCDateTime
 
 
 def _nan_groups(mask: np.ndarray) -> list[tuple[int, int]]:
-    """Return inclusive index ranges for contiguous True values."""
     mask = np.asarray(mask, dtype=bool)
     groups: list[tuple[int, int]] = []
     start: int | None = None
@@ -30,7 +29,6 @@ def _interpolate_short_internal_gaps(
     *,
     max_gap_samples: int,
 ) -> np.ndarray:
-    """Interpolate only bounded internal gaps no longer than the limit."""
     values = np.asarray(values, dtype=float).copy()
     missing = np.isnan(values)
 
@@ -88,7 +86,7 @@ def preprocess_stream_safely(stream: Stream, config: dict):
     Merge and response-correct all usable continuous waveform segments.
 
     Original ObsPy masks are converted to NaN. Bounded gaps no longer than
-    ``max_interp_gap_sec`` are interpolated. Longer gaps remain NaN in the
+    max_interp_gap_sec are interpolated. Longer gaps remain NaN in the
     returned trace and are processed as boundaries between independent valid
     segments. Consequently, a few real miniSEED gaps do not invalidate an
     otherwise usable daily chunk.

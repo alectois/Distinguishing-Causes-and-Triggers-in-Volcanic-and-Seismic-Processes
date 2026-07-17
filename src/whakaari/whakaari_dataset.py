@@ -382,7 +382,6 @@ def save_whakaari_analysis_dataset(
     analysis: pd.DataFrame,
     output_dir: str | Path,
 ) -> Path:
-    """Validate and save the canonical complete-case Whakaari dataset."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 

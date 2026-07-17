@@ -89,9 +89,7 @@ def load_gnss_deformation(
 ) -> pd.DataFrame:
     """
     Load daily vertical displacement for RGWC and RGWI and return their difference.
-
-    The returned series is a deformation level. The past-only daily change is
-    constructed later in ``build_main_dataframe``.
+    The returned series is a deformation level.
     """
     if cache_path is not None:
         cache_path = Path(cache_path)
@@ -155,13 +153,6 @@ def load_weather_vars(
     cache_path: str | Path | None = None,
     redownload: bool = False,
 ) -> pd.DataFrame:
-    """
-    Load hourly precipitation and atmospheric-pressure drop.
-
-    A buffer interval should be requested before the analysis start so the first
-    retained analysis hour has a real pressure difference. The first downloaded
-    row is dropped because its pressure change is undefined.
-    """
     if cache_path is not None:
         cache_path = Path(cache_path)
         cache_path.parent.mkdir(parents=True, exist_ok=True)

@@ -153,7 +153,6 @@ def catalogue_hourly_counts(
     catalogue: pd.DataFrame,
     master_index: pd.DatetimeIndex,
 ) -> pd.Series:
-    """Count catalogue events on the supplied complete hourly index."""
     events = catalogue.copy()
 
     if "timestamp" not in events.columns:
@@ -401,7 +400,6 @@ def standard_scale_dataframe(dataframe: pd.DataFrame) -> pd.DataFrame:
 
 
 def validate_etna_dataset(dataframe: pd.DataFrame) -> None:
-    """Require a complete, finite, strictly hourly canonical dataset."""
     required = {
         "time",
         "teleseismic",
@@ -451,7 +449,7 @@ def validate_etna_dataset(dataframe: pd.DataFrame) -> None:
     ]
     if scaled_columns:
         raise ValueError(
-            "The canonical Etna dataset must remain unstandardized. "
+            "The Etna dataset must remain unstandardized. "
             f"Found scaled columns: {scaled_columns}"
         )
 
@@ -528,7 +526,6 @@ def create_etna_dataset(
     weather_cols: list[str] | None = None,
     output_dir: str | Path | None = None,
 ) -> pd.DataFrame:
-    """Construct and optionally save the canonical unstandardized hourly dataset."""
     analysis_start = _to_utc_timestamp(start_time)
     analysis_end = _to_utc_timestamp(end_time)
 
@@ -639,12 +636,6 @@ def load_etnagas_csv(
     start_time=None,
     end_time=None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Load ETNAGAS variables on an exact hourly grid.
-
-    Isolated one-hour gaps are linearly interpolated. The returned report lists
-    the timestamps and source variables affected by that interpolation.
-    """
     raw = pd.read_csv(path).replace("NULL", np.nan)
 
     if "Time" not in raw.columns:

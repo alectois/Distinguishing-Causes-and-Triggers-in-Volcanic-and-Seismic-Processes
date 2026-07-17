@@ -130,7 +130,6 @@ def dataset_health_report(
     dataframe: pd.DataFrame,
     name: str = "Etna dataset",
 ) -> pd.DataFrame:
-    """Return one compact row describing dataset completeness and regularity."""
     index = _time_index(dataframe)
     valid_time = not index.isna().any()
 
@@ -162,7 +161,6 @@ def dataset_health_report(
 def distribution_summary(
     dataframe: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Return compact univariate summaries for numeric data columns."""
     columns = [
         column
         for column in dataframe.columns
@@ -345,7 +343,7 @@ def plot_etna_loglog_distributions(
     filename: str = "etna_loglog_raw_variables",
     save_dir: str | Path | None = "figures",
 ):
-    """Plot positive-subset log-log densities for canonical Etna variables."""
+    """Plot positive-subset log-log densities for Etna variables."""
     if columns is None:
         columns = [column for column in ETNA_LOGLOG_COLS if column in dataframe.columns]
 
@@ -735,7 +733,6 @@ def plot_etna_thesis_figures(
     save_dir="figures",
     include_titles=False,
 ):
-    """Create the final seismic and external-variable overview figures."""
     seismic_title = (
         "Teleseismic and catalogue-seismicity variables"
         if include_titles

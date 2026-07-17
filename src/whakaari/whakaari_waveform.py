@@ -6,8 +6,6 @@ import numpy as np
 import pandas as pd
 from obspy import Stream, UTCDateTime
 
-
-
 def _nan_groups(values: np.ndarray) -> list[tuple[int, int]]:
     missing = np.isnan(values)
     groups: list[tuple[int, int]] = []
@@ -31,7 +29,6 @@ def _interpolate_short_gaps(
     *,
     max_gap_samples: int,
 ) -> np.ndarray:
-    """Interpolate only bounded gaps no longer than ``max_gap_samples``."""
     values = np.asarray(values, dtype=float).copy()
     valid = np.isfinite(values)
 
@@ -90,7 +87,6 @@ def _hourly_coverage(
             coverage.loc[hour_start] += overlap_seconds / 3600.0
 
     return coverage.clip(upper=1.0)
-
 
 def get_day_stream(
     client,
@@ -178,7 +174,6 @@ def get_day_stream(
         )
 
     return processed, coverage
-
 
 def _band_rms_series(
     stream: Stream,
@@ -315,7 +310,6 @@ def build_waveform_dataset(
     save_path: str | Path | None = None,
     overwrite: bool = False,
 ) -> tuple[pd.DataFrame, list[tuple[object, str]]]:
-    """Build or load the cached hourly Whakaari waveform feature dataframe."""
     if save_path is not None:
         save_path = Path(save_path)
         save_path.parent.mkdir(parents=True, exist_ok=True)

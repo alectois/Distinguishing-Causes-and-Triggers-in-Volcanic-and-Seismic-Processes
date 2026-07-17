@@ -128,7 +128,6 @@ def plot_effect_with_splits(
 
 
 def show_table(frame: pd.DataFrame, caption: str | None = None) -> None:
-    """Display a compact notebook table without triggering duplicate rendering."""
     from IPython.display import display
 
     styler = (
@@ -935,7 +934,6 @@ def export_audit_csvs(
     warning_table: pd.DataFrame,
     variable_labels: Mapping[str, str] | None = None,
 ) -> pd.DataFrame:
-    """Write exactly three auditable CSV outputs."""
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
     criteria_by_lag = reference_criteria_by_lag(lag_references)
