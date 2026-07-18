@@ -551,7 +551,7 @@ WHAKAARI_FAMILY_STYLE = {
     "deformation": {
         "marker": "*",
         "color": "#ff7f0e",
-        "label": "GNSS deformation",
+        "label": "GNSS station-pair proxy",
     },
     "weather_meteo": {
         "marker": "P",
@@ -562,7 +562,7 @@ WHAKAARI_FAMILY_STYLE = {
 
 WHAKAARI_SOURCE_LABELS = {
     "WSRZ": "WSRZ",
-    "RGWC_RGWI": "RGWC–RGWI GNSS",
+    "RGWC_RGWI": "RGWC–RGWI midpoint",
     "WHAKAARI_OPENMETEO_PROXY": "Open-Meteo",
 }
 
@@ -677,7 +677,7 @@ def _clean_legend(ax):
 
     preferred_order = [
         "WSRZ seismic station",
-        "GNSS deformation",
+        "GNSS station-pair proxy",
         "Open-Meteo weather",
     ]
 

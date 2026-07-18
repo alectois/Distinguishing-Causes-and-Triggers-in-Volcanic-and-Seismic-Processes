@@ -56,8 +56,8 @@ def etna_observable_metadata() -> pd.DataFrame:
             "observable_label": "Past 48-hour local event-rate state",
             "family": "catalogue_seismicity",
             "spatial_type": "event_catalogue",
-            "lat": 37.75,
-            "lon": 14.99,
+            "lat": float("nan"),
+            "lon": float("nan"),
             "plot_role": "candidate_state",
         },
         {
@@ -68,8 +68,8 @@ def etna_observable_metadata() -> pd.DataFrame:
             "observable_label": "Positive local event-rate response",
             "family": "catalogue_seismicity",
             "spatial_type": "event_catalogue",
-            "lat": 37.75,
-            "lon": 14.99,
+            "lat": float("nan"),
+            "lon": float("nan"),
             "plot_role": "effect",
         },
         {

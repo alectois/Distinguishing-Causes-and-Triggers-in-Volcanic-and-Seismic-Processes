@@ -64,9 +64,10 @@ def load_etna_event_catalog_xls(
     path: str | Path,
     *,
     sheet_name=0,
-    quality_filter: bool = False,
 ) -> pd.DataFrame:
-    """Load the EtnaSC 2000–2010 catalogue and construct UTC timestamps."""
+    """Load the EtnaSC 2000–2010 catalogue and construct UTC timestamps.
+    All catalogue rows with valid event timestamps are retained.
+    """
     try:
         dataframe = pd.read_excel(Path(path), sheet_name=sheet_name)
     except ImportError as exc:
@@ -126,26 +127,6 @@ def load_etna_event_catalog_xls(
                 dataframe[column],
                 errors="coerce",
             )
-
-    if quality_filter:
-        required_quality = ["N.O.", "RMS", "GAP"]
-        missing_quality = [
-            column
-            for column in required_quality
-            if column not in dataframe.columns
-        ]
-        if missing_quality:
-            raise ValueError(
-                "Cannot quality-filter catalogue; missing columns: "
-                f"{missing_quality}"
-            )
-
-        dataframe = dataframe.loc[
-            (dataframe["N.O."] >= 8)
-            & (dataframe["RMS"] <= 0.30)
-            & (dataframe["GAP"] <= 250)
-        ].copy()
-
     return dataframe
 
 

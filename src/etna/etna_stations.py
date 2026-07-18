@@ -33,7 +33,6 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def utc_day_starts(start: UTCDateTime, end: UTCDateTime) -> list[UTCDateTime]:
-    """Return UTC day-start timestamps from start inclusive to end exclusive."""
     t = UTCDateTime(start)
     out: list[UTCDateTime] = []
 
@@ -135,10 +134,6 @@ def probe_stream_daily(
     probe_duration_minutes: int = 10,
     min_coverage_fraction: float = 0.80,
 ) -> pd.DataFrame:
-    """
-    For one stream, download a short probe segment each day.
-    This checks day-by-day waveform existence without downloading full days.
-    """
     rows: list[dict[str, Any]] = []
 
     for day_start in utc_day_starts(starttime, endtime):

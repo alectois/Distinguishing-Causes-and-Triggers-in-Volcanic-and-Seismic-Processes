@@ -772,31 +772,31 @@ def plot_etna_thesis_figures(
 FAMILY_STYLE = {
     "seismic": {
         "marker": "^",
-        "color": "#1f77b4",
+        "color": "#107ac7",
         "label": "Teleseismic station",
         "size": 115,
     },
     "catalogue_seismicity": {
         "marker": "*",
-        "color": "#d62728",
-        "label": "Catalogue seismicity",
+        "color": "#F4280D",
+        "label": "Catalogue events",
         "size": 190,
     },
     "gas_meteo": {
         "marker": "o",
-        "color": "#2ca02c",
+        "color": "#18b518",
         "label": "ETNAGAS gas/meteo",
         "size": 120,
     },
     "weather_proxy": {
         "marker": "P",
-        "color": "#bcbd22",
-        "label": "Hourly precipitation",
+        "color": "#dada12",
+        "label": "Open-Meteo",
         "size": 135,
     },
     "summit": {
         "marker": "X",
-        "color": "black",
+        "color": "#1635ff",
         "label": "Etna summit",
         "size": 135,
     },
@@ -804,7 +804,7 @@ FAMILY_STYLE = {
 
 SOURCE_LABELS = {
     "ESLN": "ESLN",
-    "ETNAGAS_3": "ETNAGAS network",
+    "ETNAGAS_3": "ETNAGAS 3C",
     "ETNA_OPENMETEO_PROXY": "Open-Meteo",
     "EtnaSC_2000_2010": "EtnaSC catalogue",
     "Etna summit": "Etna summit",
@@ -812,14 +812,12 @@ SOURCE_LABELS = {
 
 LABEL_OFFSETS = {
     "ESLN": (0, -18),
-    "EtnaSC_2000_2010": (-8, 18),
     "ETNA_OPENMETEO_PROXY": (-12, -18),
     "Etna summit": (16, -12),
     "ETNAGAS_3": (0, 34),
 }
 
 DISPLAY_NUDGES_M = {
-    "EtnaSC_2000_2010": (-650, 430),
     "ETNA_OPENMETEO_PROXY": (-650, -430),
     "Etna summit": (520, -260),
 }
@@ -906,6 +904,7 @@ def _project_sources(dataframe: pd.DataFrame) -> pd.DataFrame:
 def plot_etna_all_variables_map(
     metadata: pd.DataFrame,
     *,
+    catalogue: pd.DataFrame | None = None,
     summit_lat: float = 37.748,
     summit_lon: float = 14.999,
     satellite: bool = True,
@@ -914,13 +913,39 @@ def plot_etna_all_variables_map(
     filename: str = "etna_map",
     save_dir: str | Path | None = "figures",
 ):
-    """Plot one marker per retained Etna measurement source."""
+    """Plot Etna measurement sources and located catalogue events."""
     metadata = metadata.copy()
-    metadata["lat"] = pd.to_numeric(metadata["lat"], errors="coerce")
-    metadata["lon"] = pd.to_numeric(metadata["lon"], errors="coerce")
-    metadata = metadata.dropna(subset=["lat", "lon"])
 
+    # Construct the table before removing non-point catalogue metadata.
     variable_table = _source_variable_table(metadata)
+
+    # Catalogue variables are spatially distributed, not point sources.
+    if "spatial_type" in metadata.columns:
+        catalogue_metadata = metadata["spatial_type"].eq(
+            "event_catalogue"
+        )
+        metadata = metadata.loc[~catalogue_metadata].copy()
+    else:
+        catalogue_metadata = pd.Series(
+            False,
+            index=metadata.index,
+        )
+
+    if catalogue is None and catalogue_metadata.any():
+        warnings.warn(
+            "Catalogue metadata are present, but no catalogue was "
+            "provided; catalogue events will not appear on the map."
+        )
+
+    metadata["lat"] = pd.to_numeric(
+        metadata["lat"],
+        errors="coerce",
+    )
+    metadata["lon"] = pd.to_numeric(
+        metadata["lon"],
+        errors="coerce",
+    )
+    metadata = metadata.dropna(subset=["lat", "lon"])
 
     summit = pd.DataFrame([{
         "case": "Etna",
@@ -935,7 +960,10 @@ def plot_etna_all_variables_map(
         "plot_role": "reference",
     }])
 
-    sources = pd.concat([metadata, summit], ignore_index=True)
+    sources = pd.concat(
+        [metadata, summit],
+        ignore_index=True,
+    )
     sources = _collapse_sources(sources)
     sources = _project_sources(sources)
     sources["x_plot"] = sources["x"]
@@ -946,30 +974,89 @@ def plot_etna_all_variables_map(
     for source_id, (dx_m, dy_m) in DISPLAY_NUDGES_M.items():
         mask = sources["source_id"] == source_id
 
+        if not mask.any():
+            continue
+
         if projected:
             dx, dy = dx_m, dy_m
         else:
-            dx, dy = dx_m / 111_200, dy_m / 111_200
+            dx = dx_m / 111_200
+            dy = dy_m / 111_200
 
         sources.loc[mask, "x_plot"] += dx
         sources.loc[mask, "y_plot"] += dy
 
+    # Prepare the distributed catalogue locations.
+    events = pd.DataFrame()
+
+    if catalogue is not None:
+        required_columns = {"LAT", "LON"}
+        missing_columns = required_columns - set(catalogue.columns)
+
+        if missing_columns:
+            raise ValueError(
+                "Catalogue mapping requires coordinate columns: "
+                f"{sorted(missing_columns)}"
+            )
+
+        events = (
+            catalogue[["LAT", "LON"]]
+            .rename(columns={"LAT": "lat", "LON": "lon"})
+            .copy()
+        )
+
+        events["lat"] = pd.to_numeric(
+            events["lat"],
+            errors="coerce",
+        )
+        events["lon"] = pd.to_numeric(
+            events["lon"],
+            errors="coerce",
+        )
+        events = events.dropna(subset=["lat", "lon"])
+
+        if not events.empty:
+            events = _project_sources(events)
+
     figure, axis = plt.subplots(figsize=figsize)
 
-    xs = pd.concat([sources["x"], sources["x_plot"]])
-    ys = pd.concat([sources["y"], sources["y_plot"]])
-    minimum_padding = 1200 if projected else 1200 / 111_200
-    x_padding = max((xs.max() - xs.min()) * 0.065, minimum_padding)
-    y_padding = max((ys.max() - ys.min()) * 0.065, minimum_padding)
+    # Include both source markers and catalogue events in the extent.
+    x_parts = [sources["x"], sources["x_plot"]]
+    y_parts = [sources["y"], sources["y_plot"]]
 
-    axis.set_xlim(xs.min() - x_padding, xs.max() + x_padding)
-    axis.set_ylim(ys.min() - y_padding, ys.max() + y_padding)
+    if not events.empty:
+        x_parts.append(events["x"])
+        y_parts.append(events["y"])
+
+    xs = pd.concat(x_parts, ignore_index=True)
+    ys = pd.concat(y_parts, ignore_index=True)
+
+    minimum_padding = (
+        1200 if projected else 1200 / 111_200
+    )
+    x_padding = max(
+        (xs.max() - xs.min()) * 0.065,
+        minimum_padding,
+    )
+    y_padding = max(
+        (ys.max() - ys.min()) * 0.065,
+        minimum_padding,
+    )
+
+    axis.set_xlim(
+        xs.min() - x_padding,
+        xs.max() + x_padding,
+    )
+    axis.set_ylim(
+        ys.min() - y_padding,
+        ys.max() + y_padding,
+    )
 
     if projected:
         try:
             import contextily as cx
 
-            source = (
+            basemap_source = (
                 cx.providers.Esri.WorldImagery
                 if satellite
                 else cx.providers.Esri.WorldTopoMap
@@ -977,15 +1064,36 @@ def plot_etna_all_variables_map(
             cx.add_basemap(
                 axis,
                 crs="EPSG:3857",
-                source=source,
+                source=basemap_source,
                 reset_extent=False,
                 attribution_size=4,
             )
         except Exception as exc:
             warnings.warn(f"Could not add basemap: {exc}")
 
+    # Plot catalogue events beneath the source markers.
+    if not events.empty:
+        catalogue_style = FAMILY_STYLE[
+            "catalogue_seismicity"
+        ]
+        axis.scatter(
+            events["x"],
+            events["y"],
+            s=18,
+            marker="o",
+            color=catalogue_style["color"],
+            edgecolors="white",
+            linewidths=0.30,
+            alpha=0.80,
+            zorder=9,
+            label=catalogue_style["label"],
+        )
+
     for _, row in sources.iterrows():
-        if row["x_plot"] != row["x"] or row["y_plot"] != row["y"]:
+        if (
+            row["x_plot"] != row["x"]
+            or row["y_plot"] != row["y"]
+        ):
             axis.plot(
                 [row["x"], row["x_plot"]],
                 [row["y"], row["y_plot"]],
@@ -1009,15 +1117,25 @@ def plot_etna_all_variables_map(
             label=style["label"],
         )
 
-        dx, dy = LABEL_OFFSETS.get(row["source_id"], (12, 12))
+        dx, dy = LABEL_OFFSETS.get(
+            row["source_id"],
+            (12, 12),
+        )
         axis.annotate(
-            SOURCE_LABELS.get(row["source_id"], row["source_id"]),
+            SOURCE_LABELS.get(
+                row["source_id"],
+                row["source_id"],
+            ),
             xy=(row["x_plot"], row["y_plot"]),
             xytext=(dx, dy),
             textcoords="offset points",
             fontsize=8.2,
             fontweight="bold",
-            ha="center" if abs(dx) < 1 else ("left" if dx > 0 else "right"),
+            ha=(
+                "center"
+                if abs(dx) < 1
+                else "left" if dx > 0 else "right"
+            ),
             va="bottom" if dy >= 0 else "top",
             bbox={
                 "facecolor": "white",
@@ -1028,7 +1146,9 @@ def plot_etna_all_variables_map(
             },
             arrowprops={
                 "arrowstyle": "-",
-                "color": "white" if satellite else "black",
+                "color": (
+                    "white" if satellite else "black"
+                ),
                 "linewidth": 0.85,
                 "alpha": 0.90,
                 "shrinkA": 2,
@@ -1039,14 +1159,17 @@ def plot_etna_all_variables_map(
 
     handles, labels = axis.get_legend_handles_labels()
     unique = dict(zip(labels, handles))
+
     preferred = [
-        "Teleseismic station",
-        "Catalogue seismicity",
-        "ETNAGAS gas/meteo",
-        "Hourly precipitation",
-        "Etna summit",
+        FAMILY_STYLE["seismic"]["label"],
+        FAMILY_STYLE["catalogue_seismicity"]["label"],
+        FAMILY_STYLE["gas_meteo"]["label"],
+        FAMILY_STYLE["weather_proxy"]["label"],
+        FAMILY_STYLE["summit"]["label"],
     ]
-    legend_labels = [label for label in preferred if label in unique]
+    legend_labels = [
+        label for label in preferred if label in unique
+    ]
 
     axis.legend(
         [unique[label] for label in legend_labels],
