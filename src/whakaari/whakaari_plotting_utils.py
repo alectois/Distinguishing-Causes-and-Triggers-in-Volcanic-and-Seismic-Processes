@@ -105,7 +105,7 @@ WHAKAARI_AXIS_LABELS = {
     ),
     "GNSS_deformation_rate": (
         "Lagged daily GNSS deformation change",
-        "m d⁻¹",
+        "m",
     ),
 }
 

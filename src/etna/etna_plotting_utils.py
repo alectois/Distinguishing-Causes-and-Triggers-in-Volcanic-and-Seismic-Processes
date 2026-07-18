@@ -33,7 +33,7 @@ ETNA_AXIS_LABELS = {
         "Catalogue local event-rate response (Effect)",
         "log1p-count excess",
     ),
-    "CO2_3": ("Soil CO₂ concentration", "%"),
+    "CO2_3": ("Soil CO₂ concentration", "Mole fraction"),
     "rainfall_mm": ("Hourly precipitation", "mm"),
     "pressure_drop": ("Atmospheric pressure drop", "hPa"),
 }
