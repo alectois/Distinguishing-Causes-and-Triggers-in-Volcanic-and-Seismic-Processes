@@ -85,11 +85,11 @@ WHAKAARI_LOG_Y_COLS = {
 WHAKAARI_AXIS_LABELS = {
     "hydro_2_5": (
         "Hydrothermal RMS, 2–5 Hz",
-        "RMS ground velocity (m s⁻¹)",
+        "Ground velocity (m s⁻¹)",
     ),
     "spectral_log_ratio_4p5_8_over_8_16": (
         "Past-smoothed spectral contrast, 4.5–8 / 8–16 Hz",
-        "Log RMS-amplitude contrast",
+        "Log RMS ratio",
     ),
     "effect_tremor_5_15": (
         "Tremor anomaly (Effect), 5–15 Hz",
