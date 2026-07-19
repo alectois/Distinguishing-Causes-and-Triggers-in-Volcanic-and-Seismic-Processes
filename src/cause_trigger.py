@@ -398,11 +398,19 @@ def refit_beta_for_selected_parents(
             model = RidgeCV(
                 alphas=np.logspace(-4, 4, 40),
                 cv=splitter,
+                scoring="neg_mean_squared_error",
+                fit_intercept=True,
             ).fit(X_lagged, y)
         except ValueError:
-            model = Ridge(alpha=alpha).fit(X_lagged, y)
+            model = Ridge(
+                alpha=alpha,
+                fit_intercept=True,
+            ).fit(X_lagged, y)
     else:
-        model = Ridge(alpha=alpha).fit(X_lagged, y)
+        model = Ridge(
+            alpha=alpha,
+            fit_intercept=True,
+        ).fit(X_lagged, y)
 
     coefficients = np.asarray(model.coef_, dtype=float).reshape(-1)
     beta = np.zeros((lags, len(selected_parents)), dtype=float)

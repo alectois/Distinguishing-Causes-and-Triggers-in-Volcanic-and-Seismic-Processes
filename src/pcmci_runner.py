@@ -39,7 +39,9 @@ class PCMCIBackend:
         if fdr_method not in {None, "fdr_bh"}:
             raise ValueError("fdr_method must be None or 'fdr_bh'.")
         if pc_alpha is not None and not 0 < pc_alpha < 1:
-            raise ValueError("pc_alpha and alpha_level must be None or between 0 and 1.")
+            raise ValueError("pc_alpha must be None or between 0 and 1.")
+        if not 0 < alpha_level < 1:
+            raise ValueError("alpha_level must be between 0 and 1.")
 
         self.tau_max = tau_max
         self.pc_alpha = pc_alpha
@@ -68,13 +70,15 @@ class PCMCIBackend:
                 pc_alpha=self.pc_alpha,
             )
 
+        # Construct the PCMCI+ graph using its method-specific pc_alpha.
+        # Lagged-link multiplicity correction is applied uniformly below.
         return pcmci.run_pcmciplus(
             tau_min=0,
             tau_max=self.tau_max,
             pc_alpha=self.pc_alpha,
             contemp_collider_rule=self.contemp_collider_rule,
             conflict_resolution=self.conflict_resolution,
-            fdr_method=self.fdr_method or "none",
+            fdr_method="none",
         )
 
     def _validate_input(self, X: pd.DataFrame, y_t: str) -> None:
@@ -111,19 +115,27 @@ class PCMCIBackend:
         p_matrix = np.asarray(results["p_matrix"], dtype=float)
         graph = results.get("graph")
 
-        if self.method == "pcmci" and self.fdr_method is not None:
-            significance = pcmci.get_corrected_pvalues(
+        if self.method == "pcmci_plus" and graph is None:
+            raise RuntimeError("PCMCI+ did not return a causal graph.")
+
+        # Apply multiplicity correction only to lagged links. The tau=0
+        # PCMCI+ branch remains an exploratory graph-based analysis.
+        if self.fdr_method is not None:
+            lagged_significance = pcmci.get_corrected_pvalues(
                 p_matrix=p_matrix,
+                tau_min=1,
                 tau_max=self.tau_max,
                 fdr_method=self.fdr_method,
+                exclude_contemporaneous=True,
             )
         else:
-            significance = p_matrix
+            lagged_significance = p_matrix
 
         parents: list[str] = []
         selected_lags: dict[str, list[int]] = {}
         contemporaneous_links: dict[str, dict] = {}
-
+    # Tigramite's lagged BH correction excludes tau=0. These p-values
+    # are therefore raw and the tau=0 branch is treated as exploratory.
         for source_idx, source_name in enumerate(names):
             lags = []
 
@@ -145,11 +157,15 @@ class PCMCIBackend:
                     }
 
             for tau in range(1, self.tau_max + 1):
-                if self.method == "pcmci_plus" and graph is not None:
-                    selected = str(graph[source_idx, target_idx, tau]) == "-->"
+                if self.method == "pcmci_plus":
+                    selected = (
+                        str(graph[source_idx, target_idx, tau]) == "-->"
+                        and float(lagged_significance[source_idx, target_idx, tau])
+                        <= self.alpha_level
+                    )
                 else:
                     selected = (
-                        float(significance[source_idx, target_idx, tau])
+                        float(lagged_significance[source_idx, target_idx, tau])
                         <= self.alpha_level
                     )
 

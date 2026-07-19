@@ -14,12 +14,12 @@ import pandas as pd
 BACKEND_LABELS = {
     "hmml": "HMML (baseline)",
     "pcmci": "PCMCI",
-    "pcmci_plus": "PCMCI+ with eligible τ=0 triggers",
+    "pcmci_plus": "PCMCI+ with eligible exploratory τ=0 triggers",
 }
 
 TRIGGER_SOURCE_LABELS = {
     "lagged": "Lagged",
-    "contemporaneous": "Same-hour PCMCI+ link (τ=0)",
+    "contemporaneous": "Exploratory same-hour PCMCI+ link (τ=0)",
 }
 
 

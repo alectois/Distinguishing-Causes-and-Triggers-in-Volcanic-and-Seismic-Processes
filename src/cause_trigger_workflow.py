@@ -21,7 +21,7 @@ from parameter_extraction import select_var_lag
 
 # HMML is the baseline. PCMCI and PCMCI+ are causal-discovery extensions.
 # The PCMCI+ specification also tests eligible directed tau=0 links as
-# same-hour trigger candidates.
+# exploratory same-hour trigger candidates.
 COMPACT_RUN_SPECS = (
     {"run": "hmml", "backend": "hmml"},
     {"run": "pcmci", "backend": "pcmci"},
@@ -50,8 +50,9 @@ class WorkflowConfig:
     refit_cv_folds: int = 3
 
     # PCMCI / PCMCI+.
-    # pc_alpha controls preliminary condition/graph selection and is
-    # method-specific. pcmci_alpha_level is the final PCMCI link threshold.
+    # pc_alpha controls method-specific preliminary or graph selection.
+    # pcmci_alpha_level is the final threshold applied to lagged p/q values
+    # for both PCMCI and PCMCI+. PCMCI+ tau=0 links remain exploratory.
     pcmci_pc_alpha: float = 0.20
     pcmci_plus_pc_alpha: float = 0.01
     pcmci_alpha_level: float = 0.05
@@ -641,9 +642,10 @@ def prepare_case_analysis(
             "Item": "PCMCI extension settings",
             "Value": (
                 f"PCMCI pc_alpha={pcmci_pc_alpha}; "
-                f"PCMCI+ pc_alpha={pcmci_plus_pc_alpha}; "
-                f"link alpha={pcmci_alpha_level}; "
-                f"FDR={pcmci_fdr_method}; "
+                f"PCMCI+ graph pc_alpha={pcmci_plus_pc_alpha}; "
+                f"lagged-link alpha={pcmci_alpha_level}; "
+                f"lagged-link FDR={pcmci_fdr_method or 'none'}; "
+                f"PCMCI+ tau=0 links exploratory without BH adjustment; "
                 f"conditional-independence test={cond_ind_test}"
             ),
         },

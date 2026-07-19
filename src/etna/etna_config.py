@@ -75,7 +75,7 @@ def etna_observable_metadata() -> pd.DataFrame:
         {
             "case": "Etna",
             "source_id": "ETNAGAS_3",
-            "source_label": "ETNAGAS network, 3c",
+            "source_label": "ETNAGAS network, 3C",
             "observable": "CO2_3",
             "observable_label": "Soil CO₂ concentration",
             "family": "gas",
@@ -87,7 +87,7 @@ def etna_observable_metadata() -> pd.DataFrame:
         {
             "case": "Etna",
             "source_id": "ETNAGAS_3",
-            "source_label": "ETNAGAS network, 3c",
+            "source_label": "ETNAGAS network, 3C",
             "observable": "pressure_drop",
             "observable_label": "Atmospheric pressure drop",
             "family": "meteorology",
