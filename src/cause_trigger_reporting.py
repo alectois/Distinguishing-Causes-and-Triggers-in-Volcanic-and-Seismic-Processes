@@ -36,9 +36,9 @@ THESIS_COLOURS = {
 }
 
 SPLIT_COLOURS = (
-    "#7B3294",  # S1: purple
-    "#009E73",  # S2: green
-    "#CC6677",  # S3: rose
+    "#8B26AC",  # S1
+    "#01BB89",  # S2
+    "#B59504",  # S3
 )
 
 TRIGGER_SOURCE_LABELS = {
