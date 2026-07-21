@@ -3,13 +3,16 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 from pathlib import Path
+import textwrap
 from typing import Callable, Mapping, Sequence
 import warnings
 
+import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
+from matplotlib.colors import BoundaryNorm, ListedColormap
+from matplotlib.patches import Patch
 import numpy as np
 import pandas as pd
-
 
 BACKEND_LABELS = {
     "hmml": "HMML (baseline)",
@@ -17,10 +20,77 @@ BACKEND_LABELS = {
     "pcmci_plus": "PCMCI+ with eligible exploratory τ=0 triggers",
 }
 
+PLOT_BACKEND_LABELS = {
+    "hmml": "HMML (baseline)",
+    "pcmci": "PCMCI",
+    "pcmci_plus": "PCMCI+",
+}
+
+THESIS_COLOURS = {
+    "series": "#0072B2",
+    "event": "#D55E00",
+    "split": "#7B3294",
+    "eligible": "#009E73",
+    "muted": "#BDBDBD",
+    "cause": "#0072B2",
+}
+
 TRIGGER_SOURCE_LABELS = {
     "lagged": "Lagged",
     "contemporaneous": "Exploratory same-hour PCMCI+ link (τ=0)",
+    "lagged_and_contemporaneous": "Lagged and exploratory same-hour",
 }
+
+
+def set_reporting_style() -> None:
+    """Apply the same publication style used by the data-figure modules."""
+    plt.rcParams.update({
+        "figure.dpi": 160,
+        "savefig.dpi": 450,
+        "figure.facecolor": "white",
+        "axes.facecolor": "white",
+        "font.family": "DejaVu Sans",
+        "font.size": 10.0,
+        "axes.titlesize": 10.7,
+        "axes.labelsize": 9.6,
+        "xtick.labelsize": 9.0,
+        "ytick.labelsize": 9.0,
+        "legend.fontsize": 8.8,
+        "axes.linewidth": 0.60,
+        "axes.spines.top": True,
+        "axes.spines.right": True,
+        "axes.grid": True,
+        "grid.alpha": 0.14,
+        "grid.linewidth": 0.42,
+        "lines.linewidth": 0.85,
+        "lines.solid_capstyle": "round",
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "svg.fonttype": "none",
+    })
+
+
+def _flag_is_true(value) -> bool:
+    """Interpret nullable scalar flags without treating NaN or 'False' as true."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        pass
+    return bool(value)
+
+
+def _wrapped_label(value, width: int = 27) -> str:
+    return textwrap.fill(
+        str(value),
+        width=width,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
 
 
 def _save_figure(
@@ -62,6 +132,7 @@ def plot_effect_with_splits(
     *,
     event_time: pd.Timestamp | None = None,
     title: str | None = None,
+    effect_label: str | None = None,
     event_label: str = "Contextual event time",
     filename: str | None = None,
     save_dir: str | Path | None = None,
@@ -73,48 +144,112 @@ def plot_effect_with_splits(
     missing = sorted(required - set(split_summary.columns))
     if missing:
         raise ValueError(f"split_summary is missing required columns: {missing}")
+    if effect not in dataframe.columns:
+        raise ValueError(f"Effect variable {effect!r} is absent.")
+    if dataframe.empty:
+        raise ValueError("dataframe is empty.")
 
-    figure, axis = plt.subplots(figsize=(14, 4))
-    axis.plot(dataframe.index, dataframe[effect], label=effect, linewidth=0.8)
+    set_reporting_style()
+    display_effect = effect if effect_label is None else str(effect_label)
+    figure, axis = plt.subplots(figsize=(8.4, 3.75))
+    axis.plot(
+        dataframe.index,
+        dataframe[effect],
+        label=display_effect,
+        color=THESIS_COLOURS["series"],
+        linewidth=0.90,
+        zorder=2,
+    )
 
     valid = split_summary.dropna(subset=["split_time"]).copy()
     valid["split_time"] = pd.to_datetime(valid["split_time"], utc=True)
     for split_time, group in valid.groupby("split_time", sort=True):
+        split_ids = [
+            str(value)
+            for value in group["split_id"].dropna().drop_duplicates().tolist()
+        ]
+        if "in_causal_grid" in group.columns:
+            causal_mask = group["in_causal_grid"].map(_flag_is_true)
+        else:
+            causal_mask = pd.Series(True, index=group.index)
         causal_values = sorted({
             int(value)
-            for value in group.loc[group.get("in_causal_grid", True), "min_I2_length"]
+            for value in group.loc[causal_mask, "min_I2_length"].dropna()
         })
         diagnostic_values = sorted({
             int(value)
-            for value in group.loc[~group.get("in_causal_grid", True), "min_I2_length"]
-        }) if "in_causal_grid" in group.columns else []
+            for value in group.loc[~causal_mask, "min_I2_length"].dropna()
+        })
         label_parts = []
         if causal_values:
-            label_parts.append("causal minimum I2: " + ", ".join(map(str, causal_values)) + " h")
+            label_parts.append(
+                r"minimum $I_2$: " + ", ".join(map(str, causal_values)) + " h"
+            )
         if diagnostic_values:
-            label_parts.append("split-only: " + ", ".join(map(str, diagnostic_values)) + " h")
+            label_parts.append(
+                "split diagnostic: "
+                + ", ".join(map(str, diagnostic_values))
+                + " h"
+            )
+        suffix = f" ({'; '.join(label_parts)})" if label_parts else ""
         axis.axvline(
             split_time,
+            color=THESIS_COLOURS["split"],
             linestyle="--",
-            linewidth=1.0,
-            label="Detected split (" + "; ".join(label_parts) + ")",
+            linewidth=0.95,
+            alpha=0.88,
+            zorder=3,
+            label=f"{'/'.join(split_ids)}: selected split{suffix}",
         )
 
     if event_time is not None:
         axis.axvline(
             pd.Timestamp(event_time),
+            color=THESIS_COLOURS["event"],
             linestyle=":",
-            linewidth=1.0,
+            linewidth=1.10,
+            zorder=4,
             label=event_label,
         )
 
-    axis.set(
-        title=title or f"{effect}: data-selected split partitions",
-        xlabel="Time",
-        ylabel="Reference-standardised value",
+    time_index = pd.DatetimeIndex(pd.to_datetime(dataframe.index, utc=True))
+    span_days = max(
+        float((time_index.max() - time_index.min()) / pd.Timedelta("1D")),
+        1.0,
     )
-    axis.legend()
-    figure.tight_layout()
+    tick_interval = max(1, int(np.ceil(span_days / 6.0)))
+    locator = mdates.DayLocator(interval=tick_interval, tz=mdates.UTC)
+    axis.xaxis.set_major_locator(locator)
+    axis.xaxis.set_major_formatter(mdates.DateFormatter("%b %d", tz=mdates.UTC))
+    axis.set_title(
+        title or f"{display_effect} and data-selected partitions",
+        loc="left",
+        pad=7,
+        fontweight="semibold",
+    )
+    axis.set_xlabel("Time (UTC)")
+    axis.set_ylabel("Reference-standardised value")
+    axis.margins(x=0.01)
+    axis.grid(False, axis="x")
+    axis.grid(True, axis="y", alpha=0.16, linewidth=0.45)
+
+    values = pd.to_numeric(dataframe[effect], errors="coerce").to_numpy(dtype=float)
+    if np.isfinite(values).any() and np.nanmin(values) <= 0 <= np.nanmax(values):
+        axis.axhline(0.0, color="0.25", linewidth=0.45, alpha=0.22, zorder=0)
+
+    handles, legend_labels = axis.get_legend_handles_labels()
+    ncol = 2 if len(handles) <= 4 else 3
+    figure.legend(
+        handles,
+        legend_labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.015),
+        ncol=ncol,
+        frameon=False,
+        handlelength=2.5,
+        columnspacing=1.5,
+    )
+    figure.subplots_adjust(left=0.105, right=0.99, top=0.90, bottom=0.25)
 
     saved_paths = _save_figure(
         figure,
@@ -125,6 +260,222 @@ def plot_effect_with_splits(
     )
     plt.show()
     return figure, axis, saved_paths
+
+
+def mean_shift_role_table(
+    dataframe: pd.DataFrame,
+    effect: str,
+    split_summary: pd.DataFrame,
+    *,
+    variable_labels: Mapping[str, str] | None = None,
+) -> pd.DataFrame:
+    """Return the two mean-based quantities used for role screening."""
+    required = {"split_id", "split_index"}
+    missing = sorted(required - set(split_summary.columns))
+    if missing:
+        raise ValueError(f"split_summary is missing required columns: {missing}")
+    if effect not in dataframe.columns:
+        raise ValueError(f"Effect variable {effect!r} is absent.")
+
+    causal = split_summary
+    if "in_causal_grid" in split_summary.columns:
+        causal = split_summary.loc[
+            split_summary["in_causal_grid"].map(_flag_is_true)
+        ]
+    causal = (
+        causal.dropna(subset=["split_id", "split_index"])
+        .sort_values(["split_id", "split_index"], kind="stable")
+        .drop_duplicates("split_id")
+    )
+
+    labels = {} if variable_labels is None else variable_labels
+    variables = [column for column in dataframe.columns if column != effect]
+    rows = []
+    for _, split in causal.iterrows():
+        split_index = int(split["split_index"])
+        if not 0 < split_index < len(dataframe):
+            raise ValueError(
+                f"Invalid split index {split_index} for {len(dataframe)} rows."
+            )
+        mean_i1 = dataframe.iloc[:split_index][variables].mean()
+        mean_i2 = dataframe.iloc[split_index:][variables].mean()
+        for variable in variables:
+            before = float(mean_i1[variable])
+            after = float(mean_i2[variable])
+            trigger_score = abs(after) - abs(before)
+            tolerance = (
+                100.0
+                * np.finfo(float).eps
+                * max(1.0, abs(after), abs(before))
+            )
+            rows.append({
+                "Partition": str(split["split_id"]),
+                "variable": variable,
+                "Variable": readable_name(variable, labels),
+                "Mean I1": before,
+                "Mean I2": after,
+                "Trigger score": trigger_score,
+                "Trigger eligible": bool(trigger_score > tolerance),
+                "Cause-shift magnitude": abs(after - before),
+            })
+
+    return pd.DataFrame(rows)
+
+
+def plot_mean_shift_roles(
+    role_table: pd.DataFrame,
+    *,
+    title: str = "Mean-based role-selection diagnostics",
+    filename: str | None = None,
+    save_dir: str | Path | None = None,
+    formats: str | Sequence[str] = ("pdf", "png"),
+    dpi: int = 450,
+):
+    """Plot trigger eligibility and cause-ranking magnitude by partition."""
+    required = {
+        "Partition",
+        "Variable",
+        "Trigger score",
+        "Trigger eligible",
+        "Cause-shift magnitude",
+    }
+    missing = sorted(required - set(role_table.columns))
+    if missing:
+        raise ValueError(f"role_table is missing required columns: {missing}")
+    if role_table.empty:
+        raise ValueError("role_table is empty.")
+
+    set_reporting_style()
+    partitions = role_table["Partition"].drop_duplicates().tolist()
+    variable_order = (
+        role_table.groupby("Variable", sort=False)["Cause-shift magnitude"]
+        .max()
+        .sort_values(ascending=False, kind="stable")
+        .index.tolist()
+    )
+    wrapped_variables = [_wrapped_label(value) for value in variable_order]
+
+    trigger_values = pd.to_numeric(role_table["Trigger score"], errors="coerce")
+    trigger_limit = float(np.nanmax(np.abs(trigger_values.to_numpy(dtype=float))))
+    trigger_limit = (
+        1.08 * trigger_limit
+        if np.isfinite(trigger_limit) and trigger_limit > 0
+        else 1.0
+    )
+    cause_values = pd.to_numeric(
+        role_table["Cause-shift magnitude"], errors="coerce"
+    )
+    cause_limit = float(np.nanmax(cause_values.to_numpy(dtype=float)))
+    cause_limit = (
+        1.08 * cause_limit
+        if np.isfinite(cause_limit) and cause_limit > 0
+        else 1.0
+    )
+
+    row_height = max(2.3, 0.36 * len(variable_order) + 0.75)
+    figure_height = row_height * len(partitions) + 0.85
+    figure, axes = plt.subplots(
+        len(partitions),
+        2,
+        figsize=(8.8, figure_height),
+        squeeze=False,
+        sharey=True,
+    )
+
+    for row_index, partition in enumerate(partitions):
+        subset = (
+            role_table.loc[role_table["Partition"].eq(partition)]
+            .set_index("Variable")
+            .reindex(variable_order)
+        )
+        positions = np.arange(len(subset))
+        trigger_flags = subset["Trigger eligible"].map(_flag_is_true)
+        trigger_colours = np.where(
+            trigger_flags,
+            THESIS_COLOURS["eligible"],
+            THESIS_COLOURS["muted"],
+        )
+
+        trigger_axis, cause_axis = axes[row_index]
+        trigger_axis.barh(
+            positions,
+            subset["Trigger score"],
+            color=trigger_colours,
+            edgecolor="white",
+            linewidth=0.35,
+            height=0.70,
+        )
+        trigger_axis.axvline(0.0, color="0.20", linewidth=0.70, zorder=3)
+        trigger_axis.set_xlim(-trigger_limit, trigger_limit)
+        trigger_axis.set_yticks(positions, wrapped_variables)
+        trigger_axis.set_title(
+            f"{partition} — trigger eligibility",
+            loc="left",
+            pad=5,
+        )
+
+        cause_axis.barh(
+            positions,
+            subset["Cause-shift magnitude"],
+            color=THESIS_COLOURS["cause"],
+            edgecolor="white",
+            linewidth=0.35,
+            height=0.70,
+        )
+        cause_axis.set_xlim(0.0, cause_limit)
+        cause_axis.set_title(
+            f"{partition} — cause ranking",
+            loc="left",
+            pad=5,
+        )
+        cause_axis.tick_params(axis="y", labelleft=False)
+
+        for axis in (trigger_axis, cause_axis):
+            axis.set_axisbelow(True)
+            axis.grid(False, axis="y")
+            axis.grid(True, axis="x", alpha=0.16, linewidth=0.45)
+
+        if row_index == len(partitions) - 1:
+            trigger_axis.set_xlabel(
+                r"Trigger score: $|\bar{x}_{I_2}|-|\bar{x}_{I_1}|$"
+            )
+            cause_axis.set_xlabel(
+                r"Cause-shift magnitude: $|\bar{x}_{I_2}-\bar{x}_{I_1}|$"
+            )
+
+    axes[0, 0].invert_yaxis()
+
+    legend = [
+        Patch(
+            facecolor=THESIS_COLOURS["eligible"],
+            edgecolor="none",
+            label="Trigger-eligible (score > 0)",
+        ),
+        Patch(
+            facecolor=THESIS_COLOURS["muted"],
+            edgecolor="none",
+            label="Not trigger-eligible",
+        ),
+    ]
+    figure.legend(
+        handles=legend,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.012),
+        ncol=2,
+        frameon=False,
+        columnspacing=1.8,
+    )
+    figure.suptitle(title, y=0.995, fontsize=11.0, fontweight="semibold")
+    figure.tight_layout(rect=(0.0, 0.075, 1.0, 0.965), h_pad=1.25, w_pad=1.15)
+    saved_paths = _save_figure(
+        figure,
+        filename=filename,
+        save_dir=save_dir,
+        formats=formats,
+        dpi=dpi,
+    )
+    plt.show()
+    return figure, axes, saved_paths
 
 
 def show_table(frame: pd.DataFrame, caption: str | None = None) -> None:
@@ -221,7 +572,9 @@ def _longest_consecutive_run(values) -> int:
     return longest
 
 
-def _warning_details(caught: Sequence[warnings.WarningMessage]) -> tuple[int, list[str], list[str]]:
+def _warning_details(
+    caught: Sequence[warnings.WarningMessage],
+) -> tuple[int, list[str], list[str]]:
     messages = list(dict.fromkeys(str(item.message) for item in caught))
     categories = list(dict.fromkeys(item.category.__name__ for item in caught))
     return len(caught), messages, categories
@@ -288,11 +641,11 @@ def run_unique_split_grid(
     metadata = {} if metadata is None else dict(metadata)
     rows: list[dict] = []
     diagnostic_frames: list[pd.DataFrame] = []
-    causal_split_summary = (
-        split_summary.loc[split_summary["in_causal_grid"]].copy()
-        if "in_causal_grid" in split_summary.columns
-        else split_summary.copy()
-    )
+    causal_split_summary = split_summary.copy()
+    if "in_causal_grid" in split_summary.columns:
+        causal_split_summary = split_summary.loc[
+            split_summary["in_causal_grid"].map(_flag_is_true)
+        ].copy()
     unique_splits = (
         causal_split_summary
         .sort_values(["split_id", "min_I2_length"], kind="stable")
@@ -460,6 +813,7 @@ def backend_split_summary(
     grid: pd.DataFrame,
     *,
     lag_count: int,
+    diagnostics: pd.DataFrame | None = None,
     backend_labels: Mapping[str, str] = BACKEND_LABELS,
 ) -> pd.DataFrame:
     """Summarise each backend separately within every unique partition."""
@@ -470,6 +824,7 @@ def backend_split_summary(
         "Successful runs",
         "Post-split parent lags",
         "Trigger-candidate lags",
+        "Fitted-moderation lags",
         "Accepted-pair lags",
         "τ=0-link lags",
         "Warning runs",
@@ -489,16 +844,41 @@ def backend_split_summary(
         n_candidates = int(
             successful.get("trigger_candidates", empty).apply(_has_items).sum()
         )
-        n_pairs = int(successful.get("pairs", empty).apply(_has_items).sum())
+        n_pair_lags = int(successful.get("pairs", empty).apply(_has_items).sum())
         n_tau0 = int(
             successful.get("n_contemporaneous_links", zero).fillna(0).gt(0).sum()
         )
         n_warning_runs = int(successful.get("warning_count", zero).fillna(0).gt(0).sum())
 
-        if n_pairs:
-            result = f"Accepted pair(s) at {n_pairs} maximum-lag order(s)"
+        n_fitted_lags = 0
+        if diagnostics is not None and not diagnostics.empty:
+            matched = diagnostics.loc[
+                diagnostics.get("split_id", pd.Series(dtype=object)).eq(split_id)
+                & diagnostics.get("backend", pd.Series(dtype=object)).eq(backend)
+            ].copy()
+            if not matched.empty:
+                fitted = pd.to_numeric(matched.get("p_value"), errors="coerce").notna()
+                n_fitted_lags = int(
+                    pd.to_numeric(matched.loc[fitted, "lag"], errors="coerce").nunique()
+                )
+                raw_accepted = matched.get(
+                    "accepted", pd.Series(False, index=matched.index)
+                ).map(_flag_is_true)
+                n_pair_lags = int(
+                    pd.to_numeric(
+                        matched.loc[raw_accepted, "lag"], errors="coerce"
+                    ).nunique()
+                )
+
+        if n_pair_lags:
+            result = f"Accepted pair(s) at {n_pair_lags} maximum-lag order(s)"
+        elif n_fitted_lags:
+            result = (
+                "Moderation fitted at "
+                f"{n_fitted_lags} maximum-lag order(s); none accepted"
+            )
         elif n_candidates:
-            result = "Candidates found; none passed moderation"
+            result = "Candidates found; no evaluable moderation model"
         elif n_b2:
             result = "Post-split parents found; no trigger candidates"
         else:
@@ -512,7 +892,8 @@ def backend_split_summary(
             "Successful runs": f"{len(successful)}/{lag_count}",
             "Post-split parent lags": f"{n_b2}/{lag_count}",
             "Trigger-candidate lags": f"{n_candidates}/{lag_count}",
-            "Accepted-pair lags": f"{n_pairs}/{lag_count}",
+            "Fitted-moderation lags": f"{n_fitted_lags}/{lag_count}",
+            "Accepted-pair lags": f"{n_pair_lags}/{lag_count}",
             "τ=0-link lags": f"{n_tau0}/{lag_count}",
             "Warning runs": f"{n_warning_runs}/{lag_count}",
             "Result": result,
@@ -547,7 +928,9 @@ def pair_split_lag_summary(
     if diagnostics.empty or grid.empty:
         return pd.DataFrame(columns=columns)
 
-    accepted = diagnostics.loc[diagnostics["accepted"].eq(True)].copy()
+    accepted = diagnostics.loc[
+        diagnostics["accepted"].map(_flag_is_true)
+    ].copy()
     if accepted.empty:
         return pd.DataFrame(columns=columns)
 
@@ -562,7 +945,7 @@ def pair_split_lag_summary(
             lag_orders=("lag", lambda values: sorted({int(value) for value in values})),
             bh_cells=(
                 "accepted_after_bh",
-                lambda values: int(pd.Series(values).fillna(False).astype(bool).sum()),
+                lambda values: int(pd.Series(values).map(_flag_is_true).sum()),
             ),
         )
     )
@@ -612,6 +995,285 @@ def pair_split_lag_summary(
     }).reset_index(drop=True)
 
 
+def plot_pair_stability_heatmap(
+    diagnostics: pd.DataFrame,
+    grid: pd.DataFrame,
+    *,
+    lags: Sequence[int],
+    variable_labels: Mapping[str, str] | None = None,
+    backend_labels: Mapping[str, str] = BACKEND_LABELS,
+    title: str = "Ordered-pair stability across maximum-lag orders",
+    filename: str | None = None,
+    save_dir: str | Path | None = None,
+    formats: str | Sequence[str] = ("pdf", "png"),
+    dpi: int = 450,
+):
+    """Plot raw and BH-supported ordered-pair decisions by split and backend."""
+    required_diagnostics = {
+        "split_id",
+        "backend",
+        "lag",
+        "cause",
+        "trigger",
+        "trigger_source",
+        "accepted",
+        "accepted_after_bh",
+        "p_value",
+        "gamma_2",
+    }
+    missing = sorted(required_diagnostics - set(diagnostics.columns))
+    if missing:
+        raise ValueError(f"diagnostics is missing required columns: {missing}")
+    if grid.empty:
+        raise ValueError("grid is empty.")
+
+    set_reporting_style()
+    valid = diagnostics.dropna(subset=["cause", "trigger"]).copy()
+    accepted = valid.loc[valid["accepted"].map(_flag_is_true)].copy()
+    if accepted.empty:
+        raise ValueError("No accepted ordered pair is available to plot.")
+
+    pair_columns = ["cause", "trigger", "trigger_source"]
+    pairs = (
+        accepted.groupby(pair_columns, dropna=False)
+        .agg(
+            accepted_cells=("accepted", "size"),
+            bh_cells=(
+                "accepted_after_bh",
+                lambda values: sum(map(_flag_is_true, values)),
+            ),
+        )
+        .reset_index()
+    )
+    labels = {} if variable_labels is None else variable_labels
+
+    def pair_label(row) -> str:
+        cause = _wrapped_label(readable_name(row["cause"], labels), width=24)
+        trigger = _wrapped_label(readable_name(row["trigger"], labels), width=24)
+        source = str(row["trigger_source"])
+        if source == "contemporaneous":
+            source_note = "\nsource: exploratory τ=0"
+        elif source == "lagged_and_contemporaneous":
+            source_note = "\nsource: lagged + exploratory τ=0"
+        else:
+            source_note = ""
+        return f"C: {cause}\nT: {trigger}{source_note}"
+
+    pairs["pair_label"] = pairs.apply(pair_label, axis=1)
+    pairs = pairs.sort_values(
+        ["bh_cells", "accepted_cells", "pair_label"],
+        ascending=[False, False, True],
+        kind="stable",
+    ).reset_index(drop=True)
+
+    lag_values = [int(value) for value in lags]
+    if not lag_values:
+        raise ValueError("lags is empty.")
+    lag_positions = {lag: position for position, lag in enumerate(lag_values)}
+    partitions = grid["split_id"].dropna().drop_duplicates().tolist()
+    observed_backends = grid["backend"].dropna().astype(str).drop_duplicates().tolist()
+    backends = [value for value in backend_labels if value in observed_backends]
+    backends.extend(value for value in observed_backends if value not in backends)
+
+    status_labels = {
+        0: "Not selected",
+        1: "Selected; not evaluable",
+        2: "Fitted; H₀ not rejected",
+        3: "Nominal F-test only",
+        4: "BH-supported",
+    }
+    colours = ["#F7F7F7", "#C7C7C7", "#A6CEE3", "#E69F00", "#009E73"]
+    colour_map = ListedColormap(colours)
+    normaliser = BoundaryNorm(np.arange(-0.5, 5.5, 1.0), colour_map.N)
+
+    panel_height = max(2.75, 0.40 * len(pairs) + 0.55)
+    footer_height = 0.82
+    title_height = 0.28
+    figure_height = title_height + panel_height * len(partitions) + footer_height
+    figure_width = max(8.8, 2.65 * len(backends) + 1.85)
+    figure, axes = plt.subplots(
+        len(partitions),
+        len(backends),
+        figsize=(figure_width, figure_height),
+        squeeze=False,
+        sharex=True,
+        sharey=True,
+    )
+
+    for row_index, partition in enumerate(partitions):
+        for column_index, backend in enumerate(backends):
+            axis = axes[row_index, column_index]
+            matrix = np.zeros((len(pairs), len(lag_values)), dtype=int)
+            signs = np.full(matrix.shape, "", dtype=object)
+            facet = valid.loc[
+                valid["split_id"].eq(partition)
+                & valid["backend"].astype(str).eq(backend)
+            ]
+
+            for pair_index, pair in pairs.iterrows():
+                pair_rows = facet.loc[
+                    facet["cause"].eq(pair["cause"])
+                    & facet["trigger"].eq(pair["trigger"])
+                    & facet["trigger_source"].eq(pair["trigger_source"])
+                ]
+                for _, diagnostic in pair_rows.iterrows():
+                    lag = int(diagnostic["lag"])
+                    if lag not in lag_positions:
+                        continue
+                    lag_index = lag_positions[lag]
+                    p_value = pd.to_numeric(
+                        pd.Series([diagnostic.get("p_value")]), errors="coerce"
+                    ).iloc[0]
+                    if not np.isfinite(p_value):
+                        status = 1
+                    elif _flag_is_true(diagnostic.get("accepted_after_bh", False)):
+                        status = 4
+                    elif _flag_is_true(diagnostic.get("accepted", False)):
+                        status = 3
+                    else:
+                        status = 2
+                    current_status = matrix[pair_index, lag_index]
+                    gamma = pd.to_numeric(
+                        pd.Series([diagnostic.get("gamma_2")]), errors="coerce"
+                    ).iloc[0]
+                    if status >= current_status:
+                        matrix[pair_index, lag_index] = status
+                    if status >= current_status and np.isfinite(gamma):
+                        signs[pair_index, lag_index] = "+" if gamma >= 0 else "−"
+
+            axis.imshow(
+                matrix,
+                cmap=colour_map,
+                norm=normaliser,
+                aspect="auto",
+                interpolation="nearest",
+            )
+            axis.grid(False, which="major")
+            axis.set_xticks(
+                np.arange(-0.5, len(lag_values), 1.0),
+                minor=True,
+            )
+            axis.set_yticks(
+                np.arange(-0.5, len(pairs), 1.0),
+                minor=True,
+            )
+            axis.grid(
+                True,
+                which="minor",
+                color="white",
+                linewidth=0.65,
+            )
+            axis.tick_params(which="minor", bottom=False, left=False)
+            for pair_index in range(matrix.shape[0]):
+                for lag_index in range(matrix.shape[1]):
+                    if signs[pair_index, lag_index]:
+                        status = matrix[pair_index, lag_index]
+                        axis.text(
+                            lag_index,
+                            pair_index,
+                            signs[pair_index, lag_index],
+                            ha="center",
+                            va="center",
+                            fontsize=8.2,
+                            fontweight="semibold",
+                            color="white" if status == 4 else "0.12",
+                        )
+
+            facet_has_accepted = facet["accepted"].map(_flag_is_true).any()
+            if not facet_has_accepted:
+                axis.text(
+                    0.5,
+                    0.5,
+                    "No accepted\nordered pair",
+                    transform=axis.transAxes,
+                    ha="center",
+                    va="center",
+                    fontsize=8.8,
+                    color="0.35",
+                    bbox={
+                        "facecolor": "white",
+                        "edgecolor": "0.80",
+                        "linewidth": 0.45,
+                        "alpha": 0.92,
+                        "pad": 3.0,
+                    },
+                )
+
+            axis.set_title(
+                f"{partition} · {PLOT_BACKEND_LABELS.get(backend, backend)}",
+                pad=5,
+                fontsize=10.0,
+            )
+            axis.set_xticks(np.arange(len(lag_values)), lag_values)
+            axis.tick_params(
+                axis="x",
+                labelbottom=row_index == len(partitions) - 1,
+                length=2.8,
+                width=0.55,
+                pad=3,
+            )
+            if row_index == len(partitions) - 1:
+                axis.set_xlabel(r"Maximum lag order, $d$ (h)", labelpad=5)
+            axis.set_yticks(np.arange(len(pairs)))
+            if column_index == 0:
+                axis.set_yticklabels(pairs["pair_label"])
+                axis.tick_params(axis="y", labelleft=True, labelsize=8.6, pad=4)
+            else:
+                axis.tick_params(axis="y", labelleft=False)
+
+    legend = [
+        Patch(facecolor=colours[index], edgecolor="0.78", linewidth=0.55, label=label)
+        for index, label in status_labels.items()
+    ]
+    legend_y = 0.20 / figure_height
+    note_y = 0.045 / figure_height
+    figure.legend(
+        handles=legend,
+        loc="lower center",
+        ncol=3,
+        bbox_to_anchor=(0.5, legend_y),
+        frameon=False,
+        columnspacing=1.4,
+        handlelength=1.8,
+    )
+    figure.suptitle(
+        title,
+        y=1.0 - 0.05 / figure_height,
+        fontsize=11.2,
+        fontweight="semibold",
+    )
+    figure.text(
+        0.5,
+        note_y,
+        (
+            "+/− gives the sign of γ₂."
+        ),
+        ha="center",
+        va="bottom",
+        fontsize=8.4,
+        color="0.28",
+    )
+    figure.tight_layout(
+        rect=(
+            0.0,
+            footer_height / figure_height,
+            1.0,
+            1.0 - title_height / figure_height,
+        ),
+        h_pad=1.15,
+        w_pad=0.65,
+    )
+    saved_paths = _save_figure(
+        figure,
+        filename=filename,
+        save_dir=save_dir,
+        formats=formats,
+        dpi=dpi,
+    )
+    plt.show()
+    return figure, axes, saved_paths
+
+
 def reference_criteria_by_lag(lag_references: pd.DataFrame) -> dict[int, str]:
     return (
         lag_references
@@ -634,8 +1296,8 @@ def _format_pairs(
             str(row.get("trigger_source")), str(row.get("trigger_source"))
         )
         values.append(
-            f"{readable_name(row.get('cause'), labels)} → "
-            f"{readable_name(row.get('trigger'), labels)} [{source}]"
+            f"Cause: {readable_name(row.get('cause'), labels)}; "
+            f"trigger: {readable_name(row.get('trigger'), labels)} [{source}]"
         )
     return "; ".join(dict.fromkeys(values))
 
@@ -671,17 +1333,27 @@ def automatic_lag_outcome_table(
                 & diagnostics.get("backend", pd.Series(dtype=object)).eq(run["backend"])
                 & pd.to_numeric(diagnostics.get("lag"), errors="coerce").eq(lag)
             ] if not diagnostics.empty else pd.DataFrame()
-            accepted = matched.loc[matched.get("accepted", False).eq(True)] if not matched.empty else pd.DataFrame()
+            accepted = (
+                matched.loc[
+                    matched.get(
+                        "accepted", pd.Series(False, index=matched.index)
+                    ).map(_flag_is_true)
+                ]
+                if not matched.empty
+                else pd.DataFrame()
+            )
 
             if not accepted.empty:
                 outcome = "Accepted: " + _format_pairs(accepted, variable_labels)
             elif not matched.empty and pd.to_numeric(matched.get("p_value"), errors="coerce").notna().any():
                 minimum_p = pd.to_numeric(matched["p_value"], errors="coerce").min()
                 outcome = f"Moderation tested; none accepted (minimum p={minimum_p:.3g})"
+            elif not matched.empty:
+                outcome = "Trigger candidates found; no evaluable moderation model"
             elif pd.notna(run.get("stop_reason")):
                 outcome = str(run.get("stop_reason"))
             elif _has_items(run.get("trigger_candidates")):
-                outcome = "Trigger candidates found; no accepted moderation result"
+                outcome = "Trigger candidates found; no evaluable moderation model"
             elif _has_items(run.get("B_2")):
                 outcome = "Post-split parents found; no trigger candidates"
             else:
@@ -690,7 +1362,9 @@ def automatic_lag_outcome_table(
             rows.append({
                 "Criterion": reference["criterion"],
                 "Selected d (h)": lag,
-                "Search boundary": bool(reference.get("search_boundary", False)),
+                "Search boundary": _flag_is_true(
+                    reference.get("search_boundary", False)
+                ),
                 "Partition": run["split_id"],
                 "Minimum-I2 support": str(run["supported_min_I2_lengths"]),
                 "Backend": backend_labels.get(str(run["backend"]), str(run["backend"])),
@@ -724,6 +1398,101 @@ def warning_summary(grid: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).reindex(columns=columns)
 
 
+def warning_pattern_summary(
+    grid: pd.DataFrame,
+    diagnostics: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Locate warning patterns in lag space and relate them to fitted tests."""
+    columns = [
+        "Partition",
+        "Backend",
+        "Maximum lag orders",
+        "Runs",
+        "Warning count",
+        "Fitted moderation tests",
+        "F-test accepted",
+        "BH-supported",
+        "Execution errors",
+        "Warning pattern",
+    ]
+    if grid.empty or "warning_count" not in grid.columns:
+        return pd.DataFrame(columns=columns)
+
+    warned = grid.loc[
+        pd.to_numeric(grid["warning_count"], errors="coerce").fillna(0).gt(0)
+    ].copy()
+    if warned.empty:
+        return pd.DataFrame(columns=columns)
+
+    def normalise_messages(value) -> tuple[str, ...]:
+        if isinstance(value, (list, tuple, set)):
+            return tuple(str(item) for item in value)
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                return tuple(str(item) for item in parsed)
+            return (value,)
+        return (str(value),)
+
+    warned["_warning_pattern"] = warned["warning_messages"].map(
+        normalise_messages
+    )
+    rows = []
+    for (split_id, backend, pattern), group in warned.groupby(
+        ["split_id", "backend", "_warning_pattern"],
+        sort=False,
+        dropna=False,
+    ):
+        lag_values = sorted({int(value) for value in group["lag"]})
+        matched = pd.DataFrame()
+        if diagnostics is not None and not diagnostics.empty:
+            matched = diagnostics.loc[
+                diagnostics.get("split_id", pd.Series(dtype=object)).eq(split_id)
+                & diagnostics.get("backend", pd.Series(dtype=object)).eq(backend)
+                & pd.to_numeric(diagnostics.get("lag"), errors="coerce").isin(lag_values)
+            ].copy()
+
+        fitted = (
+            pd.to_numeric(matched.get("p_value"), errors="coerce").notna()
+            if not matched.empty
+            else pd.Series(dtype=bool)
+        )
+        raw = (
+            matched.get("accepted", pd.Series(False, index=matched.index))
+            .map(_flag_is_true)
+            if not matched.empty
+            else pd.Series(dtype=bool)
+        )
+        adjusted = (
+            matched.get(
+                "accepted_after_bh",
+                pd.Series(False, index=matched.index),
+            )
+            .map(_flag_is_true)
+            if not matched.empty
+            else pd.Series(dtype=bool)
+        )
+        rows.append({
+            "Partition": split_id,
+            "Backend": BACKEND_LABELS.get(str(backend), str(backend)),
+            "Maximum lag orders": str(lag_values),
+            "Runs": int(len(group)),
+            "Warning count": int(
+                pd.to_numeric(group["warning_count"], errors="coerce").sum()
+            ),
+            "Fitted moderation tests": int(fitted.sum()),
+            "F-test accepted": int(raw.sum()),
+            "BH-supported": int(adjusted.sum()),
+            "Execution errors": int(group["error"].notna().sum()),
+            "Warning pattern": "; ".join(pattern),
+        })
+
+    return pd.DataFrame(rows).reindex(columns=columns)
+
+
 
 def multiplicity_audit_summary(diagnostics: pd.DataFrame) -> pd.DataFrame:
     """Return a one-row raw-versus-BH moderation audit."""
@@ -739,11 +1508,11 @@ def multiplicity_audit_summary(diagnostics: pd.DataFrame) -> pd.DataFrame:
     ).notna()
     raw = diagnostics.get(
         "accepted", pd.Series(False, index=diagnostics.index)
-    ).fillna(False).astype(bool)
+    ).map(_flag_is_true)
     adjusted = diagnostics.get(
         "accepted_after_bh",
         pd.Series(False, index=diagnostics.index),
-    ).fillna(False).astype(bool)
+    ).map(_flag_is_true)
     return pd.DataFrame([{
         "Fitted moderation tests": int(fitted.sum()),
         "F-test accepted": int(raw.sum()),
@@ -788,6 +1557,8 @@ def build_summary_export(
     warning_table: pd.DataFrame,
     diagnostics: pd.DataFrame,
     errors: pd.DataFrame,
+    role_shift_table: pd.DataFrame | None = None,
+    lag_sensitivity_table: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     rows: list[dict] = []
 
@@ -802,7 +1573,9 @@ def build_summary_export(
             "value": f"{int(row['selected_lag'])} h",
             "details": {
                 "maximum_lag_tested": int(row["max_lags"]),
-                "search_boundary": bool(row.get("search_boundary", False)),
+                "search_boundary": _flag_is_true(
+                    row.get("search_boundary", False)
+                ),
             },
         })
 
@@ -816,7 +1589,7 @@ def build_summary_export(
             "value": row["Outcome"],
             "details": {
                 "minimum_I2_support": row["Minimum-I2 support"],
-                "search_boundary": bool(row["Search boundary"]),
+                "search_boundary": _flag_is_true(row["Search boundary"]),
             },
         })
 
@@ -889,19 +1662,58 @@ def build_summary_export(
             {
                 "section": "multiplicity_audit",
                 "metric": "f_accepted_tests",
-                "value": int(diagnostics.get("accepted", False).fillna(False).astype(bool).sum()),
+                "value": int(
+                    diagnostics.get(
+                        "accepted",
+                        pd.Series(False, index=diagnostics.index),
+                    )
+                    .map(_flag_is_true)
+                    .sum()
+                ),
             },
             {
                 "section": "multiplicity_audit",
                 "metric": "BH_supported_tests",
                 "value": int(
-                    diagnostics.get("accepted_after_bh", False)
-                    .fillna(False)
-                    .astype(bool)
+                    diagnostics.get(
+                        "accepted_after_bh",
+                        pd.Series(False, index=diagnostics.index),
+                    )
+                    .map(_flag_is_true)
                     .sum()
                 ),
             },
         ])
+
+    if role_shift_table is not None and not role_shift_table.empty:
+        for _, row in role_shift_table.iterrows():
+            rows.append({
+                "section": "mean_shift_role_diagnostic",
+                "partition": row["Partition"],
+                "metric": row["variable"],
+                "value": row["Trigger score"],
+                "details": {
+                    "variable_label": row["Variable"],
+                    "mean_I1": row["Mean I1"],
+                    "mean_I2": row["Mean I2"],
+                    "trigger_eligible": _flag_is_true(row["Trigger eligible"]),
+                    "cause_shift_magnitude": row["Cause-shift magnitude"],
+                },
+            })
+
+    if lag_sensitivity_table is not None and not lag_sensitivity_table.empty:
+        for _, row in lag_sensitivity_table.iterrows():
+            rows.append({
+                "section": "lag_order_sensitivity",
+                "lag": int(row["selected_lag"]),
+                "metric": row["criterion"],
+                "value": f"{int(row['selected_lag'])} h",
+                "details": {
+                    "maximum_lag_tested": int(row["max_lags"]),
+                    "search_boundary": _flag_is_true(row["search_boundary"]),
+                    "warning": row.get("warning"),
+                },
+            })
 
     rows.append({"section": "execution", "metric": "error_count", "value": int(len(errors))})
 
@@ -933,6 +1745,8 @@ def export_audit_csvs(
     pair_summary: pd.DataFrame,
     warning_table: pd.DataFrame,
     variable_labels: Mapping[str, str] | None = None,
+    role_shift_table: pd.DataFrame | None = None,
+    lag_sensitivity_table: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -980,6 +1794,8 @@ def export_audit_csvs(
         warning_table=warning_table,
         diagnostics=diagnostics,
         errors=errors,
+        role_shift_table=role_shift_table,
+        lag_sensitivity_table=lag_sensitivity_table,
     )
 
     paths = {
@@ -993,7 +1809,8 @@ def export_audit_csvs(
 
     summary_description = (
         "Design, split stability, automatic AIC/BIC outcomes, backend behaviour, "
-        "pair stability, warning audit, and descriptive multiplicity audit."
+        "pair stability, mean-shift role diagnostics, warning audit, descriptive "
+        "multiplicity audit, and any lag-order sensitivity check."
     )
     
     return pd.DataFrame([
