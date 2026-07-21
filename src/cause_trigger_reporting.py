@@ -35,6 +35,12 @@ THESIS_COLOURS = {
     "cause": "#0072B2",
 }
 
+SPLIT_COLOURS = (
+    "#7B3294",  # S1: purple
+    "#009E73",  # S2: green
+    "#CC6677",  # S3: rose
+)
+
 TRIGGER_SOURCE_LABELS = {
     "lagged": "Lagged",
     "contemporaneous": "Exploratory same-hour PCMCI+ link (τ=0)",
@@ -163,7 +169,9 @@ def plot_effect_with_splits(
 
     valid = split_summary.dropna(subset=["split_time"]).copy()
     valid["split_time"] = pd.to_datetime(valid["split_time"], utc=True)
-    for split_time, group in valid.groupby("split_time", sort=True):
+    for split_number, (split_time, group) in enumerate(
+        valid.groupby("split_time", sort=True)
+    ):
         split_ids = [
             str(value)
             for value in group["split_id"].dropna().drop_duplicates().tolist()
@@ -194,7 +202,7 @@ def plot_effect_with_splits(
         suffix = f" ({'; '.join(label_parts)})" if label_parts else ""
         axis.axvline(
             split_time,
-            color=THESIS_COLOURS["split"],
+            color=SPLIT_COLOURS[split_number % len(SPLIT_COLOURS)],
             linestyle="--",
             linewidth=0.95,
             alpha=0.88,
