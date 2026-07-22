@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy.stats import f
+from scipy.stats import f, t as student_t
 from sklearn.linear_model import LinearRegression, Ridge, RidgeCV
 from sklearn.model_selection import TimeSeriesSplit
 
@@ -148,6 +148,10 @@ class CauseTriggerConfig:
     pcmci_conflict_resolution: bool = True
     pcmci_plus_use_contemporaneous_triggers: bool = False
 
+    # Sensitivity analysis: hierarchical interaction model with Newey--West
+    # heteroskedasticity- and autocorrelation-consistent covariance.
+    hac_lags: tuple[int, ...] = (6, 12, 24)
+
     def __post_init__(self) -> None:
         if not isinstance(self.lags, int) or self.lags < 1:
             raise ValueError("lags must be a positive integer.")
@@ -171,6 +175,12 @@ class CauseTriggerConfig:
                 f"Unsupported conditional-independence test: "
                 f"{self.pcmci_cond_ind_test!r}"
             )
+        hac_lags = tuple(int(value) for value in self.hac_lags)
+        if not hac_lags or any(value < 1 for value in hac_lags):
+            raise ValueError("hac_lags must contain positive integers.")
+        if len(set(hac_lags)) != len(hac_lags):
+            raise ValueError("hac_lags must not contain duplicates.")
+        object.__setattr__(self, "hac_lags", hac_lags)
 
 
 @dataclass
@@ -385,7 +395,7 @@ def refit_beta_for_selected_parents(
     if len(y) != len(X_lagged):
         raise ValueError("Refit response/design length mismatch.")
 
-    n_splits = min(int(cv_folds), 3)
+    n_splits = int(cv_folds)
     use_cv = bool(
         cv
         and n_splits >= 2
@@ -436,6 +446,197 @@ def f_statistic(rss_reduced: float, rss_full: float, n: int, d: int) -> float:
     return ((rss_reduced - rss_full) * denominator_df) / rss_full
 
 
+def _lag_one_correlation(values: np.ndarray) -> float:
+    """Return lag-one correlation when both residual slices vary."""
+    values = np.asarray(values, dtype=float).reshape(-1)
+    if len(values) < 3:
+        return np.nan
+    previous = values[:-1]
+    current = values[1:]
+    if np.isclose(np.std(previous), 0.0) or np.isclose(np.std(current), 0.0):
+        return np.nan
+    return float(np.corrcoef(previous, current)[0, 1])
+
+
+def _newey_west_covariance(
+    design: np.ndarray,
+    residuals: np.ndarray,
+    *,
+    max_lag: int,
+    use_small_sample_correction: bool = True,
+) -> np.ndarray:
+    """Return Bartlett-kernel Newey--West covariance for an OLS fit."""
+    design = np.asarray(design, dtype=float)
+    residuals = np.asarray(residuals, dtype=float).reshape(-1)
+
+    if design.ndim != 2 or len(design) != len(residuals):
+        raise ValueError("HAC design and residual lengths do not match.")
+    n, parameter_count = design.shape
+    if not isinstance(max_lag, int) or not 0 <= max_lag < n:
+        raise ValueError(
+            f"HAC max_lag must satisfy 0 <= max_lag < {n}; got {max_lag}."
+        )
+    if np.linalg.matrix_rank(design) < parameter_count:
+        raise ValueError("HAC design matrix is rank deficient.")
+
+    bread = np.linalg.inv(design.T @ design)
+    score = design * residuals[:, None]
+    meat = score.T @ score
+
+    for lag in range(1, max_lag + 1):
+        weight = 1.0 - lag / (max_lag + 1.0)
+        lagged_cross_product = score[lag:].T @ score[:-lag]
+        meat += weight * (lagged_cross_product + lagged_cross_product.T)
+
+    covariance = bread @ meat @ bread
+    if use_small_sample_correction:
+        denominator_df = n - parameter_count
+        if denominator_df <= 0:
+            raise ValueError("Not enough observations for HAC correction.")
+        covariance *= n / denominator_df
+
+    return 0.5 * (covariance + covariance.T)
+
+
+def test_hierarchical_hac_moderation(
+    y_response,
+    V,
+    x_s_values,
+    *,
+    alpha: float = 0.05,
+    hac_lags: tuple[int, ...] = (6, 12, 24),
+) -> dict:
+    """
+    Fit the hierarchical moderation model and Newey--West sensitivities.
+
+    The model includes the trigger main effect,
+    ``y ~ 1 + V + x_s + V:x_s``. V and x_s are centred before constructing
+    the interaction; with both main effects present, this reparameterisation
+    leaves the interaction test unchanged while improving conditioning.
+
+    The ordinary interaction test is a one-degree-of-freedom nested F-test.
+    HAC tests use a Bartlett kernel, the finite-sample ``n / (n-k)``
+    correction, and two-sided Student-t reference probabilities with ``n-k``
+    residual degrees of freedom. These results are sensitivity diagnostics and
+    do not replace the paper-compatible decision rule.
+    """
+    y = np.asarray(y_response, dtype=float).reshape(-1)
+    V = np.asarray(V, dtype=float).reshape(-1)
+    x_s = np.asarray(x_s_values, dtype=float).reshape(-1)
+    hac_lags = tuple(int(value) for value in hac_lags)
+
+    if not (len(y) == len(V) == len(x_s)):
+        raise ValueError("Hierarchical moderation inputs have unequal lengths.")
+    if len(y) <= 4:
+        raise ValueError("Hierarchical moderation requires more than four rows.")
+    if not (
+        np.isfinite(y).all()
+        and np.isfinite(V).all()
+        and np.isfinite(x_s).all()
+    ):
+        raise ValueError("Hierarchical moderation inputs contain non-finite values.")
+    if not hac_lags or any(value < 1 for value in hac_lags):
+        raise ValueError("hac_lags must contain positive integers.")
+    if len(set(hac_lags)) != len(hac_lags):
+        raise ValueError("hac_lags must not contain duplicates.")
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be between 0 and 1.")
+
+    V_centered = V - V.mean()
+    x_centered = x_s - x_s.mean()
+    interaction = V_centered * x_centered
+    reduced_design = np.column_stack([
+        np.ones(len(y)),
+        V_centered,
+        x_centered,
+    ])
+    full_design = np.column_stack([reduced_design, interaction])
+
+    if np.linalg.matrix_rank(reduced_design) < reduced_design.shape[1]:
+        raise ValueError("Hierarchical reduced model is rank deficient.")
+    if np.linalg.matrix_rank(full_design) < full_design.shape[1]:
+        raise ValueError("Hierarchical full model is rank deficient.")
+
+    reduced_beta = np.linalg.lstsq(reduced_design, y, rcond=None)[0]
+    full_beta = np.linalg.lstsq(full_design, y, rcond=None)[0]
+    reduced_residuals = y - reduced_design @ reduced_beta
+    full_residuals = y - full_design @ full_beta
+    rss_reduced = float(reduced_residuals @ reduced_residuals)
+    rss_full = float(full_residuals @ full_residuals)
+    denominator_df = len(y) - full_design.shape[1]
+
+    if denominator_df <= 0 or rss_full <= 0:
+        raise ValueError("Hierarchical full model has no positive residual variance.")
+
+    rss_difference = rss_reduced - rss_full
+    numerical_tolerance = (
+        100.0
+        * np.finfo(float).eps
+        * max(1.0, abs(rss_reduced), abs(rss_full))
+    )
+    if rss_difference < -numerical_tolerance:
+        raise RuntimeError("Hierarchical full-model RSS exceeds reduced-model RSS.")
+    rss_difference = max(0.0, rss_difference)
+
+    f_value = (rss_difference / 1.0) / (rss_full / denominator_df)
+    ols_p_value = float(f.sf(f_value, 1, denominator_df))
+    output = {
+        "hierarchical_ols_accepted": bool(ols_p_value <= alpha),
+        "hierarchical_ols_f_stat": float(f_value),
+        "hierarchical_ols_p_value": ols_p_value,
+        "hierarchical_ols_gamma_2": float(full_beta[-1]),
+        "hierarchical_rss_reduced": rss_reduced,
+        "hierarchical_rss_full": rss_full,
+        "hierarchical_residual_lag1": _lag_one_correlation(full_residuals),
+        "hierarchical_effective_n": int(len(y)),
+        "hierarchical_denominator_df": int(denominator_df),
+        "hierarchical_reason": None,
+    }
+
+    for requested_lag in hac_lags:
+        prefix = f"hac_{requested_lag}"
+        output[f"{prefix}_max_lag_used"] = np.nan
+        output[f"{prefix}_standard_error"] = np.nan
+        output[f"{prefix}_test_statistic"] = np.nan
+        output[f"{prefix}_p_value"] = np.nan
+        output[f"{prefix}_accepted"] = False
+        output[f"{prefix}_reason"] = None
+
+        if requested_lag >= len(y):
+            output[f"{prefix}_reason"] = (
+                f"Requested HAC lag {requested_lag} is not smaller than "
+                f"the effective sample size {len(y)}."
+            )
+            continue
+
+        try:
+            covariance = _newey_west_covariance(
+                full_design,
+                full_residuals,
+                max_lag=requested_lag,
+                use_small_sample_correction=True,
+            )
+            variance = float(covariance[-1, -1])
+            if not np.isfinite(variance) or variance <= 0:
+                raise ValueError("HAC interaction variance is not positive.")
+            standard_error = float(np.sqrt(variance))
+            test_statistic = float(full_beta[-1] / standard_error)
+            p_value = float(
+                2.0 * student_t.sf(abs(test_statistic), denominator_df)
+            )
+        except (np.linalg.LinAlgError, ValueError) as exc:
+            output[f"{prefix}_reason"] = str(exc)
+            continue
+
+        output[f"{prefix}_max_lag_used"] = int(requested_lag)
+        output[f"{prefix}_standard_error"] = standard_error
+        output[f"{prefix}_test_statistic"] = test_statistic
+        output[f"{prefix}_p_value"] = p_value
+        output[f"{prefix}_accepted"] = bool(p_value <= alpha)
+
+    return output
+
+
 def test_moderation(
     y_response,
     V,
@@ -443,8 +644,9 @@ def test_moderation(
     n_I2: int,
     d: int,
     alpha: float = 0.05,
+    hac_lags: tuple[int, ...] = (6, 12, 24),
 ) -> dict:
-    """Fit the paper's reduced/full moderation regressions and F-test."""
+    """Fit the paper model plus a hierarchical--HAC sensitivity analysis."""
     y = np.asarray(y_response, dtype=float).reshape(-1)
     V = np.asarray(V, dtype=float)
     x_s = np.asarray(x_s_values, dtype=float)
@@ -474,9 +676,9 @@ def test_moderation(
     statistic = f_statistic(rss_reduced, rss_full, n_I2, d)
     denominator_df = n_I2 - d - 3
     critical = float(f.ppf(1 - alpha, 1, denominator_df))
-    p_value = float(1 - f.cdf(statistic, 1, denominator_df))
+    p_value = float(f.sf(statistic, 1, denominator_df))
 
-    return {
+    output = {
         "accepted": bool(statistic > critical),
         "f_stat": float(statistic),
         "critical_f": critical,
@@ -490,6 +692,40 @@ def test_moderation(
         ),
         "gamma_2": float(full.coef_[1]),
     }
+    try:
+        output.update(
+            test_hierarchical_hac_moderation(
+                y,
+                V,
+                x_s,
+                alpha=alpha,
+                hac_lags=hac_lags,
+            )
+        )
+    except (np.linalg.LinAlgError, ValueError) as exc:
+        output.update({
+            "hierarchical_ols_accepted": False,
+            "hierarchical_ols_f_stat": np.nan,
+            "hierarchical_ols_p_value": np.nan,
+            "hierarchical_ols_gamma_2": np.nan,
+            "hierarchical_rss_reduced": np.nan,
+            "hierarchical_rss_full": np.nan,
+            "hierarchical_residual_lag1": np.nan,
+            "hierarchical_effective_n": int(len(y)),
+            "hierarchical_denominator_df": int(len(y) - 4),
+            "hierarchical_reason": str(exc),
+        })
+        for requested_lag in hac_lags:
+            prefix = f"hac_{int(requested_lag)}"
+            output.update({
+                f"{prefix}_max_lag_used": np.nan,
+                f"{prefix}_standard_error": np.nan,
+                f"{prefix}_test_statistic": np.nan,
+                f"{prefix}_p_value": np.nan,
+                f"{prefix}_accepted": False,
+                f"{prefix}_reason": "Hierarchical model was not evaluable.",
+            })
+    return output
 
 
 def _validate_analysis_frames(
@@ -736,6 +972,7 @@ def run_cause_trigger(
             n_I2=len(I_2),
             d=config.lags,
             alpha=config.alpha,
+            hac_lags=config.hac_lags,
         )
         moderation.update(
             {

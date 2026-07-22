@@ -118,8 +118,10 @@ class PCMCIBackend:
         if self.method == "pcmci_plus" and graph is None:
             raise RuntimeError("PCMCI+ did not return a causal graph.")
 
-        # Apply multiplicity correction only to lagged links. The tau=0
-        # PCMCI+ branch remains an exploratory graph-based analysis.
+        # Apply Tigramite's multiplicity correction jointly to the full
+        # eligible lagged-link matrix (all directed variable pairs, tau >= 1).
+        # Source-to-target entries are extracted only after this correction.
+        # The PCMCI+ tau=0 branch remains an exploratory graph-based analysis.
         if self.fdr_method is not None:
             lagged_significance = pcmci.get_corrected_pvalues(
                 p_matrix=p_matrix,
@@ -134,8 +136,8 @@ class PCMCIBackend:
         parents: list[str] = []
         selected_lags: dict[str, list[int]] = {}
         contemporaneous_links: dict[str, dict] = {}
-    # Tigramite's lagged BH correction excludes tau=0. These p-values
-    # are therefore raw and the tau=0 branch is treated as exploratory.
+        # Tigramite's lagged BH correction excludes tau=0. These p-values
+        # are therefore raw and the tau=0 branch is treated as exploratory.
         for source_idx, source_name in enumerate(names):
             lags = []
 

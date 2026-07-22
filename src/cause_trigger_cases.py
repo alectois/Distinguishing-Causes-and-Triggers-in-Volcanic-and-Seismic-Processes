@@ -46,7 +46,7 @@ ETNA_CASE = CaseSpec(
         "pressure_drop",
     ),
     variable_labels={
-        "teleseismic_scaled": "Teleseismic RMS",
+        "teleseismic_scaled": "Teleseismic-band RMS",
         "local_event_rate_state_scaled": "Past local seismicity",
         "local_event_rate_response_scaled": "Catalogue response (effect)",
         "CO2_3_scaled": "Soil CO₂",

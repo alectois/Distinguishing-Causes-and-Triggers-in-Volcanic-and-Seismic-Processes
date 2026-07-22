@@ -182,7 +182,13 @@ def _band_rms_series(
     fmax: float,
     window_seconds: int,
 ) -> pd.Series:
-    """Non-overlapping RMS windows computed separately on valid segments."""
+    """UTC-aligned non-overlapping RMS windows on valid segments.
+
+    Alignment to absolute multiples of ``window_seconds`` prevents a segment
+    beginning after a waveform gap from shifting every subsequent RMS window
+    away from the fixed hourly grid or creating windows that cross hour
+    boundaries.
+    """
     parts: list[pd.Series] = []
 
     for trace in stream:
@@ -196,7 +202,7 @@ def _band_rms_series(
         )
 
         sampling_rate = float(filtered.stats.sampling_rate)
-        window_samples = int(window_seconds * sampling_rate)
+        window_samples = int(round(window_seconds * sampling_rate))
         if window_samples <= 0:
             raise ValueError("window_seconds is too small.")
 
@@ -204,10 +210,36 @@ def _band_rms_series(
         times: list[UTCDateTime] = []
         rms_values: list[float] = []
 
-        for start in range(0, len(values) - window_samples + 1, window_samples):
-            segment = values[start : start + window_samples]
-            times.append(filtered.stats.starttime + start / sampling_rate)
-            rms_values.append(float(np.sqrt(np.mean(segment**2))))
+        trace_start_seconds = float(filtered.stats.starttime.timestamp)
+        trace_end_exclusive = trace_start_seconds + len(values) / sampling_rate
+        alignment_tolerance = 0.5 / sampling_rate + 1e-9
+        window_start_seconds = (
+            np.ceil(
+                (trace_start_seconds - alignment_tolerance) / window_seconds
+            )
+            * window_seconds
+        )
+
+        while (
+            window_start_seconds + window_seconds
+            <= trace_end_exclusive + alignment_tolerance
+        ):
+            start = int(round(
+                (window_start_seconds - trace_start_seconds) * sampling_rate
+            ))
+            stop = start + window_samples
+            actual_start = trace_start_seconds + start / sampling_rate
+            aligned = (
+                abs(actual_start - window_start_seconds)
+                <= alignment_tolerance
+            )
+
+            if aligned and start >= 0 and stop <= len(values):
+                segment = values[start:stop]
+                times.append(UTCDateTime(window_start_seconds))
+                rms_values.append(float(np.sqrt(np.mean(segment**2))))
+
+            window_start_seconds += window_seconds
 
         if rms_values:
             parts.append(

@@ -65,6 +65,9 @@ class WorkflowConfig:
     pcmci_conflict_resolution: bool = True
     pcmci_plus_use_contemporaneous_triggers: bool = False
 
+    # Hierarchical--HAC sensitivity; the original model remains primary.
+    hac_lags: tuple[int, ...] = (6, 12, 24)
+
 
 @dataclass
 class PreparedCaseAnalysis:
@@ -444,6 +447,7 @@ def make_cause_trigger_config(
         pcmci_contemp_collider_rule=workflow.pcmci_contemp_collider_rule,
         pcmci_conflict_resolution=workflow.pcmci_conflict_resolution,
         pcmci_plus_use_contemporaneous_triggers=use_contemporaneous_triggers,
+        hac_lags=tuple(int(value) for value in workflow.hac_lags),
     )
 
 
@@ -495,15 +499,21 @@ def prepare_case_analysis(
     pcmci_alpha_level: float = 0.05,
     pcmci_fdr_method: str | None = "fdr_bh",
     cond_ind_test: str = "robust_parcorr",
+    hac_lags: Sequence[int] = (6, 12, 24),
     run_specs: Sequence[Mapping[str, object]] = COMPACT_RUN_SPECS,
 ) -> PreparedCaseAnalysis:
     """Prepare data, splits, conventional lag references, and design tables."""
     lag_grid = tuple(int(value) for value in lag_grid)
     min_I2_values = tuple(int(value) for value in min_I2_values)
+    hac_lags = tuple(int(value) for value in hac_lags)
     if not lag_grid:
         raise ValueError("lag_grid cannot be empty.")
     if not min_I2_values:
         raise ValueError("min_I2_values cannot be empty.")
+    if not hac_lags or any(value < 1 for value in hac_lags):
+        raise ValueError("hac_lags must contain positive integers.")
+    if len(set(hac_lags)) != len(hac_lags):
+        raise ValueError("hac_lags must not contain duplicates.")
 
     X_full_raw = load_model_frame(
         data_path,
@@ -554,6 +564,7 @@ def prepare_case_analysis(
         pcmci_fdr_method=pcmci_fdr_method,
         pcmci_cond_ind_test=cond_ind_test,
         pcmci_plus_use_contemporaneous_triggers=False,
+        hac_lags=hac_lags,
     )
 
     split_raw = pd.DataFrame([
@@ -647,6 +658,15 @@ def prepare_case_analysis(
                 f"lagged-link FDR={pcmci_fdr_method or 'none'}; "
                 f"PCMCI+ tau=0 links exploratory without BH adjustment; "
                 f"conditional-independence test={cond_ind_test}"
+            ),
+        },
+        {
+            "Item": "Moderation sensitivity",
+            "Value": (
+                "Primary non-hierarchical F-test retained as primary; "
+                "hierarchical interaction model with trigger main effect and "
+                "Newey--West sensitivity at maximum lags "
+                f"{hac_lags} h"
             ),
         },
         {

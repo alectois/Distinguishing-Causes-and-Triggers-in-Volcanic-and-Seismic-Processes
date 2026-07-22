@@ -588,30 +588,75 @@ def _warning_details(
     return len(caught), messages, categories
 
 
+def _attach_metadata_columns(
+    dataframe: pd.DataFrame,
+    metadata: Mapping[str, object],
+) -> pd.DataFrame:
+    """Attach scalar or sequence-valued run metadata to every row safely."""
+    output = dataframe.copy()
+    for column, value in metadata.items():
+        if pd.api.types.is_scalar(value):
+            output[column] = value
+        else:
+            output[column] = pd.Series(
+                [value] * len(output),
+                index=output.index,
+                dtype=object,
+            )
+    return output
+
+
 def add_casewide_bh_adjustment(
     diagnostics: pd.DataFrame,
     *,
     alpha: float = 0.05,
 ) -> pd.DataFrame:
-    """Add a descriptive case-wide Benjamini–Hochberg moderation audit."""
+    """Add separate case-wide BH audits for every moderation specification."""
     output = diagnostics.copy()
-    output["bh_adjusted_p_value"] = np.nan
-    output["accepted_after_bh"] = False
-    if output.empty or "p_value" not in output.columns:
-        return output
 
-    p_values = pd.to_numeric(output["p_value"], errors="coerce")
-    valid_index = p_values.index[p_values.notna() & np.isfinite(p_values)]
-    if len(valid_index) == 0:
-        return output
+    specifications = []
+    if "p_value" in output.columns:
+        specifications.append(
+            ("p_value", "bh_adjusted_p_value", "accepted_after_bh")
+        )
+    if "hierarchical_ols_p_value" in output.columns:
+        specifications.append((
+            "hierarchical_ols_p_value",
+            "hierarchical_ols_bh_adjusted_p_value",
+            "hierarchical_ols_accepted_after_bh",
+        ))
+    for column in output.columns:
+        if (
+            column.startswith("hac_")
+            and column.endswith("_p_value")
+            and "_bh_adjusted_" not in column
+        ):
+            prefix = column.removesuffix("_p_value")
+            specifications.append((
+                column,
+                f"{prefix}_bh_adjusted_p_value",
+                f"{prefix}_accepted_after_bh",
+            ))
 
-    ordered = p_values.loc[valid_index].sort_values(kind="stable")
-    m = len(ordered)
-    raw_adjusted = ordered.to_numpy(dtype=float) * m / np.arange(1, m + 1)
-    adjusted = np.minimum.accumulate(raw_adjusted[::-1])[::-1]
-    adjusted = np.clip(adjusted, 0.0, 1.0)
-    output.loc[ordered.index, "bh_adjusted_p_value"] = adjusted
-    output.loc[ordered.index, "accepted_after_bh"] = adjusted <= float(alpha)
+    for p_column, adjusted_column, decision_column in specifications:
+        output[adjusted_column] = np.nan
+        output[decision_column] = False
+        if output.empty:
+            continue
+
+        p_values = pd.to_numeric(output[p_column], errors="coerce")
+        valid_index = p_values.index[p_values.notna() & np.isfinite(p_values)]
+        if len(valid_index) == 0:
+            continue
+
+        ordered = p_values.loc[valid_index].sort_values(kind="stable")
+        m = len(ordered)
+        raw_adjusted = ordered.to_numpy(dtype=float) * m / np.arange(1, m + 1)
+        adjusted = np.minimum.accumulate(raw_adjusted[::-1])[::-1]
+        adjusted = np.clip(adjusted, 0.0, 1.0)
+        output.loc[ordered.index, adjusted_column] = adjusted
+        output.loc[ordered.index, decision_column] = adjusted <= float(alpha)
+
     return output
 
 
@@ -660,6 +705,9 @@ def run_unique_split_grid(
         .drop_duplicates("split_id")
     )
 
+    def nullable_int(value):
+        return None if pd.isna(value) else int(value)
+
     for _, split in unique_splits.iterrows():
         current_workflow = replace(
             workflow_template,
@@ -674,8 +722,8 @@ def run_unique_split_grid(
             "supported_min_I2_lengths": list(split["supported_min_I2_lengths"]),
             "n_supporting_min_I2_values": int(split["n_supporting_min_I2_values"]),
             "split_timestamp_expected": split["split_time"],
-            "I1_length_expected": int(split["I1_length"]),
-            "I2_length_expected": int(split["I2_length"]),
+            "I1_length_expected": nullable_int(split["I1_length"]),
+            "I2_length_expected": nullable_int(split["I2_length"]),
         }
 
         for spec in run_specs:
@@ -709,15 +757,23 @@ def run_unique_split_grid(
 
                     warning_count, warning_messages, warning_categories = _warning_details(caught)
                     actual_split = result.get("split_timestamp")
-                    if actual_split is not None and pd.Timestamp(actual_split) != pd.Timestamp(
-                        split["split_time"]
-                    ):
+                    expected_split = split["split_time"]
+                    split_mismatch = (
+                        pd.isna(expected_split) and actual_split is not None
+                    ) or (
+                        pd.notna(expected_split)
+                        and (
+                            actual_split is None
+                            or pd.Timestamp(actual_split) != pd.Timestamp(expected_split)
+                        )
+                    )
+                    if split_mismatch:
                         raise RuntimeError(
                             "Representative minimum-I2 value reproduced a different split: "
-                            f"expected {split['split_time']}, got {actual_split}."
+                            f"expected {expected_split}, got {actual_split}."
                         )
 
-                    rows.append({
+                    success_row = {
                         **common,
                         "split_timestamp": actual_split,
                         "split_score": result.get("split_score"),
@@ -740,34 +796,53 @@ def run_unique_split_grid(
                         "n_diagnostics": len(diagnostics),
                         "stop_reason": result.get("stop_reason"),
                         "warning_count": warning_count,
+                        "warning_scope": (
+                            "complete backend run, including parent search"
+                            if warning_count
+                            else None
+                        ),
                         "warning_categories": warning_categories,
                         "warning_messages": warning_messages,
                         "error": None,
-                    })
+                    }
 
+                    diagnostic_frame = None
                     if not diagnostics.empty:
-                        diagnostic_frames.append(
-                            diagnostics.assign(
-                                experiment_type=common["experiment_type"],
-                                split_id=split["split_id"],
-                                representative_min_I2_length=int(
-                                    split["representative_min_I2_length"]
-                                ),
-                                supported_min_I2_lengths=[
-                                    list(split["supported_min_I2_lengths"])
-                                ] * len(diagnostics),
-                                n_supporting_min_I2_values=int(
-                                    split["n_supporting_min_I2_values"]
-                                ),
-                                split_timestamp=actual_split,
-                                **metadata,
-                            )
+                        diagnostic_frame = diagnostics.assign(
+                            experiment_type=common["experiment_type"],
+                            split_id=split["split_id"],
+                            representative_min_I2_length=int(
+                                split["representative_min_I2_length"]
+                            ),
+                            supported_min_I2_lengths=[
+                                list(split["supported_min_I2_lengths"])
+                            ] * len(diagnostics),
+                            n_supporting_min_I2_values=int(
+                                split["n_supporting_min_I2_values"]
+                            ),
+                            split_timestamp=actual_split,
                         )
+                        diagnostic_frame = _attach_metadata_columns(
+                            diagnostic_frame,
+                            metadata,
+                        )
+
+                    # Commit a successful configuration only after its
+                    # diagnostics have also been prepared. This guarantees
+                    # exactly one grid row even if post-processing fails.
+                    rows.append(success_row)
+                    if diagnostic_frame is not None:
+                        diagnostic_frames.append(diagnostic_frame)
                 except Exception as exc:
                     warning_count, warning_messages, warning_categories = _warning_details(caught)
                     rows.append({
                         **common,
                         "warning_count": warning_count,
+                        "warning_scope": (
+                            "complete backend run, including parent search"
+                            if warning_count
+                            else None
+                        ),
                         "warning_categories": warning_categories,
                         "warning_messages": warning_messages,
                         "error": str(exc),
@@ -776,6 +851,26 @@ def run_unique_split_grid(
     grid = pd.DataFrame(rows)
     if grid.empty:
         return grid, pd.DataFrame()
+
+    key_columns = ["split_id", "run", "backend", "lag"]
+    duplicate_mask = grid.duplicated(key_columns, keep=False)
+    if duplicate_mask.any():
+        duplicate_keys = (
+            grid.loc[duplicate_mask, key_columns]
+            .drop_duplicates()
+            .to_dict("records")
+        )
+        raise RuntimeError(
+            "Duplicate unique-grid configurations were produced: "
+            f"{duplicate_keys[:5]}"
+        )
+
+    expected_rows = len(unique_splits) * len(run_specs) * len(lags)
+    if len(grid) != expected_rows:
+        raise RuntimeError(
+            "Incomplete unique-partition grid inside run_unique_split_grid: "
+            f"expected {expected_rows} rows, received {len(grid)}."
+        )
 
     grid["effective_I2_rows"] = (
         pd.to_numeric(grid.get("I2_length"), errors="coerce")
@@ -833,7 +928,7 @@ def backend_split_summary(
         "Post-split parent lags",
         "Trigger-candidate lags",
         "Fitted-moderation lags",
-        "Accepted-pair lags",
+        "Nominally supported pair lags",
         "τ=0-link lags",
         "Warning runs",
         "Result",
@@ -879,7 +974,10 @@ def backend_split_summary(
                 )
 
         if n_pair_lags:
-            result = f"Accepted pair(s) at {n_pair_lags} maximum-lag order(s)"
+            result = (
+                "Nominally supported pair(s) at "
+                f"{n_pair_lags} maximum-lag order(s)"
+            )
         elif n_fitted_lags:
             result = (
                 "Moderation fitted at "
@@ -901,7 +999,7 @@ def backend_split_summary(
             "Post-split parent lags": f"{n_b2}/{lag_count}",
             "Trigger-candidate lags": f"{n_candidates}/{lag_count}",
             "Fitted-moderation lags": f"{n_fitted_lags}/{lag_count}",
-            "Accepted-pair lags": f"{n_pair_lags}/{lag_count}",
+            "Nominally supported pair lags": f"{n_pair_lags}/{lag_count}",
             "τ=0-link lags": f"{n_tau0}/{lag_count}",
             "Warning runs": f"{n_warning_runs}/{lag_count}",
             "Result": result,
@@ -918,13 +1016,13 @@ def pair_split_lag_summary(
     variable_labels: Mapping[str, str] | None = None,
     backend_labels: Mapping[str, str] = BACKEND_LABELS,
 ) -> pd.DataFrame:
-    """Summarise raw and BH-supported pairs without counting duplicate splits."""
+    """Summarise nominal and BH-supported pairs without duplicate splits."""
     columns = [
         "Backend",
         "Trigger source",
         "Cause",
         "Trigger",
-        "Accepted cells",
+        "Nominally supported cells",
         "BH-supported cells",
         "Partitions",
         "Partition support",
@@ -992,7 +1090,9 @@ def pair_split_lag_summary(
         ),
         "Cause": summary["cause"].map(lambda value: readable_name(value, labels)),
         "Trigger": summary["trigger"].map(lambda value: readable_name(value, labels)),
-        "Accepted cells": summary["accepted_cells"].astype(int).astype(str) + f"/{total_cells}",
+        "Nominally supported cells": (
+            summary["accepted_cells"].astype(int).astype(str) + f"/{total_cells}"
+        ),
         "BH-supported cells": summary["bh_cells"].astype(int).astype(str) + f"/{total_cells}",
         "Partitions": summary["split_ids"].astype(str),
         "Partition support": summary["n_splits"].astype(int).astype(str) + f"/{n_splits_total}",
@@ -1282,6 +1382,304 @@ def plot_pair_stability_heatmap(
     return figure, axes, saved_paths
 
 
+def _moderation_specifications(
+    diagnostics: pd.DataFrame,
+    hac_lags: Sequence[int],
+) -> list[dict[str, str]]:
+    specifications = [
+        {
+            "label": "Primary model",
+            "p_value": "p_value",
+            "accepted": "accepted",
+            "accepted_after_bh": "accepted_after_bh",
+            "gamma_2": "gamma_2",
+        },
+        {
+            "label": "Hierarchical OLS",
+            "p_value": "hierarchical_ols_p_value",
+            "accepted": "hierarchical_ols_accepted",
+            "accepted_after_bh": "hierarchical_ols_accepted_after_bh",
+            "gamma_2": "hierarchical_ols_gamma_2",
+        },
+    ]
+    specifications.extend({
+        "label": f"HAC-{int(lag)} h",
+        "p_value": f"hac_{int(lag)}_p_value",
+        "accepted": f"hac_{int(lag)}_accepted",
+        "accepted_after_bh": f"hac_{int(lag)}_accepted_after_bh",
+        "gamma_2": "hierarchical_ols_gamma_2",
+    } for lag in hac_lags)
+
+    return [
+        specification
+        for specification in specifications
+        if specification["p_value"] in diagnostics.columns
+    ]
+
+
+def moderation_summary(
+    diagnostics: pd.DataFrame,
+    *,
+    hac_lags: Sequence[int] = (6, 12, 24),
+) -> pd.DataFrame:
+    """Summarise primary, hierarchical, and HAC moderation decisions."""
+    columns = [
+        "Specification",
+        "Fitted tests",
+        "Nominally supported",
+        "BH-supported",
+        "Retained among original model support",
+        "Same interaction sign as the original model",
+    ]
+    if diagnostics.empty:
+        return pd.DataFrame(columns=columns)
+
+    specifications = _moderation_specifications(diagnostics, hac_lags)
+    if not specifications:
+        return pd.DataFrame(columns=columns)
+
+    primary_p = pd.to_numeric(
+        diagnostics.get("p_value"), errors="coerce"
+    )
+    primary_supported = (
+        primary_p.notna()
+        & np.isfinite(primary_p)
+        & diagnostics.get(
+            "accepted", pd.Series(False, index=diagnostics.index)
+        ).map(_flag_is_true)
+    )
+    primary_gamma = pd.to_numeric(
+        diagnostics.get("gamma_2"), errors="coerce"
+    )
+    primary_count = int(primary_supported.sum())
+
+    rows = []
+    for specification in specifications:
+        p_values = pd.to_numeric(
+            diagnostics[specification["p_value"]], errors="coerce"
+        )
+        fitted = p_values.notna() & np.isfinite(p_values)
+        nominal = fitted & diagnostics.get(
+            specification["accepted"],
+            pd.Series(False, index=diagnostics.index),
+        ).map(_flag_is_true)
+        adjusted = fitted & diagnostics.get(
+            specification["accepted_after_bh"],
+            pd.Series(False, index=diagnostics.index),
+        ).map(_flag_is_true)
+
+        retained_count = int((primary_supported & nominal).sum())
+        gamma = pd.to_numeric(
+            diagnostics.get(specification["gamma_2"]), errors="coerce"
+        )
+        comparable_sign = (
+            primary_supported
+            & primary_gamma.notna()
+            & np.isfinite(primary_gamma)
+            & gamma.notna()
+            & np.isfinite(gamma)
+        )
+        same_sign = (
+            np.sign(primary_gamma.loc[comparable_sign])
+            == np.sign(gamma.loc[comparable_sign])
+        )
+
+        rows.append({
+            "Specification": specification["label"],
+            "Fitted tests": int(fitted.sum()),
+            "Nominally supported": int(nominal.sum()),
+            "BH-supported": int(adjusted.sum()),
+            "Retained among original model support": (
+                f"{retained_count}/{primary_count}"
+            ),
+            "Same interaction sign as the original model": (
+                f"{int(same_sign.sum())}/{int(comparable_sign.sum())}"
+            ),
+        })
+
+    return pd.DataFrame(rows).reindex(columns=columns)
+
+
+def plot_moderation_heatmap(
+    diagnostics: pd.DataFrame,
+    *,
+    hac_lags: Sequence[int] = (6, 12, 24),
+    variable_labels: Mapping[str, str] | None = None,
+    backend_labels: Mapping[str, str] = PLOT_BACKEND_LABELS,
+    primary_supported_only: bool = True,
+    title: str = "Hierarchical--HAC of moderation support",
+    filename: str | None = None,
+    save_dir: str | Path | None = None,
+    formats: str | Sequence[str] = ("pdf", "png"),
+    dpi: int = 450,
+):
+    """Plot specification sensitivity for each evaluated classification."""
+    required = {
+        "split_id",
+        "backend",
+        "lag",
+        "cause",
+        "trigger",
+        "p_value",
+        "accepted",
+        "gamma_2",
+    }
+    missing = sorted(required - set(diagnostics.columns))
+    if missing:
+        raise ValueError(f"diagnostics is missing required columns: {missing}")
+
+    specifications = _moderation_specifications(diagnostics, hac_lags)
+    if len(specifications) < 2:
+        raise ValueError("Hierarchical--HAC diagnostics are not available.")
+
+    rows = diagnostics.dropna(subset=["cause", "trigger"]).copy()
+    rows = rows.loc[
+        pd.to_numeric(rows["p_value"], errors="coerce").notna()
+    ]
+    if primary_supported_only:
+        rows = rows.loc[rows["accepted"].map(_flag_is_true)]
+    if rows.empty:
+        raise ValueError("No moderation rows are available for the plot.")
+
+    identity = ["split_id", "backend", "lag", "cause", "trigger"]
+    rows = rows.drop_duplicates(identity, keep="first")
+    backend_order = {name: index for index, name in enumerate(backend_labels)}
+    rows["_backend_order"] = rows["backend"].map(backend_order).fillna(
+        len(backend_order)
+    )
+    rows = rows.sort_values(
+        ["cause", "trigger", "split_id", "_backend_order", "lag"],
+        kind="stable",
+    ).drop(columns="_backend_order").reset_index(drop=True)
+
+    matrix = np.zeros((len(rows), len(specifications)), dtype=int)
+    signs = np.full(matrix.shape, "", dtype=object)
+    for row_index, (_, row) in enumerate(rows.iterrows()):
+        for column_index, specification in enumerate(specifications):
+            p_value = pd.to_numeric(
+                pd.Series([row.get(specification["p_value"])]),
+                errors="coerce",
+            ).iloc[0]
+            if not np.isfinite(p_value):
+                continue
+
+            status = 1
+            if _flag_is_true(row.get(specification["accepted"], False)):
+                status = 2
+            if _flag_is_true(
+                row.get(specification["accepted_after_bh"], False)
+            ):
+                status = 3
+            matrix[row_index, column_index] = status
+
+            gamma = pd.to_numeric(
+                pd.Series([row.get(specification["gamma_2"])]),
+                errors="coerce",
+            ).iloc[0]
+            if np.isfinite(gamma):
+                signs[row_index, column_index] = "+" if gamma >= 0 else "−"
+
+    labels = {} if variable_labels is None else variable_labels
+    row_labels = []
+    for _, row in rows.iterrows():
+        backend = backend_labels.get(str(row["backend"]), str(row["backend"]))
+        cause = _wrapped_label(readable_name(row["cause"], labels), width=25)
+        trigger = _wrapped_label(readable_name(row["trigger"], labels), width=25)
+        row_labels.append(
+            f"{row['split_id']} · {backend} · d={int(row['lag'])}\n"
+            f"C: {cause}  |  T: {trigger}"
+        )
+
+    set_reporting_style()
+    colours = ["#D9D9D9", "#A6CEE3", "#E69F00", "#009E73"]
+    labels_by_status = {
+        0: "Not evaluable",
+        1: "Fitted; unsupported",
+        2: "Nominal support only",
+        3: "BH-supported",
+    }
+    colour_map = ListedColormap(colours)
+    normaliser = BoundaryNorm(np.arange(-0.5, 4.5, 1.0), colour_map.N)
+    figure_height = max(4.0, 0.42 * len(rows) + 1.55)
+    figure_width = max(8.2, 1.35 * len(specifications) + 4.7)
+    figure, axis = plt.subplots(figsize=(figure_width, figure_height))
+    axis.imshow(
+        matrix,
+        cmap=colour_map,
+        norm=normaliser,
+        aspect="auto",
+        interpolation="nearest",
+    )
+    axis.grid(False, which="major")
+    axis.set_xticks(np.arange(len(specifications)))
+    axis.set_xticklabels(
+        [specification["label"] for specification in specifications],
+        rotation=25,
+        ha="right",
+        rotation_mode="anchor",
+    )
+    axis.set_yticks(np.arange(len(rows)))
+    axis.set_yticklabels(row_labels, fontsize=8.2)
+    axis.set_xticks(np.arange(-0.5, len(specifications), 1.0), minor=True)
+    axis.set_yticks(np.arange(-0.5, len(rows), 1.0), minor=True)
+    axis.grid(True, which="minor", color="white", linewidth=0.70)
+    axis.tick_params(which="minor", bottom=False, left=False)
+
+    for row_index in range(matrix.shape[0]):
+        for column_index in range(matrix.shape[1]):
+            if not signs[row_index, column_index]:
+                continue
+            axis.text(
+                column_index,
+                row_index,
+                signs[row_index, column_index],
+                ha="center",
+                va="center",
+                fontsize=8.5,
+                fontweight="semibold",
+                color="white" if matrix[row_index, column_index] == 3 else "0.12",
+            )
+
+    legend = [
+        Patch(
+            facecolor=colours[index],
+            edgecolor="0.78",
+            linewidth=0.55,
+            label=label,
+        )
+        for index, label in labels_by_status.items()
+    ]
+    figure.legend(
+        handles=legend,
+        loc="lower center",
+        ncol=4,
+        bbox_to_anchor=(0.5, 0.025),
+        frameon=False,
+        columnspacing=1.25,
+        handlelength=1.6,
+    )
+    axis.set_title(title, loc="left", pad=8, fontweight="semibold")
+    figure.text(
+        0.5,
+        0.003,
+        "+/− gives the fitted interaction sign; HAC uses the hierarchical model.",
+        ha="center",
+        va="bottom",
+        fontsize=8.3,
+        color="0.28",
+    )
+    figure.tight_layout(rect=(0.0, 0.075, 1.0, 1.0))
+    saved_paths = _save_figure(
+        figure,
+        filename=filename,
+        save_dir=save_dir,
+        formats=formats,
+        dpi=dpi,
+    )
+    plt.show()
+    return figure, axis, saved_paths
+
+
 def reference_criteria_by_lag(lag_references: pd.DataFrame) -> dict[int, str]:
     return (
         lag_references
@@ -1352,7 +1750,10 @@ def automatic_lag_outcome_table(
             )
 
             if not accepted.empty:
-                outcome = "Accepted: " + _format_pairs(accepted, variable_labels)
+                outcome = (
+                    "Nominally supported: "
+                    + _format_pairs(accepted, variable_labels)
+                )
             elif not matched.empty and pd.to_numeric(matched.get("p_value"), errors="coerce").notna().any():
                 minimum_p = pd.to_numeric(matched["p_value"], errors="coerce").min()
                 outcome = f"Moderation tested; none accepted (minimum p={minimum_p:.3g})"
@@ -1383,7 +1784,14 @@ def automatic_lag_outcome_table(
 
 
 def warning_summary(grid: pd.DataFrame) -> pd.DataFrame:
-    columns = ["Partition", "Backend", "Runs with warnings", "Warning count", "Messages"]
+    columns = [
+        "Partition",
+        "Backend",
+        "Runs with warnings",
+        "Warning count",
+        "Scope",
+        "Messages",
+    ]
     if grid.empty or "warning_count" not in grid.columns:
         return pd.DataFrame(columns=columns)
     warned = grid.loc[pd.to_numeric(grid["warning_count"], errors="coerce").fillna(0).gt(0)]
@@ -1396,11 +1804,18 @@ def warning_summary(grid: pd.DataFrame) -> pd.DataFrame:
         for value in group["warning_messages"]:
             if isinstance(value, list):
                 messages.extend(value)
+        scopes = [
+            str(value)
+            for value in group.get(
+                "warning_scope", pd.Series(dtype=object)
+            ).dropna()
+        ]
         rows.append({
             "Partition": split_id,
             "Backend": BACKEND_LABELS.get(str(backend), str(backend)),
             "Runs with warnings": int(len(group)),
             "Warning count": int(pd.to_numeric(group["warning_count"], errors="coerce").sum()),
+            "Scope": "; ".join(dict.fromkeys(scopes)),
             "Messages": "; ".join(dict.fromkeys(messages)),
         })
     return pd.DataFrame(rows).reindex(columns=columns)
@@ -1417,8 +1832,9 @@ def warning_pattern_summary(
         "Maximum lag orders",
         "Runs",
         "Warning count",
+        "Scope",
         "Fitted moderation tests",
-        "F-test accepted",
+        "Nominal F-test support",
         "BH-supported",
         "Execution errors",
         "Warning pattern",
@@ -1491,8 +1907,14 @@ def warning_pattern_summary(
             "Warning count": int(
                 pd.to_numeric(group["warning_count"], errors="coerce").sum()
             ),
+            "Scope": "; ".join(dict.fromkeys(
+                str(value)
+                for value in group.get(
+                    "warning_scope", pd.Series(dtype=object)
+                ).dropna()
+            )),
             "Fitted moderation tests": int(fitted.sum()),
-            "F-test accepted": int(raw.sum()),
+            "Nominal F-test support": int(raw.sum()),
             "BH-supported": int(adjusted.sum()),
             "Execution errors": int(group["error"].notna().sum()),
             "Warning pattern": "; ".join(pattern),
@@ -1503,11 +1925,10 @@ def warning_pattern_summary(
 
 
 def multiplicity_audit_summary(diagnostics: pd.DataFrame) -> pd.DataFrame:
-    """Return a one-row raw-versus-BH moderation audit."""
     if diagnostics.empty:
         return pd.DataFrame([{
             "Fitted moderation tests": 0,
-            "F-test accepted": 0,
+            "Nominal F-test support": 0,
             "BH-supported": 0,
         }])
 
@@ -1523,7 +1944,7 @@ def multiplicity_audit_summary(diagnostics: pd.DataFrame) -> pd.DataFrame:
     ).map(_flag_is_true)
     return pd.DataFrame([{
         "Fitted moderation tests": int(fitted.sum()),
-        "F-test accepted": int(raw.sum()),
+        "Nominal F-test support": int(raw.sum()),
         "BH-supported": int(adjusted.sum()),
     }])
 
@@ -1567,6 +1988,7 @@ def build_summary_export(
     errors: pd.DataFrame,
     role_shift_table: pd.DataFrame | None = None,
     lag_sensitivity_table: pd.DataFrame | None = None,
+    sensitivity_summary: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     rows: list[dict] = []
 
@@ -1637,12 +2059,18 @@ def build_summary_export(
             "cause": row["Cause"],
             "trigger": row["Trigger"],
             "trigger_source": row["Trigger source"],
-            "metric": "accepted_split_lag_support",
-            "value": row["Accepted cells"],
+            "metric": "nominal_split_lag_support",
+            "value": row["Nominally supported cells"],
             "details": {
                 key: row[key]
                 for key in pair_summary.columns
-                if key not in {"Backend", "Cause", "Trigger", "Trigger source", "Accepted cells"}
+                if key not in {
+                    "Backend",
+                    "Cause",
+                    "Trigger",
+                    "Trigger source",
+                    "Nominally supported cells",
+                }
             },
         })
 
@@ -1655,6 +2083,7 @@ def build_summary_export(
             "value": int(row["Warning count"]),
             "details": {
                 "runs_with_warnings": int(row["Runs with warnings"]),
+                "scope": row.get("Scope"),
                 "messages": row["Messages"],
             },
         })
@@ -1669,7 +2098,7 @@ def build_summary_export(
             },
             {
                 "section": "multiplicity_audit",
-                "metric": "f_accepted_tests",
+                "metric": "nominal_F_supported_tests",
                 "value": int(
                     diagnostics.get(
                         "accepted",
@@ -1723,6 +2152,19 @@ def build_summary_export(
                 },
             })
 
+    if sensitivity_summary is not None and not sensitivity_summary.empty:
+        for _, row in sensitivity_summary.iterrows():
+            rows.append({
+                "section": "hierarchical_HAC_sensitivity",
+                "metric": row["Specification"],
+                "value": int(row["Nominally supported"]),
+                "details": {
+                    key: row[key]
+                    for key in sensitivity_summary.columns
+                    if key not in {"Specification", "Nominally supported"}
+                },
+            })
+
     rows.append({"section": "execution", "metric": "error_count", "value": int(len(errors))})
 
     return pd.DataFrame(rows).reindex(columns=[
@@ -1755,6 +2197,7 @@ def export_audit_csvs(
     variable_labels: Mapping[str, str] | None = None,
     role_shift_table: pd.DataFrame | None = None,
     lag_sensitivity_table: pd.DataFrame | None = None,
+    sensitivity_summary: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     results_dir = Path(results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -1804,6 +2247,7 @@ def export_audit_csvs(
         errors=errors,
         role_shift_table=role_shift_table,
         lag_sensitivity_table=lag_sensitivity_table,
+        sensitivity_summary=sensitivity_summary,
     )
 
     paths = {
@@ -1818,7 +2262,8 @@ def export_audit_csvs(
     summary_description = (
         "Design, split stability, automatic AIC/BIC outcomes, backend behaviour, "
         "pair stability, mean-shift role diagnostics, warning audit, descriptive "
-        "multiplicity audit, and any lag-order sensitivity check."
+        "multiplicity audit, hierarchical--HAC sensitivity, and any lag-order "
+        "sensitivity check."
     )
     
     return pd.DataFrame([
@@ -1833,8 +2278,9 @@ def export_audit_csvs(
         {
             "File": paths["moderation"].name,
             "Contents": (
-                "Every evaluated cause-trigger combination, raw paper-compatible decision, "
-                "trigger source, complete test statistics, and case-wide BH audit."
+                "Every evaluated cause-trigger combination, nominal paper-compatible decision, "
+                "trigger source, hierarchical--HAC sensitivities, complete test "
+                "statistics, and specification-wise case-wide BH audits."
             ),
             "Rows": len(moderation_export),
         },
