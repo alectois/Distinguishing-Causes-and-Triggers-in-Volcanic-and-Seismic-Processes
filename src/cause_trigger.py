@@ -23,7 +23,7 @@ from hmml_runner import HMMLRunner
 from pcmci_runner import PCMCIBackend
 
 
-def paper_abs_mean_increase(mean_after: float, mean_before: float) -> bool:
+def absolute_mean_increase(mean_after: float, mean_before: float) -> bool:
     """Return the condition |E[x] in I2| > |E[x] in I1|."""
     mean_after = float(mean_after)
     mean_before = float(mean_before)
@@ -99,7 +99,8 @@ def standard_scale_from_reference(
     ]
     if not invalid_scale.empty:
         raise ValueError(
-            "Cannot reference-standardize constant or invalid columns:\n"
+            "Cannot standardize constant or invalid columns using the "
+            "reference interval:\n"
             f"{invalid_scale}"
         )
 
@@ -149,8 +150,8 @@ class CauseTriggerConfig:
     pcmci_plus_use_contemporaneous_triggers: bool = False
 
     # Sensitivity analysis: hierarchical interaction model with Newey--West
-    # heteroskedasticity- and autocorrelation-consistent covariance.
-    hac_lags: tuple[int, ...] = (6, 12, 24)
+    # covariance estimates.
+    newey_west_lags: tuple[int, ...] = (6, 12, 24)
 
     def __post_init__(self) -> None:
         if not isinstance(self.lags, int) or self.lags < 1:
@@ -175,12 +176,12 @@ class CauseTriggerConfig:
                 f"Unsupported conditional-independence test: "
                 f"{self.pcmci_cond_ind_test!r}"
             )
-        hac_lags = tuple(int(value) for value in self.hac_lags)
-        if not hac_lags or any(value < 1 for value in hac_lags):
-            raise ValueError("hac_lags must contain positive integers.")
-        if len(set(hac_lags)) != len(hac_lags):
-            raise ValueError("hac_lags must not contain duplicates.")
-        object.__setattr__(self, "hac_lags", hac_lags)
+        newey_west_lags = tuple(int(value) for value in self.newey_west_lags)
+        if not newey_west_lags or any(value < 1 for value in newey_west_lags):
+            raise ValueError("newey_west_lags must contain positive integers.")
+        if len(set(newey_west_lags)) != len(newey_west_lags):
+            raise ValueError("newey_west_lags must not contain duplicates.")
+        object.__setattr__(self, "newey_west_lags", newey_west_lags)
 
 
 @dataclass
@@ -274,7 +275,7 @@ def find_effect_split(
     for split_index in range(lower, upper + 1):
         mean_1 = float(y.iloc[:split_index].mean())
         mean_2 = float(y.iloc[split_index:].mean())
-        if not paper_abs_mean_increase(mean_2, mean_1):
+        if not absolute_mean_increase(mean_2, mean_1):
             continue
 
         score = abs(mean_2) - abs(mean_1)
@@ -435,7 +436,7 @@ def refit_beta_for_selected_parents(
 
 
 def f_statistic(rss_reduced: float, rss_full: float, n: int, d: int) -> float:
-    """Paper statistic: (RSS1 - RSS2) * (n - d - 3) / RSS2."""
+    """Return the classification-model F statistic."""
     denominator_df = n - d - 3
     if denominator_df <= 0:
         raise ValueError(
@@ -470,14 +471,14 @@ def _newey_west_covariance(
     residuals = np.asarray(residuals, dtype=float).reshape(-1)
 
     if design.ndim != 2 or len(design) != len(residuals):
-        raise ValueError("HAC design and residual lengths do not match.")
+        raise ValueError("Newey-West design and residual lengths do not match.")
     n, parameter_count = design.shape
     if not isinstance(max_lag, int) or not 0 <= max_lag < n:
         raise ValueError(
-            f"HAC max_lag must satisfy 0 <= max_lag < {n}; got {max_lag}."
+            f"Newey-West max_lag must satisfy 0 <= max_lag < {n}; got {max_lag}."
         )
     if np.linalg.matrix_rank(design) < parameter_count:
-        raise ValueError("HAC design matrix is rank deficient.")
+        raise ValueError("Newey-West design matrix is rank deficient.")
 
     bread = np.linalg.inv(design.T @ design)
     score = design * residuals[:, None]
@@ -492,22 +493,22 @@ def _newey_west_covariance(
     if use_small_sample_correction:
         denominator_df = n - parameter_count
         if denominator_df <= 0:
-            raise ValueError("Not enough observations for HAC correction.")
+            raise ValueError("Not enough observations for the Newey-West correction.")
         covariance *= n / denominator_df
 
     return 0.5 * (covariance + covariance.T)
 
 
-def test_hierarchical_hac_moderation(
+def test_interaction_sensitivity(
     y_response,
     V,
     x_s_values,
     *,
     alpha: float = 0.05,
-    hac_lags: tuple[int, ...] = (6, 12, 24),
+    newey_west_lags: tuple[int, ...] = (6, 12, 24),
 ) -> dict:
     """
-    Fit the hierarchical moderation model and Newey--West sensitivities.
+    Test the interaction in a hierarchical model with two covariance choices.
 
     The model includes the trigger main effect,
     ``y ~ 1 + V + x_s + V:x_s``. V and x_s are centred before constructing
@@ -515,30 +516,30 @@ def test_hierarchical_hac_moderation(
     leaves the interaction test unchanged while improving conditioning.
 
     The ordinary interaction test is a one-degree-of-freedom nested F-test.
-    HAC tests use a Bartlett kernel, the finite-sample ``n / (n-k)``
+    Newey--West tests use a Bartlett kernel, the finite-sample ``n / (n-k)``
     correction, and two-sided Student-t reference probabilities with ``n-k``
     residual degrees of freedom. These results are sensitivity diagnostics and
-    do not replace the paper-compatible decision rule.
+    do not determine which pairs the classifier returns.
     """
     y = np.asarray(y_response, dtype=float).reshape(-1)
     V = np.asarray(V, dtype=float).reshape(-1)
     x_s = np.asarray(x_s_values, dtype=float).reshape(-1)
-    hac_lags = tuple(int(value) for value in hac_lags)
+    newey_west_lags = tuple(int(value) for value in newey_west_lags)
 
     if not (len(y) == len(V) == len(x_s)):
-        raise ValueError("Hierarchical moderation inputs have unequal lengths.")
+        raise ValueError("Hierarchical interaction inputs have unequal lengths.")
     if len(y) <= 4:
-        raise ValueError("Hierarchical moderation requires more than four rows.")
+        raise ValueError("The hierarchical interaction test requires more than four rows.")
     if not (
         np.isfinite(y).all()
         and np.isfinite(V).all()
         and np.isfinite(x_s).all()
     ):
-        raise ValueError("Hierarchical moderation inputs contain non-finite values.")
-    if not hac_lags or any(value < 1 for value in hac_lags):
-        raise ValueError("hac_lags must contain positive integers.")
-    if len(set(hac_lags)) != len(hac_lags):
-        raise ValueError("hac_lags must not contain duplicates.")
+        raise ValueError("Hierarchical interaction inputs contain non-finite values.")
+    if not newey_west_lags or any(value < 1 for value in newey_west_lags):
+        raise ValueError("newey_west_lags must contain positive integers.")
+    if len(set(newey_west_lags)) != len(newey_west_lags):
+        raise ValueError("newey_west_lags must not contain duplicates.")
     if not 0 < alpha < 1:
         raise ValueError("alpha must be between 0 and 1.")
 
@@ -581,10 +582,10 @@ def test_hierarchical_hac_moderation(
     f_value = (rss_difference / 1.0) / (rss_full / denominator_df)
     ols_p_value = float(f.sf(f_value, 1, denominator_df))
     output = {
-        "hierarchical_ols_accepted": bool(ols_p_value <= alpha),
-        "hierarchical_ols_f_stat": float(f_value),
-        "hierarchical_ols_p_value": ols_p_value,
-        "hierarchical_ols_gamma_2": float(full_beta[-1]),
+        "hierarchical_f_rejected": bool(ols_p_value <= alpha),
+        "hierarchical_f_stat": float(f_value),
+        "hierarchical_f_p_value": ols_p_value,
+        "hierarchical_gamma_2": float(full_beta[-1]),
         "hierarchical_rss_reduced": rss_reduced,
         "hierarchical_rss_full": rss_full,
         "hierarchical_residual_lag1": _lag_one_correlation(full_residuals),
@@ -593,18 +594,18 @@ def test_hierarchical_hac_moderation(
         "hierarchical_reason": None,
     }
 
-    for requested_lag in hac_lags:
-        prefix = f"hac_{requested_lag}"
-        output[f"{prefix}_max_lag_used"] = np.nan
+    for requested_lag in newey_west_lags:
+        prefix = f"newey_west_{requested_lag}"
+        output[f"{prefix}_lag"] = np.nan
         output[f"{prefix}_standard_error"] = np.nan
         output[f"{prefix}_test_statistic"] = np.nan
         output[f"{prefix}_p_value"] = np.nan
-        output[f"{prefix}_accepted"] = False
+        output[f"{prefix}_rejected"] = False
         output[f"{prefix}_reason"] = None
 
         if requested_lag >= len(y):
             output[f"{prefix}_reason"] = (
-                f"Requested HAC lag {requested_lag} is not smaller than "
+                f"Requested Newey-West lag {requested_lag} is not smaller than "
                 f"the effective sample size {len(y)}."
             )
             continue
@@ -618,7 +619,7 @@ def test_hierarchical_hac_moderation(
             )
             variance = float(covariance[-1, -1])
             if not np.isfinite(variance) or variance <= 0:
-                raise ValueError("HAC interaction variance is not positive.")
+                raise ValueError("Newey-West interaction variance is not positive.")
             standard_error = float(np.sqrt(variance))
             test_statistic = float(full_beta[-1] / standard_error)
             p_value = float(
@@ -628,25 +629,25 @@ def test_hierarchical_hac_moderation(
             output[f"{prefix}_reason"] = str(exc)
             continue
 
-        output[f"{prefix}_max_lag_used"] = int(requested_lag)
+        output[f"{prefix}_lag"] = int(requested_lag)
         output[f"{prefix}_standard_error"] = standard_error
         output[f"{prefix}_test_statistic"] = test_statistic
         output[f"{prefix}_p_value"] = p_value
-        output[f"{prefix}_accepted"] = bool(p_value <= alpha)
+        output[f"{prefix}_rejected"] = bool(p_value <= alpha)
 
     return output
 
 
-def test_moderation(
+def test_classification_interaction(
     y_response,
     V,
     x_s_values,
     n_I2: int,
     d: int,
     alpha: float = 0.05,
-    hac_lags: tuple[int, ...] = (6, 12, 24),
+    newey_west_lags: tuple[int, ...] = (6, 12, 24),
 ) -> dict:
-    """Fit the paper model plus a hierarchical--HAC sensitivity analysis."""
+    """Run the classification F-test and its interaction sensitivity tests."""
     y = np.asarray(y_response, dtype=float).reshape(-1)
     V = np.asarray(V, dtype=float)
     x_s = np.asarray(x_s_values, dtype=float)
@@ -662,9 +663,9 @@ def test_moderation(
         and np.isfinite(V).all()
         and np.isfinite(x_s).all()
     ):
-        raise ValueError("Moderation inputs contain non-finite values.")
+        raise ValueError("Interaction-test inputs contain non-finite values.")
     if np.isclose(np.std(V), 0.0):
-        raise ValueError("V is constant; moderation is not identifiable.")
+        raise ValueError("V is constant; the interaction is not identifiable.")
 
     interaction = V * x_s
     reduced = LinearRegression().fit(V, y)
@@ -679,7 +680,7 @@ def test_moderation(
     p_value = float(f.sf(statistic, 1, denominator_df))
 
     output = {
-        "accepted": bool(statistic > critical),
+        "f_test_rejected": bool(statistic > critical),
         "f_stat": float(statistic),
         "critical_f": critical,
         "p_value": p_value,
@@ -694,20 +695,20 @@ def test_moderation(
     }
     try:
         output.update(
-            test_hierarchical_hac_moderation(
+            test_interaction_sensitivity(
                 y,
                 V,
                 x_s,
                 alpha=alpha,
-                hac_lags=hac_lags,
+                newey_west_lags=newey_west_lags,
             )
         )
     except (np.linalg.LinAlgError, ValueError) as exc:
         output.update({
-            "hierarchical_ols_accepted": False,
-            "hierarchical_ols_f_stat": np.nan,
-            "hierarchical_ols_p_value": np.nan,
-            "hierarchical_ols_gamma_2": np.nan,
+            "hierarchical_f_rejected": False,
+            "hierarchical_f_stat": np.nan,
+            "hierarchical_f_p_value": np.nan,
+            "hierarchical_gamma_2": np.nan,
             "hierarchical_rss_reduced": np.nan,
             "hierarchical_rss_full": np.nan,
             "hierarchical_residual_lag1": np.nan,
@@ -715,14 +716,14 @@ def test_moderation(
             "hierarchical_denominator_df": int(len(y) - 4),
             "hierarchical_reason": str(exc),
         })
-        for requested_lag in hac_lags:
-            prefix = f"hac_{int(requested_lag)}"
+        for requested_lag in newey_west_lags:
+            prefix = f"newey_west_{int(requested_lag)}"
             output.update({
-                f"{prefix}_max_lag_used": np.nan,
+                f"{prefix}_lag": np.nan,
                 f"{prefix}_standard_error": np.nan,
                 f"{prefix}_test_statistic": np.nan,
                 f"{prefix}_p_value": np.nan,
-                f"{prefix}_accepted": False,
+                f"{prefix}_rejected": False,
                 f"{prefix}_reason": "Hierarchical model was not evaluable.",
             })
     return output
@@ -730,21 +731,23 @@ def test_moderation(
 
 def _validate_analysis_frames(
     X_model: pd.DataFrame,
-    X_mean: pd.DataFrame,
+    X_decision: pd.DataFrame,
     target: str,
 ) -> None:
-    if not X_model.index.equals(X_mean.index):
-        raise ValueError("X_model and X_mean must have identical time indices.")
-    if list(X_model.columns) != list(X_mean.columns):
+    if not X_model.index.equals(X_decision.index):
         raise ValueError(
-            "X_model and X_mean must have identical columns in identical order."
+            "X_model and X_decision must have identical time indices."
         )
-    if X_model.shape != X_mean.shape:
-        raise ValueError("X_model and X_mean must have identical shapes.")
+    if list(X_model.columns) != list(X_decision.columns):
+        raise ValueError(
+            "X_model and X_decision must have identical columns in identical order."
+        )
+    if X_model.shape != X_decision.shape:
+        raise ValueError("X_model and X_decision must have identical shapes.")
     if target not in X_model.columns:
         raise ValueError(f"Target variable {target!r} is not in the data.")
 
-    for name, frame in (("X_model", X_model), ("X_mean", X_mean)):
+    for name, frame in (("X_model", X_model), ("X_decision", X_decision)):
         if frame.isna().any().any():
             raise ValueError(f"{name} contains NaNs.")
         if not all(np.issubdtype(dtype, np.number) for dtype in frame.dtypes):
@@ -757,16 +760,16 @@ def run_cause_trigger(
     X_model: pd.DataFrame,
     config: CauseTriggerConfig,
     *,
-    X_mean: pd.DataFrame,
+    X_decision: pd.DataFrame,
 ) -> dict:
     """
     Run the Cause–Trigger algorithm.
 
     X_model is used for causal discovery, coefficient estimation, V, and
-    moderation. X_mean is used only for the split, trigger mean screen, and
+    interaction tests. X_decision is used only for the split, trigger screen, and
     final cause mean-shift ranking.
     """
-    _validate_analysis_frames(X_model, X_mean, config.y_t)
+    _validate_analysis_frames(X_model, X_decision, config.y_t)
 
     result = {
         "C": [],
@@ -796,7 +799,7 @@ def run_cause_trigger(
 
     backend = make_causal_backend(config)
     split = find_effect_split(
-        X_mean[config.y_t],
+        X_decision[config.y_t],
         min_I1_length=config.min_I1_length,
         min_I2_length=config.min_I2_length,
         return_info=True,
@@ -820,8 +823,8 @@ def run_cause_trigger(
 
     I_1 = X_model.iloc[:split_index]
     I_2 = X_model.iloc[split_index:]
-    M_1 = X_mean.iloc[:split_index]
-    M_2 = X_mean.iloc[split_index:]
+    M_1 = X_decision.iloc[:split_index]
+    M_2 = X_decision.iloc[split_index:]
 
     result["I1_length"] = len(I_1)
     result["I2_length"] = len(I_2)
@@ -844,7 +847,7 @@ def run_cause_trigger(
     lagged_candidates = [
         variable
         for variable in B_2
-        if paper_abs_mean_increase(
+        if absolute_mean_increase(
             M_2[variable].mean(),
             M_1[variable].mean(),
         )
@@ -860,7 +863,7 @@ def run_cause_trigger(
                 variable != config.y_t
                 and variable in X_model.columns
                 and link.get("eligible_as_trigger_candidate", False)
-                and paper_abs_mean_increase(
+                and absolute_mean_increase(
                     M_2[variable].mean(),
                     M_1[variable].mean(),
                 )
@@ -919,7 +922,7 @@ def run_cause_trigger(
                         if trigger in contemporaneous_candidates
                         else "lagged"
                     ),
-                    "accepted": False,
+                    "f_test_rejected": False,
                     "reason": "No B2 cause candidate remains after removing trigger.",
                 }
             )
@@ -954,13 +957,13 @@ def run_cause_trigger(
                         if trigger in contemporaneous_candidates
                         else "lagged"
                     ),
-                    "accepted": False,
+                    "f_test_rejected": False,
                     "reason": "V is constant.",
                 }
             )
             continue
 
-        moderation = test_moderation(
+        interaction_test = test_classification_interaction(
             y_response=I_2[config.y_t].iloc[config.lags:].to_numpy(),
             V=V,
             x_s_values=(
@@ -972,9 +975,9 @@ def run_cause_trigger(
             n_I2=len(I_2),
             d=config.lags,
             alpha=config.alpha,
-            hac_lags=config.hac_lags,
+            newey_west_lags=config.newey_west_lags,
         )
-        moderation.update(
+        interaction_test.update(
             {
                 "trigger": trigger,
                 "cause": cause,
@@ -993,9 +996,9 @@ def run_cause_trigger(
                 "reason": None,
             }
         )
-        result["diagnostics"].append(moderation)
+        result["diagnostics"].append(interaction_test)
 
-        if moderation["accepted"]:
+        if interaction_test["f_test_rejected"]:
             if trigger not in result["T"]:
                 result["T"].append(trigger)
             if cause not in result["C"]:

@@ -19,8 +19,8 @@ from cause_trigger_cases import CaseSpec
 from parameter_extraction import select_var_lag
 
 
-# HMML is the baseline. PCMCI and PCMCI+ are causal-discovery extensions.
-# The PCMCI+ specification also tests eligible directed tau=0 links as
+# HMML is the main parent-discovery backend. PCMCI and PCMCI+ provide
+# comparisons; PCMCI+ also screens eligible directed tau=0 links as
 # exploratory same-hour trigger candidates.
 COMPACT_RUN_SPECS = (
     {"run": "hmml", "backend": "hmml"},
@@ -65,8 +65,8 @@ class WorkflowConfig:
     pcmci_conflict_resolution: bool = True
     pcmci_plus_use_contemporaneous_triggers: bool = False
 
-    # Hierarchical--HAC sensitivity; the original model remains primary.
-    hac_lags: tuple[int, ...] = (6, 12, 24)
+    # Hierarchical-model Newey--West sensitivity tests.
+    newey_west_lags: tuple[int, ...] = (6, 12, 24)
 
 
 @dataclass
@@ -75,7 +75,7 @@ class PreparedCaseAnalysis:
     X_case_raw: pd.DataFrame
     reference_raw: pd.DataFrame
     X_model: pd.DataFrame
-    X_mean: pd.DataFrame
+    X_decision: pd.DataFrame
     scaling_report: pd.DataFrame
     lag_references: pd.DataFrame
     split_summary: pd.DataFrame
@@ -204,11 +204,11 @@ def prepare_case_frames(
     case: CaseSpec,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Construct aligned case- and reference-standardised frames.
+    Construct aligned modelling and decision frames.
 
-    X_model is case-standardised for causal discovery and moderation.
-    X_mean uses the pre-case reference distribution for split and
-    mean-increase comparisons.
+    X_model is standardised within the case interval for model fitting.
+    X_decision is standardised against the pre-case reference interval for
+    split selection, trigger screening, and cause ranking.
     """
     validate_regular_time_index(raw_case, expected_step="1h")
 
@@ -236,16 +236,16 @@ def prepare_case_frames(
     )
 
     X_model = case.standard_scale_dataframe(transformed_case)
-    X_mean, report = standard_scale_from_reference(
+    X_decision, report = standard_scale_from_reference(
         transformed_reference,
         transformed_case,
     )
 
     scaled_columns = [f"{column}_scaled" for column in transformed_case.columns]
     X_model.columns = scaled_columns
-    X_mean.columns = scaled_columns
+    X_decision.columns = scaled_columns
     X_model.index = raw_case.index
-    X_mean.index = raw_case.index
+    X_decision.index = raw_case.index
 
     report["model_case_mean"] = X_model.mean().to_numpy()
     report["model_case_std"] = X_model.std(ddof=0).to_numpy()
@@ -254,7 +254,7 @@ def prepare_case_frames(
     report["case_start"] = raw_case.index.min()
     report["case_end"] = raw_case.index.max()
 
-    return X_model, X_mean, report
+    return X_model, X_decision, report
 
 
 def case_study_interval(
@@ -382,23 +382,28 @@ def identify_unique_splits(split_summary: pd.DataFrame) -> tuple[pd.DataFrame, p
     key_order["split_id"] = [f"S{index + 1}" for index in range(len(key_order))]
     annotated = annotated.merge(key_order, on=key_columns, how="left", validate="many_to_one")
 
-    support = (
+    split_metadata = (
         annotated
         .groupby("split_id", as_index=False, sort=False)
         .agg(
-            supported_min_I2_lengths=(
+            min_I2_values=(
                 "min_I2_length",
                 lambda values: sorted({int(value) for value in values}),
             ),
-            representative_min_I2_length=("min_I2_length", "min"),
+            fit_min_I2_length=("min_I2_length", "min"),
             any_boundary_split=("boundary_split", "any"),
             all_boundary_splits=("boundary_split", "all"),
         )
     )
-    support["n_supporting_min_I2_values"] = support[
-        "supported_min_I2_lengths"
+    split_metadata["n_min_I2_values"] = split_metadata[
+        "min_I2_values"
     ].map(len)
-    annotated = annotated.merge(support, on="split_id", how="left", validate="many_to_one")
+    annotated = annotated.merge(
+        split_metadata,
+        on="split_id",
+        how="left",
+        validate="many_to_one",
+    )
 
     unique = (
         annotated
@@ -447,13 +452,15 @@ def make_cause_trigger_config(
         pcmci_contemp_collider_rule=workflow.pcmci_contemp_collider_rule,
         pcmci_conflict_resolution=workflow.pcmci_conflict_resolution,
         pcmci_plus_use_contemporaneous_triggers=use_contemporaneous_triggers,
-        hac_lags=tuple(int(value) for value in workflow.hac_lags),
+        newey_west_lags=tuple(
+            int(value) for value in workflow.newey_west_lags
+        ),
     )
 
 
 def run_one(
     df_model: pd.DataFrame,
-    df_mean: pd.DataFrame,
+    df_decision: pd.DataFrame,
     workflow: WorkflowConfig,
     *,
     run_name: str,
@@ -470,7 +477,11 @@ def run_one(
         cond_ind_test=cond_ind_test,
         use_contemporaneous_triggers=use_contemporaneous_triggers,
     )
-    result = run_cause_trigger(df_model, config, X_mean=df_mean)
+    result = run_cause_trigger(
+        df_model,
+        config,
+        X_decision=df_decision,
+    )
     diagnostics = diagnostics_to_dataframe(result)
     if not diagnostics.empty:
         diagnostics.insert(0, "run", run_name)
@@ -499,21 +510,21 @@ def prepare_case_analysis(
     pcmci_alpha_level: float = 0.05,
     pcmci_fdr_method: str | None = "fdr_bh",
     cond_ind_test: str = "robust_parcorr",
-    hac_lags: Sequence[int] = (6, 12, 24),
+    newey_west_lags: Sequence[int] = (6, 12, 24),
     run_specs: Sequence[Mapping[str, object]] = COMPACT_RUN_SPECS,
 ) -> PreparedCaseAnalysis:
     """Prepare data, splits, conventional lag references, and design tables."""
     lag_grid = tuple(int(value) for value in lag_grid)
     min_I2_values = tuple(int(value) for value in min_I2_values)
-    hac_lags = tuple(int(value) for value in hac_lags)
+    newey_west_lags = tuple(int(value) for value in newey_west_lags)
     if not lag_grid:
         raise ValueError("lag_grid cannot be empty.")
     if not min_I2_values:
         raise ValueError("min_I2_values cannot be empty.")
-    if not hac_lags or any(value < 1 for value in hac_lags):
-        raise ValueError("hac_lags must contain positive integers.")
-    if len(set(hac_lags)) != len(hac_lags):
-        raise ValueError("hac_lags must not contain duplicates.")
+    if not newey_west_lags or any(value < 1 for value in newey_west_lags):
+        raise ValueError("newey_west_lags must contain positive integers.")
+    if len(set(newey_west_lags)) != len(newey_west_lags):
+        raise ValueError("newey_west_lags must not contain duplicates.")
 
     X_full_raw = load_model_frame(
         data_path,
@@ -534,7 +545,7 @@ def prepare_case_analysis(
         min_coverage=reference_min_coverage,
         case_name=case.name,
     )
-    X_model, X_mean, scaling_report = prepare_case_frames(
+    X_model, X_decision, scaling_report = prepare_case_frames(
         X_case_raw,
         reference_raw,
         case=case,
@@ -564,14 +575,14 @@ def prepare_case_analysis(
         pcmci_fdr_method=pcmci_fdr_method,
         pcmci_cond_ind_test=cond_ind_test,
         pcmci_plus_use_contemporaneous_triggers=False,
-        hac_lags=hac_lags,
+        newey_west_lags=newey_west_lags,
     )
 
     split_raw = pd.DataFrame([
         {
             "min_I2_length": min_i2,
             **split_diagnostics(
-                X_mean,
+                X_decision,
                 case.effect,
                 event_time=event_time,
                 min_I1_length=min_I1_length,
@@ -580,27 +591,14 @@ def prepare_case_analysis(
         }
         for min_i2 in min_I2_values
     ])
-    split_raw["in_causal_grid"] = split_raw["min_I2_length"].isin(min_I2_values)
+    split_raw["in_causal_grid"] = True
     split_raw["_display_order"] = range(len(split_raw))
 
     causal_rows, unique_splits = identify_unique_splits(
-        split_raw.loc[split_raw["in_causal_grid"]].copy()
+        split_raw.copy()
     )
-    diagnostic_rows = split_raw.loc[~split_raw["in_causal_grid"]].copy()
-    if not diagnostic_rows.empty:
-        diagnostic_rows["split_id"] = "split-only"
-        diagnostic_rows["supported_min_I2_lengths"] = diagnostic_rows[
-            "min_I2_length"
-        ].map(lambda value: [int(value)])
-        diagnostic_rows["representative_min_I2_length"] = diagnostic_rows[
-            "min_I2_length"
-        ]
-        diagnostic_rows["n_supporting_min_I2_values"] = 1
-        diagnostic_rows["any_boundary_split"] = diagnostic_rows["boundary_split"]
-        diagnostic_rows["all_boundary_splits"] = diagnostic_rows["boundary_split"]
-
     split_summary = (
-        pd.concat([causal_rows, diagnostic_rows], ignore_index=True, sort=False)
+        causal_rows
         .sort_values("_display_order", kind="stable")
         .drop(columns="_display_order")
         .reset_index(drop=True)
@@ -628,7 +626,7 @@ def prepare_case_analysis(
             ),
         },
         {
-            "Item": "Reference-standardisation interval",
+            "Item": "Reference interval",
             "Value": (
                 f"[{reference_raw.attrs['reference_start']}, "
                 f"{reference_raw.attrs['reference_end']}); "
@@ -661,19 +659,17 @@ def prepare_case_analysis(
             ),
         },
         {
-            "Item": "Moderation sensitivity",
+            "Item": "Interaction sensitivity",
             "Value": (
-                "Primary non-hierarchical F-test retained as primary; "
-                "hierarchical interaction model with trigger main effect and "
-                "Newey--West sensitivity at maximum lags "
-                f"{hac_lags} h"
+                "Classification F-test; hierarchical F-test and Newey--West "
+                f"tests at truncation lags {newey_west_lags} h"
             ),
         },
         {
-            "Item": "Unique split partitions",
+            "Item": "Unique response partitions",
             "Value": (
-                f"{len(unique_splits)} unique causal partition(s) from "
-                f"{len(min_I2_values)} causal minimum-I2 settings; "
+                f"{len(unique_splits)} unique partition(s) from "
+                f"{len(min_I2_values)} minimum-I2 settings"
             ),
         },
         {
@@ -690,7 +686,7 @@ def prepare_case_analysis(
         X_case_raw=X_case_raw,
         reference_raw=reference_raw,
         X_model=X_model,
-        X_mean=X_mean,
+        X_decision=X_decision,
         scaling_report=scaling_report,
         lag_references=lag_references,
         split_summary=split_summary,
