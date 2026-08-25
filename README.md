@@ -2,14 +2,6 @@
 
 This repository contains the code, notebooks, processed datasets, figures, and result tables accompanying the thesis *Distinguishing Causes and Triggers in Volcanic and Seismic Processes*.
 
-## Thesis summary
-
-Volcanic crises can reflect an interaction between persistent background conditions and short-lived perturbations, but conventional causal analyses do not distinguish these roles. This thesis adapts and extends the Cause–Trigger algorithm for heterogeneous volcanic and seismological time series and applies it to two case studies: the May 2008 Etna crisis around the Wenchuan earthquake and the December 2019 Whakaari eruption.
-
-The workflow constructs hourly monitoring datasets, defines reference and causal-analysis intervals, identifies data-driven transitions in the target variable, and evaluates candidate cause–trigger pairs across maximum lag orders and partition settings. Heterogeneous Minimum Message Length (HMML) is used as the main parent-discovery method, with PCMCI and PCMCI+ as comparison backends; multiple-testing corrections and serial-correlation sensitivity checks assess the robustness of the results.
-
-For Etna, the most stable result identifies past local seismicity as the cause and low-frequency teleseismic-band RMS as the trigger. The Whakaari results are more sensitive to the selected transition and model specification, with the most recurrent relationships involving hydrothermal RMS and past-smoothed spectral contrast. These classifications describe operational roles among the observed monitoring proxies and should not be interpreted as proof of a unique physical mechanism.
-
 ## Repository structure
 
 - `notebooks/` contains the dataset-construction and Cause–Trigger analysis notebooks for Etna and Whakaari.
