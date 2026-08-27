@@ -12,9 +12,7 @@ This repository contains the code, notebooks, processed datasets, figures, and r
 
 ## Data sources and licensing
 
-The Etna analysis uses the [ETNAGAS soil CO₂ dataset](https://doi.org/10.13127/etna/ecsf2002_2010), the [Mt. Etna Seismic Catalog 2000–2010](https://doi.org/10.13127/etnasc/2000_2010), and waveform data from the [Italian National Seismic Network](https://doi.org/10.13127/sd/x0fxnh7qfy). The Whakaari analysis uses GeoNet waveform and GNSS data, including the [Seismic Digital Waveform Dataset](https://doi.org/10.21420/G19Y-9D40) and [Continuous GNSS Network Time Series Dataset](https://doi.org/10.21420/30F4-1A55). Both case studies also use [Open-Meteo](https://open-meteo.com/en/license) weather data. Dataset-specific citations and processing details are provided in the construction notebooks.
-
-Processed CSV and pickle files are derivatives of the cited source datasets and were created for this study; all transformations are documented in the dataset-construction notebooks.
+The Etna analysis uses the [ETNAGAS soil CO₂ dataset](https://doi.org/10.13127/etna/ecsf2002_2010), the [Mt. Etna Seismic Catalog 2000–2010](https://doi.org/10.13127/etnasc/2000_2010), and waveform data from the [Italian National Seismic Network](https://doi.org/10.13127/sd/x0fxnh7qfy). The Whakaari analysis uses GeoNet waveform and GNSS data, including the [Seismic Digital Waveform Dataset](https://doi.org/10.21420/G19Y-9D40) and [Continuous GNSS Network Time Series Dataset](https://doi.org/10.21420/30F4-1A55). Both case studies also use [Open-Meteo](https://open-meteo.com/en/license) weather data. Processed CSV and pickle files are derivatives of the cited source datasets and were created for this study; dataset-specific citations and processing details are provided in the construction notebooks.
 
 The cited INGV and Open-Meteo data are distributed under CC BY 4.0. GeoNet data are distributed under CC BY 3.0 New Zealand. We acknowledge the New Zealand GeoNet programme and its sponsors NHC, Earth Sciences NZ, LINZ, NEMA and MBIE for providing data/images used in this study.
 
