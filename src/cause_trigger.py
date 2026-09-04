@@ -4,9 +4,9 @@ Cause–Trigger algorithm implementation for thesis experiments.
 This algorithm is adapted from the Cause–Trigger algorithm code accompanying:
 Hlaváčková-Schindler, K., Wöß, R., Pecorino, V., & Schindler, P. (2025).
 "Cause or Trigger? From Philosophy to Causal Modeling."
-Zenodo. DOI: 10.5281/zenodo.15109084
-
-Original material: CC BY 4.0.
+Original source: https://doi.org/10.5281/zenodo.15109084
+Original license: CC BY 4.0
+This implementation has been substantially modified and extended.
 """ 
 
 from __future__ import annotations
