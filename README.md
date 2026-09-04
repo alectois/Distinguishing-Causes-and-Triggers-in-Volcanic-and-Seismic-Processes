@@ -30,5 +30,11 @@ The original Zenodo record is licensed under Creative Commons Attribution 4.0 In
 
 Original code in this repository is released under the MIT License.
 
-Some files are adapted from the Cause–Trigger algorithm implementation published on Zenodo under CC BY 4.0. Those adapted portions retain attribution to the original authors. See the file headers and the Attribution section above.
+The following files were initially adapted from the original Cause–Trigger implementation and were subsequently substantially modified, extended, and restructured for this study:
+
+- `src/cause_trigger.py`
+- `src/hmml_runner.py`
+- `src/parameter_extraction.py`
+
+The original implementation is available at Zenodo under the CC BY 4.0 licence. Each adapted file also contains a source citation in its header. All other source files were developed specifically for this study unless otherwise indicated.
 
